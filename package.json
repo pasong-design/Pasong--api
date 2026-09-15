@@ -8,6 +8,7 @@
     "express": "^4.19.2",
     "cors": "^2.8.5",
     "axios": "^1.7.2",
-    "cloudinary": "^2.7.0"
+    "cloudinary": "^2.7.0",
+    "@supabase/supabase-js": "^2.57.0"
   }
 }
