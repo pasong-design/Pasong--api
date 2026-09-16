@@ -429,12 +429,20 @@ app.post(
         categoryId
       } = req.body;
 
+      // --------------------------------------------------
+      // CONTRACT
+      // --------------------------------------------------
+
       if (contractAccepted !== true) {
         return res.status(400).json({
           error:
             'You must read and agree to the PASONG upload contract.'
         });
       }
+
+      // --------------------------------------------------
+      // SONG INFORMATION
+      // --------------------------------------------------
 
       const artist =
         cleanText(
@@ -474,6 +482,10 @@ app.post(
         });
       }
 
+      // --------------------------------------------------
+      // OPTIONAL UUIDs
+      // --------------------------------------------------
+
       const validArtistId =
         optionalUUID(artistId);
 
@@ -482,6 +494,10 @@ app.post(
 
       const validCategoryId =
         optionalUUID(categoryId);
+
+      // --------------------------------------------------
+      // SONG FILE
+      // --------------------------------------------------
 
       const songSize =
         Number(fileSize);
@@ -518,6 +534,10 @@ app.post(
             'Only MP3 and WAV songs are allowed.'
         });
       }
+
+      // --------------------------------------------------
+      // COVER
+      // --------------------------------------------------
 
       if (coverFileName) {
         const coverSize =
@@ -561,6 +581,10 @@ app.post(
         }
       }
 
+      // --------------------------------------------------
+      // IDs
+      // --------------------------------------------------
+
       const databaseSongId =
         createSongUUID();
 
@@ -577,6 +601,10 @@ app.post(
 
       const coverFolder =
         'pasong/covers';
+
+      // --------------------------------------------------
+      // CLOUDINARY SONG CONTEXT
+      // --------------------------------------------------
 
       const songContext =
         `songId=${cleanContext(
@@ -601,6 +629,10 @@ app.post(
         `|contractAccepted=true` +
         `|acceptedAt=${timestamp}`;
 
+      // --------------------------------------------------
+      // SONG SIGNATURE
+      // --------------------------------------------------
+
       const songParams = {
         timestamp,
         folder: songFolder,
@@ -615,6 +647,10 @@ app.post(
           songParams,
           process.env.CLOUDINARY_API_SECRET
         );
+
+      // --------------------------------------------------
+      // COVER SIGNATURE
+      // --------------------------------------------------
 
       const coverParams = {
         timestamp,
@@ -633,6 +669,10 @@ app.post(
           coverParams,
           process.env.CLOUDINARY_API_SECRET
         );
+
+      // --------------------------------------------------
+      // RESPONSE
+      // --------------------------------------------------
 
       return res.json({
         song: {
@@ -781,6 +821,10 @@ app.post(
         featured
       } = req.body;
 
+      // --------------------------------------------------
+      // SONG ID
+      // --------------------------------------------------
+
       const finalSongId =
         id ||
         songId ||
@@ -796,6 +840,10 @@ app.post(
             'Invalid song UUID.'
         });
       }
+
+      // --------------------------------------------------
+      // TEXT
+      // --------------------------------------------------
 
       const finalTitle =
         cleanText(
@@ -822,6 +870,10 @@ app.post(
         });
       }
 
+      // --------------------------------------------------
+      // OPTIONAL UUIDs
+      // --------------------------------------------------
+
       const finalArtistId =
         optionalUUID(
           artist_id || artistId
@@ -836,6 +888,10 @@ app.post(
         optionalUUID(
           category_id || categoryId
         );
+
+      // --------------------------------------------------
+      // URLS
+      // --------------------------------------------------
 
       const finalCoverUrl =
         cleanText(
@@ -855,16 +911,25 @@ app.post(
           1000
         ) || null;
 
+      // --------------------------------------------------
+      // FILE SIZE
+      // --------------------------------------------------
+
       const finalFileSize =
         file_size !== undefined &&
         file_size !== null
           ? String(file_size)
           : null;
 
+      // --------------------------------------------------
+      // DURATION
+      // --------------------------------------------------
+
       let finalDuration = null;
 
       if (
-        duration_seconds !== undefined &&
+        duration_seconds !==
+          undefined &&
         duration_seconds !== null &&
         duration_seconds !== ''
       ) {
@@ -891,18 +956,13 @@ app.post(
           );
       }
 
+      // --------------------------------------------------
+      // SONG DATA
+      // --------------------------------------------------
+
       const songData = {
         id:
           finalSongId,
-
-        artist_id:
-          finalArtistId,
-
-        album_id:
-          finalAlbumId,
-
-        category_id:
-          finalCategoryId,
 
         title:
           finalTitle,
@@ -923,63 +983,88 @@ app.post(
 
         preview_url:
           finalPreviewUrl,
-                duration_seconds:
+
+        file_size:
+          finalFileSize,
+
+        duration_seconds:
           finalDuration,
 
-        price: 500,
+        price:
+          500,
 
-        currency: 'UGX',
-
-        status:
-          cleanText(status, 50) ||
-          'pending',
-
-        plays: 0,
-
-        downloads: 0,
+        currency:
+          'UGX',
 
         featured:
-          featured === true,
-
-        artist_id:
-          finalArtistId,
-
-        album_id:
-          finalAlbumId,
-
-        category_id:
-          finalCategoryId
+          featured === true
       };
 
-      // ======================================================
-      // SAVE TO SUPABASE
-      // ======================================================
+      // Only add UUID fields when valid IDs exist.
+      if (finalArtistId) {
+        songData.artist_id =
+          finalArtistId;
+      }
+
+      if (finalAlbumId) {
+        songData.album_id =
+          finalAlbumId;
+      }
+
+      if (finalCategoryId) {
+        songData.category_id =
+          finalCategoryId;
+      }
+
+      // Only add status if frontend supplied one.
+      // This avoids sending an invalid enum value.
+      if (
+        status !== undefined &&
+        status !== null &&
+        String(status).trim()
+      ) {
+        songData.status =
+          String(status).trim();
+      }
+
+      // --------------------------------------------------
+      // INSERT / UPDATE
+      // --------------------------------------------------
 
       const { data, error } =
         await supabase
           .from('songs')
-          .insert(songData)
+          .upsert(
+            songData,
+            {
+              onConflict: 'id'
+            }
+          )
           .select()
           .single();
 
       if (error) {
         console.error(
-          'CREATE SONG DATABASE ERROR:',
+          'SUPABASE SONG SAVE ERROR:',
           error
         );
 
         return res.status(500).json({
           error:
-            'Failed to save song to Supabase.',
+            'Could not save song to Supabase.',
           details:
-            error.message
+            error.message,
+          code:
+            error.code || null
         });
       }
 
       return res.status(201).json({
         success: true,
+
         message:
-          'Song created successfully.',
+          'Song saved successfully.',
+
         song: data
       });
 
@@ -991,7 +1076,7 @@ app.post(
 
       return res.status(500).json({
         error:
-          'Server error while creating song.',
+          'Server error while saving song.',
         details:
           error.message
       });
@@ -1024,132 +1109,109 @@ app.patch(
         });
       }
 
-      const {
-        title,
-        description,
-        genre,
-        cover_url,
-        audio_url,
-        preview_url,
-        file_size,
-        duration_seconds,
-        status,
-        featured
-      } = req.body;
+      const allowedFields = [
+        'title',
+        'description',
+        'genre',
+        'cover_url',
+        'audio_url',
+        'preview_url',
+        'file_size',
+        'duration_seconds',
+        'featured'
+      ];
 
       const updates = {};
 
-      if (title !== undefined) {
-        const value =
-          cleanText(title, 150);
-
-        if (!value) {
-          return res.status(400).json({
-            error:
-              'Song title cannot be empty.'
-          });
+      for (
+        const field of allowedFields
+      ) {
+        if (
+          req.body[field] !==
+          undefined
+        ) {
+          updates[field] =
+            req.body[field];
         }
-
-        updates.title = value;
       }
 
-      if (description !== undefined) {
+      if (
+        updates.title !==
+        undefined
+      ) {
+        updates.title =
+          cleanText(
+            updates.title,
+            150
+          );
+      }
+
+      if (
+        updates.description !==
+        undefined
+      ) {
         updates.description =
           cleanText(
-            description,
+            updates.description,
             500
           ) || null;
       }
 
-      if (genre !== undefined) {
+      if (
+        updates.genre !==
+        undefined
+      ) {
         updates.genre =
           cleanText(
-            genre,
+            updates.genre,
             100
           ) || null;
       }
 
-      if (cover_url !== undefined) {
-        updates.cover_url =
-          cleanText(
-            cover_url,
-            1000
-          ) || null;
-      }
-
-      if (audio_url !== undefined) {
-        updates.audio_url =
-          cleanText(
-            audio_url,
-            1000
-          ) || null;
-      }
-
-      if (preview_url !== undefined) {
-        updates.preview_url =
-          cleanText(
-            preview_url,
-            1000
-          ) || null;
-      }
-
-      if (file_size !== undefined) {
-        updates.file_size =
-          file_size === null
-            ? null
-            : String(file_size);
-      }
-
       if (
-        duration_seconds !==
+        updates.file_size !==
         undefined
       ) {
-        if (
-          duration_seconds === null ||
-          duration_seconds === ''
-        ) {
-          updates.duration_seconds =
-            null;
-        } else {
-          const parsedDuration =
-            Number(
-              duration_seconds
-            );
-
-          if (
-            !Number.isFinite(
-              parsedDuration
-            ) ||
-            parsedDuration < 0
-          ) {
-            return res.status(400).json({
-              error:
-                'Invalid duration_seconds.'
-            });
-          }
-
-          updates.duration_seconds =
-            Math.floor(
-              parsedDuration
-            );
-        }
-      }
-
-      if (status !== undefined) {
-        updates.status =
-          cleanText(
-            status,
-            50
+        updates.file_size =
+          String(
+            updates.file_size
           );
       }
 
-      if (featured !== undefined) {
-        updates.featured =
-          featured === true;
+      if (
+        updates.duration_seconds !==
+        undefined
+      ) {
+        const duration =
+          Number(
+            updates.duration_seconds
+          );
+
+        if (
+          !Number.isFinite(
+            duration
+          ) ||
+          duration < 0
+        ) {
+          return res.status(400).json({
+            error:
+              'Invalid duration_seconds.'
+          });
+        }
+
+        updates.duration_seconds =
+          Math.floor(duration);
       }
 
-      updates.updated_at =
-        new Date().toISOString();
+      if (
+        Object.keys(updates)
+          .length === 0
+      ) {
+        return res.status(400).json({
+          error:
+            'No valid fields supplied.'
+        });
+      }
 
       const { data, error } =
         await supabase
@@ -1161,13 +1223,13 @@ app.patch(
 
       if (error) {
         console.error(
-          'UPDATE SONG DATABASE ERROR:',
+          'UPDATE SONG ERROR:',
           error
         );
 
         return res.status(500).json({
           error:
-            'Failed to update song.',
+            'Could not update song.',
           details:
             error.message
         });
@@ -1175,8 +1237,6 @@ app.patch(
 
       return res.json({
         success: true,
-        message:
-          'Song updated successfully.',
         song: data
       });
 
@@ -1232,24 +1292,52 @@ app.get(
 // 404
 // ======================================================
 
-app.use((req, res) => {
-  res.status(404).json({
-    error:
-      'PASONG API route not found.',
-    path:
-      req.originalUrl
-  });
-});
+app.use(
+  (req, res) => {
+    res.status(404).json({
+      error:
+        'PASONG API route not found.',
+      path:
+        req.originalUrl
+    });
+  }
+);
 
 // ======================================================
-// SERVER
+// GLOBAL ERROR HANDLER
+// ======================================================
+
+app.use(
+  (
+    error,
+    req,
+    res,
+    next
+  ) => {
+    console.error(
+      'GLOBAL SERVER ERROR:',
+      error
+    );
+
+    res.status(500).json({
+      error:
+        'Internal PASONG server error.'
+    });
+  }
+);
+
+// ======================================================
+// START SERVER
 // ======================================================
 
 const PORT =
   process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-  console.log(
-    `PASONG API running on port ${PORT}`
-  );
-});
+app.listen(
+  PORT,
+  () => {
+    console.log(
+      `PASONG API running on port ${PORT}`
+    );
+  }
+);
