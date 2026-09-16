@@ -1,142 +1,112 @@
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
-require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
 app.use(cors({ origin: '*', methods: ['GET','POST','PATCH','DELETE','OPTIONS'], allowedHeaders: ['Content-Type','Authorization'] }));
 app.use(express.json({ limit: '10mb' }));
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+let supabase = null;
+function getSupabase(){
+  if(supabase) return supabase;
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_KEY;
+  if(!url || !key) throw new Error('Missing SUPABASE_URL or SUPABASE_KEY in Vercel ENV');
+  supabase = createClient(url, key);
+  return supabase;
+}
 
-// HEALTH CHECK
-app.get('/', (req, res) => {
-  res.json({ PASONG: 'LIVE', upload: 'READY' });
-});
+app.get('/', (req,res)=> res.json({ PASONG:'LIVE', upload:'READY', time: new Date().toISOString() }));
 
-// GET ALL SONGS
-app.get('/api/songs', async (req, res) => {
-  try {
+app.get('/api/songs', async (req,res)=>{
+  try{
+    const sb = getSupabase();
     const limit = parseInt(req.query.limit) || 50;
-    const { data, error } = await supabase
-      .from('songs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    if (error) throw error;
+    const { data, error } = await sb.from('songs').select('*').order('created_at',{ascending:false}).limit(limit);
+    if(error) throw error;
     res.json({ songs: data || [] });
-  } catch (e) {
+  }catch(e){
+    console.error(e);
     res.status(500).json({ error: e.message, songs: [] });
   }
 });
 
-// GET ONE SONG
-app.get('/api/songs/:id', async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('songs').select('*').eq('id', req.params.id).single();
-    if (error) throw error;
+app.get('/api/songs/:id', async (req,res)=>{
+  try{
+    const sb = getSupabase();
+    const { data, error } = await sb.from('songs').select('*').eq('id',req.params.id).single();
+    if(error) throw error;
     res.json(data);
-  } catch (e) { res.status(404).json({ error: 'Song not found' }); }
+  }catch(e){ res.status(404).json({error:'Not found'}); }
 });
 
-// CLOUDINARY SIGNATURE - FIXED
-app.post('/api/cloudinary/signature', async (req, res) => {
-  try {
-    const { folder, public_id, type } = req.body;
-    const timestamp = Math.round(Date.now() / 1000);
-    const apiKey = process.env.CLOUDINARY_API_KEY;
-    const apiSecret = process.env.CLOUDINARY_API_SECRET;
-    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-
-    if (!apiKey || !apiSecret || !cloudName) {
-      return res.status(500).json({ error: 'Cloudinary keys missing in Vercel env' });
-    }
-
-    // Signature must match what frontend sends
-    let toSign = `folder=${folder}&public_id=${public_id}&timestamp=${timestamp}`;
-    const signature = crypto.createHash('sha1').update(toSign + apiSecret).digest('hex');
-
-    const isCover = type === 'cover' || folder.includes('cover');
-    const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${isCover ? 'image' : 'video'}/upload`;
+app.post('/api/cloudinary/signature', (req,res)=>{
+  try{
+    const { folder='pasong-songs', public_id=`song_${Date.now()}` } = req.body;
+    const timestamp = Math.round(Date.now()/1000);
+    const { CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET, CLOUDINARY_CLOUD_NAME } = process.env;
+    if(!CLOUDINARY_API_KEY) return res.status(500).json({error:'Missing Cloudinary ENV'});
+    
+    const toSignSong = `folder=${folder}&public_id=${public_id}&timestamp=${timestamp}`;
+    const sigSong = crypto.createHash('sha1').update(toSignSong + CLOUDINARY_API_SECRET).digest('hex');
+    const toSignCover = `folder=pasong-covers&public_id=${public_id}_cover&timestamp=${timestamp}`;
+    const sigCover = crypto.createHash('sha1').update(toSignCover + CLOUDINARY_API_SECRET).digest('hex');
 
     res.json({
-      song: {
-        apiKey, timestamp, signature, folder, public_id, publicId: public_id,
-        uploadUrl, tags: type || 'song'
-      },
-      cover: {
-        apiKey, timestamp, signature: crypto.createHash('sha1').update(`folder=pasong-covers&public_id=${public_id}_cover&timestamp=${timestamp}${apiSecret}`).digest('hex'),
-        folder: 'pasong-covers',
-        public_id: `${public_id}_cover`,
-        publicId: `${public_id}_cover`,
-        uploadUrl: `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
-        tags: 'cover'
-      }
+      song: { apiKey:CLOUDINARY_API_KEY, timestamp, signature:sigSong, folder, public_id, publicId:public_id, uploadUrl:`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/video/upload`, tags:'song' },
+      cover: { apiKey:CLOUDINARY_API_KEY, timestamp, signature:sigCover, folder:'pasong-covers', public_id:`${public_id}_cover`, publicId:`${public_id}_cover`, uploadUrl:`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, tags:'cover' }
     });
-
-    // SIMPLE VERSION IF ABOVE FAILS - USE THIS ALTERNATIVE:
-    // For your frontend we return flat info. Frontend expects info.song and info.cover
-    // The block above already returns both signatures
-
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  }catch(e){ res.status(500).json({error:e.message}); }
 });
 
-// CREATE SONG - NOW APPROVED SO IT SHOWS IMMEDIATELY
-app.post('/api/songs', async (req, res) => {
-  try {
-    const { title, artist, genre, song_url, cover_url, duration, file_size } = req.body;
-    if (!title || !song_url) return res.status(400).json({ error: 'Missing title or song_url' });
+// CORRECTED - USES YOUR REAL TABLE FIELDS
+app.post('/api/songs', async (req,res)=>{
+  try{
+    const sb = getSupabase();
+    // Correct fields: artist_id, audio_url, duration_seconds
+    const { title, artist_id, genre, audio_url, cover_url, duration_seconds, file_size } = req.body;
 
-    const { data, error } = await supabase.from('songs').insert([{
+    if(!title || !audio_url) return res.status(400).json({error:'Missing title or audio_url'});
+
+    const { data, error } = await sb.from('songs').insert([{
       title,
-      artist: artist || 'Unknown',
+      artist_id: artist_id || null,          // CORRECT
       genre: genre || 'Afrobeat',
-      song_url,
+      audio_url,                             // CORRECT
       cover_url: cover_url || '',
-      duration: duration || 0,
+      duration_seconds: duration_seconds || 0, // CORRECT
       file_size: file_size || 0,
       price: 500,
       currency: 'UGX',
-      status: 'approved', // <-- FIXED FROM pending TO approved
+      status: 'approved',
       featured: false
     }]).select().single();
 
-    if (error) throw error;
-    res.json({ success: true, song: data });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+    if(error) throw error;
+    res.json({ success:true, song:data });
+  }catch(e){ 
+    console.error(e);
+    res.status(500).json({error:e.message}); 
   }
 });
 
-// UPDATE STATUS (Approve / Pending / Reject)
-app.patch('/api/songs/:id', async (req, res) => {
-  try {
-    const { status, featured, price } = req.body;
-    const updates = {};
-    if (status) updates.status = status;
-    if (featured !== undefined) updates.featured = featured;
-    if (price !== undefined) updates.price = price;
-    
-    const { data, error } = await supabase.from('songs').update(updates).eq('id', req.params.id).select().single();
-    if (error) throw error;
-    res.json({ success: true, song: data });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+app.patch('/api/songs/:id', async (req,res)=>{
+  try{
+    const sb = getSupabase();
+    const { data, error } = await sb.from('songs').update(req.body).eq('id',req.params.id).select().single();
+    if(error) throw error;
+    res.json({success:true, song:data});
+  }catch(e){ res.status(500).json({error:e.message}); }
 });
 
-// DELETE SONG - NEW
-app.delete('/api/songs/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { error } = await supabase.from('songs').delete().eq('id', id);
-    if (error) throw error;
-    res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+app.delete('/api/songs/:id', async (req,res)=>{
+  try{
+    const sb = getSupabase();
+    const { error } = await sb.from('songs').delete().eq('id',req.params.id);
+    if(error) throw error;
+    res.json({success:true});
+  }catch(e){ res.status(500).json({error:e.message}); }
 });
 
-app.listen(PORT, () => console.log(`PASONG API LIVE on ${PORT}`));
 module.exports = app;
