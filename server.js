@@ -3,8 +3,18 @@ import cors from 'cors';
 import axios from 'axios';
 import crypto from 'node:crypto';
 import { v2 as cloudinary } from 'cloudinary';
+import { createClient } from '@supabase/supabase-js';
 
 const app = express();
+
+// ===============================
+// SUPABASE CONFIGURATION
+// ===============================
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_PUBLISHABLE_KEY
+);
 
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: '1mb' }));
