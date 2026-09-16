@@ -1,9 +1,11 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const app = express();
 
 app.use(cors({ origin: '*' }));
 app.use(express.json());
+app.use(express.static(path.join(__dirname)));
 
 // Root - NEVER FAILS
 app.get('/', (req, res) => {
@@ -12,6 +14,17 @@ app.get('/', (req, res) => {
     time: new Date().toISOString(),
     env: Object.keys(process.env).filter(k => k.includes('SUPABASE') || k.includes('CLOUDINARY'))
   });
+});
+
+// Serve music-store.html explicitly
+app.get('/music-store.html', (req,res)=>{
+  res.sendFile(path.join(__dirname, 'music-store.html'));
+});
+app.get('/pasong_checkout.html', (req,res)=>{
+  res.sendFile(path.join(__dirname, 'pasong_checkout.html'));
+});
+app.get('/index.html', (req,res)=>{
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.get('/api/songs', async (req, res) => {
@@ -44,7 +57,7 @@ app.get('/api/songs/:id', async (req,res)=>{
   }catch(e){ res.status(404).json({error:e.message}); }
 });
 
-// Cloudinary signature with CORRECT fields
+// Cloudinary signature
 app.post('/api/cloudinary/signature', (req,res)=>{
   try{
     const crypto = require('crypto');
@@ -63,7 +76,6 @@ app.post('/api/cloudinary/signature', (req,res)=>{
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
-// CORRECT TABLE FIELDS: artist_id, audio_url, duration_seconds
 app.post('/api/songs', async (req,res)=>{
   try{
     const { createClient } = require('@supabase/supabase-js');
