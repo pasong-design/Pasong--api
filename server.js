@@ -650,6 +650,8 @@ app.post(
 
       // --------------------------------------------------
       // COVER SIGNATURE
+      // IMPORTANT:
+      // Only sign parameters that the frontend sends.
       // --------------------------------------------------
 
       const coverParams = {
@@ -657,11 +659,7 @@ app.post(
         folder: coverFolder,
         public_id:
           cloudinaryPublicId,
-        tags: 'pasong-cover',
-        context:
-          `songId=${cleanContext(
-            databaseSongId
-          )}`
+        tags: 'pasong-cover'
       };
 
       const coverSignature =
@@ -702,7 +700,8 @@ app.post(
           genre:
             songGenre,
 
-          price: 500,
+          price:
+            500,
 
           currency:
             'UGX',
@@ -1000,7 +999,6 @@ app.post(
           featured === true
       };
 
-      // Only add UUID fields when valid IDs exist.
       if (finalArtistId) {
         songData.artist_id =
           finalArtistId;
@@ -1016,8 +1014,6 @@ app.post(
           finalCategoryId;
       }
 
-      // Only add status if frontend supplied one.
-      // This avoids sending an invalid enum value.
       if (
         status !== undefined &&
         status !== null &&
