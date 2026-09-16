@@ -1,146 +1,142 @@
-import express from 'express';
-import cors from 'cors';
-import axios from 'axios';
-import crypto from 'node:crypto';
-import { v2 as cloudinary } from 'cloudinary';
-import { createClient } from '@supabase/supabase-js';
+const express = require('express');
+const cors = require('cors');
+const crypto = require('crypto');
+require('dotenv').config();
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+const PORT = process.env.PORT || 3000;
 
-app.use(cors({ origin: true }));
-app.use(express.json({ limit: '1mb' }));
+app.use(cors({ origin: '*', methods: ['GET','POST','PATCH','DELETE','OPTIONS'], allowedHeaders: ['Content-Type','Authorization'] }));
+app.use(express.json({ limit: '10mb' }));
 
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-  secure: true
-});
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-const MAX_SONG_SIZE = 10 * 1024 * 1024;
-const MAX_COVER_SIZE = 5 * 1024 * 1024;
-const ALLOWED_SONG_EXTENSIONS = new Set(['mp3','wav']);
-const ALLOWED_COVER_EXTENSIONS = new Set(['jpg','jpeg','png','webp']);
-
-const cleanText = (v, max) => { if(!v) return ''; return String(v).trim().slice(0,max); };
-const cleanContext = (v, max=500) => String(v||'').replace(/[|]/g,'').slice(0,max);
-const getExtension = (name='') => (name.split('.').pop()||'').toLowerCase();
-const isValidUUID = (id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-const optionalUUID = (id) => isValidUUID(id)? id : null;
-const createSongUUID = () => crypto.randomUUID();
-const createCloudinaryPublicId = (prefix) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
-const supabaseReady = () => Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
-const cloudinaryReady = () => Boolean(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
-
+// HEALTH CHECK
 app.get('/', (req, res) => {
   res.json({ PASONG: 'LIVE', upload: 'READY' });
 });
 
-app.post('/api/songs/sign-upload', (req, res) => {
+// GET ALL SONGS
+app.get('/api/songs', async (req, res) => {
   try {
-    if (!cloudinaryReady()) return res.status(500).json({ error: 'Cloudinary not configured.' });
-    const { artistName, songTitle, description, genre, contractAccepted, fileName, fileSize, coverFileName, coverFileSize, artistId, albumId, categoryId } = req.body;
-    if (contractAccepted!== true) return res.status(400).json({ error: 'Agree to contract.' });
-    
-    const artist = cleanText(artistName, 100);
-    const title = cleanText(songTitle, 150);
-    if (!artist) return res.status(400).json({ error: 'Artist required.' });
-    if (!title) return res.status(400).json({ error: 'Title required.' });
-
-    const songSize = Number(fileSize);
-    const songExt = getExtension(fileName);
-    if (songSize > MAX_SONG_SIZE) return res.status(400).json({ error: 'Song >10MB.' });
-    if (!ALLOWED_SONG_EXTENSIONS.has(songExt)) return res.status(400).json({ error: 'Only MP3/WAV.' });
-
-    if (!coverFileName) return res.status(400).json({ error: 'Cover image is REQUIRED.' });
-    const coverSize = Number(coverFileSize);
-    const coverExt = getExtension(coverFileName);
-    if (coverSize > MAX_COVER_SIZE) return res.status(400).json({ error: 'Cover >5MB.' });
-    if (!ALLOWED_COVER_EXTENSIONS.has(coverExt)) return res.status(400).json({ error: 'Cover must be JPG/PNG/WEBP.' });
-
-    const databaseSongId = createSongUUID();
-    const songPublicId = createCloudinaryPublicId('pasong_song');
-    const coverPublicId = createCloudinaryPublicId('pasong_cover');
-    const timestamp = Math.floor(Date.now() / 1000);
-    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-    const apiKey = process.env.CLOUDINARY_API_KEY;
-
-    const songContext = `songId=${cleanContext(databaseSongId)}|artist=${cleanContext(artist,100)}|title=${cleanContext(title,150)}`;
-    const songParams = { timestamp, folder: 'pasong/songs', public_id: songPublicId, tags: 'pasong-song', context: songContext };
-    const songSignature = cloudinary.utils.api_sign_request(songParams, process.env.CLOUDINARY_API_SECRET);
-
-    const coverParams = { timestamp, folder: 'pasong/covers', public_id: coverPublicId, tags: 'pasong-cover' };
-    const coverSignature = cloudinary.utils.api_sign_request(coverParams, process.env.CLOUDINARY_API_SECRET);
-
-    return res.json({
-      song: {
-        songId: databaseSongId,
-        artistId: optionalUUID(artistId),
-        albumId: optionalUUID(albumId),
-        categoryId: optionalUUID(categoryId),
-        timestamp,
-        cloudName,
-        apiKey,
-        uploadUrl: `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`,
-        folder: 'pasong/songs',
-        publicId: songPublicId,
-        public_id: songPublicId,
-        signature: songSignature,
-        tags: 'pasong-song',
-        context: songContext
-      },
-      cover: {
-        timestamp,
-        cloudName,
-        apiKey,
-        uploadUrl: `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
-        folder: 'pasong/covers',
-        publicId: coverPublicId,
-        public_id: coverPublicId,
-        signature: coverSignature,
-        tags: 'pasong-cover'
-      }
-    });
-
+    const limit = parseInt(req.query.limit) || 50;
+    const { data, error } = await supabase
+      .from('songs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    res.json({ songs: data || [] });
   } catch (e) {
-    return res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, songs: [] });
   }
 });
 
-app.post('/api/songs/create', async (req, res) => {
+// GET ONE SONG
+app.get('/api/songs/:id', async (req, res) => {
   try {
-    if (!supabaseReady()) return res.status(500).json({ error: 'Supabase not configured.' });
-    const { songId, artistId, albumId, categoryId, title, description, genre, coverUrl, audioUrl, fileSize } = req.body;
-    if (!isValidUUID(songId)) return res.status(400).json({ error: 'Invalid songId.' });
-    if (!title) return res.status(400).json({ error: 'Title required.' });
-    const songData = {
-      id: songId,
-      artist_id: optionalUUID(artistId),
-      album_id: optionalUUID(albumId),
-      category_id: optionalUUID(categoryId),
-      title: cleanText(title,150),
-      description: cleanText(description,500)||null,
-      genre: cleanText(genre,100)||null,
-      cover_url: coverUrl||null,
-      audio_url: audioUrl||null,
-      preview_url: audioUrl||null,
-      file_size: fileSize? Math.floor(Number(fileSize)) : null,
-      price: 500, currency: 'UGX', status: 'pending', featured: false
-    };
-    const { data, error } = await supabase.from('songs').upsert(songData, { onConflict: 'id' }).select().single();
-    if (error) return res.status(500).json({ error: 'Save failed.', details: error.message });
-    return res.status(201).json({ success: true, song: data });
-  } catch (error) { return res.status(500).json({ error: error.message }); }
+    const { data, error } = await supabase.from('songs').select('*').eq('id', req.params.id).single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(404).json({ error: 'Song not found' }); }
 });
 
-app.get('/api/songs', async (req, res) => {
+// CLOUDINARY SIGNATURE - FIXED
+app.post('/api/cloudinary/signature', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('songs').select('*').order('created_at', { ascending: false }).limit(50);
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ songs: data });
-  } catch (e) { return res.status(500).json({ error: e.message }); }
+    const { folder, public_id, type } = req.body;
+    const timestamp = Math.round(Date.now() / 1000);
+    const apiKey = process.env.CLOUDINARY_API_KEY;
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+
+    if (!apiKey || !apiSecret || !cloudName) {
+      return res.status(500).json({ error: 'Cloudinary keys missing in Vercel env' });
+    }
+
+    // Signature must match what frontend sends
+    let toSign = `folder=${folder}&public_id=${public_id}&timestamp=${timestamp}`;
+    const signature = crypto.createHash('sha1').update(toSign + apiSecret).digest('hex');
+
+    const isCover = type === 'cover' || folder.includes('cover');
+    const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${isCover ? 'image' : 'video'}/upload`;
+
+    res.json({
+      song: {
+        apiKey, timestamp, signature, folder, public_id, publicId: public_id,
+        uploadUrl, tags: type || 'song'
+      },
+      cover: {
+        apiKey, timestamp, signature: crypto.createHash('sha1').update(`folder=pasong-covers&public_id=${public_id}_cover&timestamp=${timestamp}${apiSecret}`).digest('hex'),
+        folder: 'pasong-covers',
+        public_id: `${public_id}_cover`,
+        publicId: `${public_id}_cover`,
+        uploadUrl: `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+        tags: 'cover'
+      }
+    });
+
+    // SIMPLE VERSION IF ABOVE FAILS - USE THIS ALTERNATIVE:
+    // For your frontend we return flat info. Frontend expects info.song and info.cover
+    // The block above already returns both signatures
+
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
-const PORT = Number(process.env.PORT) || 3000;
-app.listen(PORT, () => { console.log(`PASONG API running on ${PORT}`); });
+// CREATE SONG - NOW APPROVED SO IT SHOWS IMMEDIATELY
+app.post('/api/songs', async (req, res) => {
+  try {
+    const { title, artist, genre, song_url, cover_url, duration, file_size } = req.body;
+    if (!title || !song_url) return res.status(400).json({ error: 'Missing title or song_url' });
+
+    const { data, error } = await supabase.from('songs').insert([{
+      title,
+      artist: artist || 'Unknown',
+      genre: genre || 'Afrobeat',
+      song_url,
+      cover_url: cover_url || '',
+      duration: duration || 0,
+      file_size: file_size || 0,
+      price: 500,
+      currency: 'UGX',
+      status: 'approved', // <-- FIXED FROM pending TO approved
+      featured: false
+    }]).select().single();
+
+    if (error) throw error;
+    res.json({ success: true, song: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// UPDATE STATUS (Approve / Pending / Reject)
+app.patch('/api/songs/:id', async (req, res) => {
+  try {
+    const { status, featured, price } = req.body;
+    const updates = {};
+    if (status) updates.status = status;
+    if (featured !== undefined) updates.featured = featured;
+    if (price !== undefined) updates.price = price;
+    
+    const { data, error } = await supabase.from('songs').update(updates).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json({ success: true, song: data });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE SONG - NEW
+app.delete('/api/songs/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { error } = await supabase.from('songs').delete().eq('id', id);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.listen(PORT, () => console.log(`PASONG API LIVE on ${PORT}`));
+module.exports = app;
