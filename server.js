@@ -6,1473 +6,895 @@ const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 
-// ======================================================
-// MIDDLEWARE
-// ======================================================
-
 app.use(cors({ origin: '*' }));
-
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 app.use(express.static(path.join(__dirname)));
 
-// ======================================================
-// SUPABASE
-// ======================================================
+const PORT = process.env.PORT || 3000;
 
-function getSupabase() {
-const url = process.env.SUPABASE_URL;
+const SUPABASE_URL =
+  process.env.SUPABASE_URL ||
+  'https://mtufczmjlkvycarxylgh.supabase.co';
 
-const key =
-process.env.SUPABASE_SERVICE_ROLE_KEY ||
-process.env.SUPABASE_KEY;
+const SUPABASE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_KEY;
 
-if (!url || !key) {
-throw new Error(
-'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY/SUPABASE_KEY'
+const CLOUDINARY_CLOUD_NAME =
+  process.env.CLOUDINARY_CLOUD_NAME ||
+  'vuehnvkp';
+
+const CLOUDINARY_API_KEY =
+  process.env.CLOUDINARY_API_KEY ||
+  '621955771344375';
+
+const CLOUDINARY_API_SECRET =
+  process.env.CLOUDINARY_API_SECRET;
+
+const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_KEY
 );
-}
 
-return createClient(url, key);
-}
 
-// ======================================================
-// COUNTRY DETECTION
-// ======================================================
+/* =========================================================
+   HELPERS
+========================================================= */
 
 function getCountryFromRequest(req) {
-const country =
-req.headers['x-vercel-ip-country'] ||
-req.headers['cf-ipcountry'] ||
-req.headers['x-country-code'] ||
-req.headers['x-country'] ||
-'UG';
+  const country =
+    req.headers['x-vercel-ip-country'] ||
+    req.headers['cf-ipcountry'] ||
+    req.headers['x-country-code'] ||
+    req.headers['x-country'] ||
+    'UG';
 
-return String(country).trim().toUpperCase();
+  return String(country).trim().toUpperCase();
 }
 
-// ======================================================
-// COUNTRY GROUPS
-// ======================================================
 
-const EAST_AFRICA = [
-'KE',
-'TZ',
-'RW',
-'BI',
-'SS',
-'CD'
-];
+function getPricing(country) {
+  const eastAfrica = [
+    'UG',
+    'KE',
+    'TZ',
+    'RW',
+    'BI',
+    'SS'
+  ];
 
-const AFRICA = [
-'DZ',
-'AO',
-'BJ',
-'BW',
-'BF',
-'CV',
-'CM',
-'CF',
-'TD',
-'KM',
-'CG',
-'CI',
-'DJ',
-'EG',
-'GQ',
-'ER',
-'SZ',
-'ET',
-'GA',
-'GM',
-'GH',
-'GN',
-'GW',
-'LS',
-'LR',
-'LY',
-'MG',
-'MW',
-'ML',
-'MR',
-'MU',
-'MA',
-'MZ',
-'NA',
-'NE',
-'NG',
-'ST',
-'SN',
-'SC',
-'SL',
-'SO',
-'ZA',
-'SD',
-'TG',
-'TN',
-'UG',
-'ZM',
-'ZW'
-];
+  const africa = [
+    'UG',
+    'KE',
+    'TZ',
+    'RW',
+    'BI',
+    'SS',
+    'NG',
+    'GH',
+    'ZA',
+    'ZM',
+    'ZW',
+    'MW',
+    'MZ',
+    'ET',
+    'SN',
+    'CI',
+    'CM',
+    'CD',
+    'CG',
+    'AO',
+    'BW',
+    'NA',
+    'SL',
+    'LR',
+    'GM',
+    'GN',
+    'BJ',
+    'TG',
+    'BF',
+    'NE',
+    'ML',
+    'MR',
+    'TD',
+    'CF',
+    'GA',
+    'GQ',
+    'DJ',
+    'ER',
+    'SO',
+    'SD',
+    'LY',
+    'DZ',
+    'MA',
+    'TN'
+  ];
 
-// ======================================================
-// SONG PRICING
-// ======================================================
+  if (country === 'UG') {
+    return {
+      country: country,
+      amount: 700,
+      currency: 'UGX',
+      label: 'UGX 700'
+    };
+  }
 
-function getSongPricing(country) {
-const code =
-String(country || 'UG')
-.trim()
-.toUpperCase();
+  if (eastAfrica.indexOf(country) !== -1) {
+    return {
+      country: country,
+      amount: 1000,
+      currency: 'UGX',
+      label: 'UGX 1,000'
+    };
+  }
 
-// Uganda
-if (code === 'UG') {
-return {
-country: 'UG',
-amount: 700,
-currency: 'UGX',
-label: 'UGX 700'
-};
+  if (africa.indexOf(country) !== -1) {
+    return {
+      country: country,
+      amount: 0.57,
+      currency: 'USD',
+      label: '$0.57'
+    };
+  }
+
+  if (country === 'GB') {
+    return {
+      country: country,
+      amount: 1,
+      currency: 'GBP',
+      label: '£1'
+    };
+  }
+
+  return {
+    country: country,
+    amount: 1,
+    currency: 'USD',
+    label: '$1'
+  };
 }
 
-// East Africa
-if (EAST_AFRICA.includes(code)) {
-return {
-country: code,
-amount: 1000,
-currency: 'UGX',
-label: 'UGX 1,000'
-};
-}
-
-// Other African countries
-if (AFRICA.includes(code)) {
-return {
-country: code,
-amount: 0.57,
-currency: 'USD',
-label: '$0.57'
-};
-}
-
-// United Kingdom
-if (code === 'GB') {
-return {
-country: 'GB',
-amount: 1,
-currency: 'GBP',
-label: '£1'
-};
-}
-
-// Rest of world
-return {
-country: code,
-amount: 1,
-currency: 'USD',
-label: '$1'
-};
-}
-
-// ======================================================
-// COVER DESIGN PRICING
-// ======================================================
 
 function getCoverPricing(country) {
-const code =
-String(country || 'UG')
-.trim()
-.toUpperCase();
+  if (country === 'UG') {
+    return {
+      country: country,
+      amount: 10000,
+      currency: 'UGX',
+      label: 'UGX 10,000'
+    };
+  }
 
-if (code === 'UG') {
-return {
-country: 'UG',
-amount: 10000,
-currency: 'UGX',
-label: 'UGX 10,000'
-};
+  return {
+    country: country,
+    amount: 10,
+    currency: 'USD',
+    label: '$10'
+  };
 }
 
-return {
-country: code,
-amount: 10,
-currency: 'USD',
-label: '$10'
-};
-}
 
-// ======================================================
-// TIP SPLIT
-// ARTIST 70%
-// PASONG 30%
-// ======================================================
+function getTipPricing(country) {
+  const songPricing = getPricing(country);
 
-function calculateTipSplit(tipAmount) {
-const amount = Number(tipAmount) || 0;
-
-if (amount < 0) {
-throw new Error('Tip amount cannot be negative');
-}
-
-const artistTip =
-Math.floor(amount * 0.70 * 100) / 100;
-
-const pasongTip =
-Math.round((amount - artistTip) * 100) / 100;
-
-return {
-totalTip: amount,
-artistTip,
-pasongTip,
-artistPercent: 70,
-pasongPercent: 30
-};
-}
-
-// ======================================================
-// ROOT
-// ======================================================
-
-app.get('/', (req, res) => {
-res.json({
-PASONG: 'LIVE',
-time: new Date().toISOString(),
-pricing: 'READY',
-upload: 'READY',
-coverWorkflow: 'READY',
-tips: 'READY',
-cloudinary: 'READY'
-});
-});
-
-// ======================================================
-// HEALTH
-// ======================================================
-
-app.get('/health', (req, res) => {
-res.json({
-PASONG: 'LIVE',
-upload: 'READY',
-pricing: 'READY',
-coverWorkflow: 'READY',
-tips: 'READY',
-cloudinary: 'READY',
-time: new Date().toISOString()
-});
-});
-
-// ======================================================
-// STATIC PAGES
-// ======================================================
-
-app.get('/music-store.html', (req, res) => {
-res.sendFile(
-path.join(__dirname, 'music-store.html')
-);
-});
-
-app.get('/pasong_checkout.html', (req, res) => {
-res.sendFile(
-path.join(__dirname, 'pasong_checkout.html')
-);
-});
-
-app.get('/index.html', (req, res) => {
-res.sendFile(
-path.join(__dirname, 'index.html')
-);
-});
-
-// ======================================================
-// PRICING API
-// ======================================================
-
-app.get('/api/pricing', (req, res) => {
-try {
-const country =
-getCountryFromRequest(req);
-
-const song =
-  getSongPricing(country);
-
-const cover =
-  getCoverPricing(country);
-
-res.json({
-  success: true,
-  country,
-  song,
-  cover,
-  tips: {
+  return {
+    country: country,
+    currency: songPricing.currency,
     artistPercent: 70,
     pasongPercent: 30
+  };
+}
+
+
+function makeCloudinarySignature(params) {
+  if (!CLOUDINARY_API_SECRET) {
+    throw new Error('CLOUDINARY_API_SECRET is not configured');
+  }
+
+  const keys = Object.keys(params).sort();
+
+  const parts = [];
+
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+
+    if (
+      params[key] !== undefined &&
+      params[key] !== null &&
+      params[key] !== ''
+    ) {
+      parts.push(
+        key + '=' + params[key]
+      );
+    }
+  }
+
+  const stringToSign = parts.join('&');
+
+  return crypto
+    .createHash('sha1')
+    .update(
+      stringToSign + CLOUDINARY_API_SECRET
+    )
+    .digest('hex');
+}
+
+
+/* =========================================================
+   BASIC ROUTES
+========================================================= */
+
+app.get('/', function (req, res) {
+  res.json({
+    success: true,
+    message: 'PASONG API is LIVE',
+    pricing: 'ready',
+    upload: 'ready',
+    coverWorkflow: 'ready',
+    tips: 'ready',
+    cloudinary: 'ready'
+  });
+});
+
+
+app.get('/health', function (req, res) {
+  res.json({
+    success: true,
+    status: 'PASONG: LIVE',
+    upload: 'READY',
+    cloudinary: 'READY',
+    pricing: 'READY',
+    coverWorkflow: 'READY',
+    tips: 'READY'
+  });
+});
+
+
+/* =========================================================
+   PRICING
+========================================================= */
+
+app.get('/api/pricing', function (req, res) {
+  try {
+    const country = getCountryFromRequest(req);
+
+    const song = getPricing(country);
+    const cover = getCoverPricing(country);
+    const tips = getTipPricing(country);
+
+    res.json({
+      success: true,
+      country: country,
+      song: song,
+      cover: cover,
+      tips: tips
+    });
+  } catch (error) {
+    console.error('Pricing error:', error);
+
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
-} catch (e) {
-console.error(
-'GET /api/pricing ERROR:',
-e
-);
 
-res.status(500).json({
-  success: false,
-  error: e.message
-});
+/* =========================================================
+   CLOUDINARY SIGNATURE
+   PROFILE IMAGES
+========================================================= */
 
-}
-});
+function cloudinarySignatureHandler(req, res) {
+  try {
+    if (!CLOUDINARY_API_SECRET) {
+      return res.status(500).json({
+        success: false,
+        error: 'CLOUDINARY_API_SECRET is not configured on Render'
+      });
+    }
 
-// ======================================================
-// TIP VALIDATION
-// ======================================================
+    const timestamp = Math.floor(Date.now() / 1000);
 
-app.post('/api/tip/validate', (req, res) => {
-try {
-const {
-tipAmount = 0
-} = req.body;
+    const requestedFolder =
+      req.body && req.body.folder
+        ? req.body.folder
+        : req.query && req.query.folder
+        ? req.query.folder
+        : 'pasong-profiles';
 
-const split =
-  calculateTipSplit(tipAmount);
+    const folder =
+      String(requestedFolder).trim() || 'pasong-profiles';
 
-res.json({
-  success: true,
-  tip: split
-});
+    const requestedPublicId =
+      req.body && req.body.public_id
+        ? req.body.public_id
+        : req.query && req.query.public_id
+        ? req.query.public_id
+        : null;
 
-} catch (e) {
-console.error(
-'POST /api/tip/validate ERROR:',
-e
-);
+    const publicId =
+      requestedPublicId
+        ? String(requestedPublicId)
+        : 'pasong_' + Date.now();
 
-res.status(400).json({
-  success: false,
-  error: e.message
-});
-
-}
-});
-
-// ======================================================
-// CLOUDINARY SIGNATURE HELPER
-// ======================================================
-
-function createCloudinarySignature(req) {
-const key =
-process.env.CLOUDINARY_API_KEY;
-
-const secret =
-process.env.CLOUDINARY_API_SECRET;
-
-const cloud =
-process.env.CLOUDINARY_CLOUD_NAME;
-
-if (!key || !secret || !cloud) {
-throw new Error(
-'Missing Cloudinary ENV'
-);
-}
-
-const timestamp =
-Math.round(Date.now() / 1000);
-
-const folder =
-req.body?.folder ||
-req.query?.folder ||
-'pasong-profiles';
-
-// IMPORTANT:
-// This is a JavaScript template literal.
-// Date.now() WILL be evaluated.
-const publicId =
-req.body?.public_id ||
-req.query?.public_id ||
-"pasong_${Date.now()}";
-
-const sign = params => {
-return crypto
-.createHash('sha1')
-.update(params + secret)
-.digest('hex');
-};
-
-const signatureString =
-"folder=${folder}" +
-"&public_id=${publicId}" +
-"&timestamp=${timestamp}";
-
-return {
-success: true,
-
-cloud_name:
-  cloud,
-
-cloudName:
-  cloud,
-
-api_key:
-  key,
-
-apiKey:
-  key,
-
-timestamp,
-
-signature:
-  sign(signatureString),
-
-folder,
-
-public_id:
-  publicId,
-
-publicId:
-  publicId,
-
-upload_url:
-  `https://api.cloudinary.com/v1_1/${cloud}/image/upload`,
-
-uploadUrl:
-  `https://api.cloudinary.com/v1_1/${cloud}/image/upload`
-
-};
-}
-
-// ======================================================
-// CLOUDINARY SIGNATURE - GET
-// USED BY PROFILE PICTURE
-// ======================================================
-
-app.get(
-'/api/cloudinary/signature',
-(req, res) => {
-try {
-const result =
-createCloudinarySignature(req);
-
-  res.json(result);
-
-} catch (e) {
-  console.error(
-    'GET /api/cloudinary/signature ERROR:',
-    e
-  );
-
-  res.status(500).json({
-    success: false,
-    error: e.message
-  });
-}
-
-}
-);
-
-// ======================================================
-// CLOUDINARY SIGNATURE - POST
-// ======================================================
-
-app.post(
-'/api/cloudinary/signature',
-(req, res) => {
-try {
-const result =
-createCloudinarySignature(req);
-
-  res.json(result);
-
-} catch (e) {
-  console.error(
-    'POST /api/cloudinary/signature ERROR:',
-    e
-  );
-
-  res.status(500).json({
-    success: false,
-    error: e.message
-  });
-}
-
-}
-);
-
-// ======================================================
-// GET APPROVED SONGS
-// ======================================================
-
-app.get('/api/songs', async (req, res) => {
-try {
-const sb =
-getSupabase();
-
-const country =
-  getCountryFromRequest(req);
-
-const pricing =
-  getSongPricing(country);
-
-const {
-  data,
-  error
-} =
-  await sb
-    .from('songs')
-    .select(`
-      *,
-      artist:artist_profiles!songs_artist_id_fkey (
-        id,
-        artist_name,
-        stage_name,
-        profile_image_url,
-        cover_image_url,
-        genre,
-        bio,
-        verified
-      )
-    `)
-    .eq('status', 'approved')
-    .not('cover_url', 'is', null)
-    .order('created_at', {
-      ascending: false
-    })
-    .limit(50);
-
-if (error) {
-  throw error;
-}
-
-const songs =
-  (data || [])
-    .filter(song => {
-      return (
-        song.cover_url &&
-        String(song.cover_url).trim()
-      );
-    })
-    .map(song => {
-      return {
-        ...song,
-
-        artist_id:
-          song.artist_id || null,
-
-        artist:
-          song.artist || null,
-
-        artist_name:
-          song.artist?.stage_name ||
-          song.artist?.artist_name ||
-          'Unknown Artist',
-
-        marketplace_price:
-          pricing.amount,
-
-        marketplace_currency:
-          pricing.currency,
-
-        marketplace_label:
-          pricing.label,
-
-        marketplace_country:
-          country
-      };
+    const signature = makeCloudinarySignature({
+      folder: folder,
+      public_id: publicId,
+      timestamp: timestamp
     });
 
-res.json({
-  success: true,
-  country,
-  pricing,
-  songs
-});
+    const uploadUrl =
+      'https://api.cloudinary.com/v1_1/' +
+      CLOUDINARY_CLOUD_NAME +
+      '/image/upload';
 
-} catch (e) {
-console.error(
-'GET /api/songs ERROR:',
-e
-);
+    res.json({
+      success: true,
 
-res.status(500).json({
-  success: false,
-  error: e.message,
-  songs: []
-});
+      cloud_name: CLOUDINARY_CLOUD_NAME,
+      cloudName: CLOUDINARY_CLOUD_NAME,
 
+      api_key: CLOUDINARY_API_KEY,
+      apiKey: CLOUDINARY_API_KEY,
+
+      timestamp: timestamp,
+
+      signature: signature,
+
+      folder: folder,
+
+      public_id: publicId,
+      publicId: publicId,
+
+      upload_url: uploadUrl,
+      uploadUrl: uploadUrl
+    });
+  } catch (error) {
+    console.error(
+      'Cloudinary signature error:',
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
 }
-});
 
-// ======================================================
-// GET ONE SONG
-// ======================================================
 
 app.get(
-'/api/songs/:id',
-async (req, res) => {
-try {
-const sb =
-getSupabase();
+  '/api/cloudinary/signature',
+  cloudinarySignatureHandler
+);
 
-  const country =
-    getCountryFromRequest(req);
 
-  const pricing =
-    getSongPricing(country);
+app.post(
+  '/api/cloudinary/signature',
+  cloudinarySignatureHandler
+);
 
-  const {
-    data,
-    error
-  } =
-    await sb
+
+/* =========================================================
+   SONG UPLOAD SIGNATURES
+========================================================= */
+
+app.get('/api/songs/sign-upload', async function (req, res) {
+  try {
+    const country = getCountryFromRequest(req);
+
+    const songPricing = getPricing(country);
+    const coverPricing = getCoverPricing(country);
+
+    const title =
+      req.query.title
+        ? String(req.query.title).trim()
+        : 'pasong-song';
+
+    const artistName =
+      req.query.artist_name
+        ? String(req.query.artist_name).trim()
+        : 'PASONG Artist';
+
+    const coverProvided =
+      req.query.has_cover === 'true' ||
+      req.query.has_cover === '1';
+
+    if (!coverProvided) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cover image is required before uploading a PASONG song.',
+        coverRequired: true,
+        coverPricing: coverPricing
+      });
+    }
+
+    const audioTimestamp =
+      Math.floor(Date.now() / 1000);
+
+    const coverTimestamp =
+      Math.floor(Date.now() / 1000);
+
+    const songPublicId =
+      'song_' + Date.now();
+
+    const coverPublicId =
+      'cover_' + Date.now();
+
+    const songFolder = 'pasong-songs';
+    const coverFolder = 'pasong-covers';
+
+    const songSignature =
+      makeCloudinarySignature({
+        folder: songFolder,
+        public_id: songPublicId,
+        timestamp: audioTimestamp
+      });
+
+    const coverSignature =
+      makeCloudinarySignature({
+        folder: coverFolder,
+        public_id: coverPublicId,
+        timestamp: coverTimestamp
+      });
+
+    const audioUploadUrl =
+      'https://api.cloudinary.com/v1_1/' +
+      CLOUDINARY_CLOUD_NAME +
+      '/video/upload';
+
+    const coverUploadUrl =
+      'https://api.cloudinary.com/v1_1/' +
+      CLOUDINARY_CLOUD_NAME +
+      '/image/upload';
+
+    res.json({
+      success: true,
+
+      country: country,
+
+      pricing: songPricing,
+
+      coverPricing: coverPricing,
+
+      artistName: artistName,
+
+      title: title,
+
+      songId: null,
+
+      artistId: null,
+
+      songUpload: {
+        cloud_name: CLOUDINARY_CLOUD_NAME,
+        cloudName: CLOUDINARY_CLOUD_NAME,
+        api_key: CLOUDINARY_API_KEY,
+        apiKey: CLOUDINARY_API_KEY,
+        timestamp: audioTimestamp,
+        signature: songSignature,
+        folder: songFolder,
+        public_id: songPublicId,
+        publicId: songPublicId,
+        upload_url: audioUploadUrl,
+        uploadUrl: audioUploadUrl
+      },
+
+      coverUpload: {
+        cloud_name: CLOUDINARY_CLOUD_NAME,
+        cloudName: CLOUDINARY_CLOUD_NAME,
+        api_key: CLOUDINARY_API_KEY,
+        apiKey: CLOUDINARY_API_KEY,
+        timestamp: coverTimestamp,
+        signature: coverSignature,
+        folder: coverFolder,
+        public_id: coverPublicId,
+        publicId: coverPublicId,
+        upload_url: coverUploadUrl,
+        uploadUrl: coverUploadUrl
+      },
+
+      audio: {
+        cloud_name: CLOUDINARY_CLOUD_NAME,
+        cloudName: CLOUDINARY_CLOUD_NAME,
+        api_key: CLOUDINARY_API_KEY,
+        apiKey: CLOUDINARY_API_KEY,
+        timestamp: audioTimestamp,
+        signature: songSignature,
+        folder: songFolder,
+        public_id: songPublicId,
+        publicId: songPublicId,
+        upload_url: audioUploadUrl,
+        uploadUrl: audioUploadUrl
+      },
+
+      cover: {
+        cloud_name: CLOUDINARY_CLOUD_NAME,
+        cloudName: CLOUDINARY_CLOUD_NAME,
+        api_key: CLOUDINARY_API_KEY,
+        apiKey: CLOUDINARY_API_KEY,
+        timestamp: coverTimestamp,
+        signature: coverSignature,
+        folder: coverFolder,
+        public_id: coverPublicId,
+        publicId: coverPublicId,
+        upload_url: coverUploadUrl,
+        uploadUrl: coverUploadUrl
+      },
+
+      hasCover: true,
+
+      suggestedStatus: 'approved'
+    });
+  } catch (error) {
+    console.error(
+      'Song upload signing error:',
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+
+/* =========================================================
+   SONGS - GET ALL APPROVED SONGS
+========================================================= */
+
+app.get('/api/songs', async function (req, res) {
+  try {
+    const country = getCountryFromRequest(req);
+    const pricing = getPricing(country);
+
+    const result = await supabase
       .from('songs')
-      .select(`
-        *,
-        artist:artist_profiles!songs_artist_id_fkey (
-          id,
-          artist_name,
-          stage_name,
-          profile_image_url,
-          cover_image_url,
-          genre,
-          bio,
-          verified
-        )
-      `)
+      .select('*')
+      .eq('status', 'approved')
+      .not('cover_url', 'is', null)
+      .order('created_at', {
+        ascending: false
+      });
+
+    if (result.error) {
+      throw result.error;
+    }
+
+    const songs = result.data || [];
+
+    const formattedSongs = songs.map(function (song) {
+      return Object.assign({}, song, {
+        display_price: pricing.amount,
+        display_currency: pricing.currency,
+        display_price_label: pricing.label,
+        country: country
+      });
+    });
+
+    res.json({
+      success: true,
+      country: country,
+      pricing: pricing,
+      songs: formattedSongs,
+      nextCursor: null
+    });
+  } catch (error) {
+    console.error(
+      'Get songs error:',
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      songs: []
+    });
+  }
+});
+
+
+/* =========================================================
+   SINGLE SONG
+========================================================= */
+
+app.get('/api/songs/:id', async function (req, res) {
+  try {
+    const country = getCountryFromRequest(req);
+    const pricing = getPricing(country);
+
+    const result = await supabase
+      .from('songs')
+      .select('*')
       .eq('id', req.params.id)
       .eq('status', 'approved')
       .not('cover_url', 'is', null)
-      .single();
-
-  if (error) {
-    throw error;
-  }
-
-  if (
-    !data ||
-    !data.cover_url ||
-    !String(data.cover_url).trim()
-  ) {
-    return res.status(404).json({
-      success: false,
-      error: 'Song not found'
-    });
-  }
-
-  const song = {
-    ...data,
-
-    artist_id:
-      data.artist_id || null,
-
-    artist:
-      data.artist || null,
-
-    artist_name:
-      data.artist?.stage_name ||
-      data.artist?.artist_name ||
-      'Unknown Artist',
-
-    marketplace_price:
-      pricing.amount,
-
-    marketplace_currency:
-      pricing.currency,
-
-    marketplace_label:
-      pricing.label,
-
-    marketplace_country:
-      country
-  };
-
-  res.json({
-    success: true,
-    country,
-    pricing,
-    song
-  });
-
-} catch (e) {
-  console.error(
-    'GET /api/songs/:id ERROR:',
-    e
-  );
-
-  res.status(404).json({
-    success: false,
-    error: 'Song not found'
-  });
-}
-
-}
-);
-
-// ======================================================
-// SIGN SONG + COVER UPLOAD
-// ======================================================
-
-app.post(
-'/api/songs/sign-upload',
-async (req, res) => {
-try {
-const sb =
-getSupabase();
-
-  const {
-    artistName,
-    songTitle,
-    genre,
-    fileName,
-    fileSize,
-    coverFileName,
-    coverFileSize,
-    contract
-  } = req.body;
-
-  if (!artistName) {
-    return res.status(400).json({
-      success: false,
-      error: 'Artist name is required'
-    });
-  }
-
-  if (!songTitle) {
-    return res.status(400).json({
-      success: false,
-      error: 'Song title is required'
-    });
-  }
-
-  if (!fileName) {
-    return res.status(400).json({
-      success: false,
-      error: 'Song file is required'
-    });
-  }
-
-  if (!contract) {
-    return res.status(400).json({
-      success: false,
-      error: 'Upload agreement is required'
-    });
-  }
-
-  // COVER IS REQUIRED
-  if (!coverFileName) {
-    return res.status(400).json({
-      success: false,
-      code: 'COVER_REQUIRED',
-      error:
-        'Cover artwork is required. Please upload a cover before uploading your song.'
-    });
-  }
-
-  // SONG SIZE
-  if (
-    fileSize &&
-    Number(fileSize) >
-      10 * 1024 * 1024
-  ) {
-    return res.status(400).json({
-      success: false,
-      error:
-        'Song file must not exceed 10 MB'
-    });
-  }
-
-  // COVER SIZE
-  if (
-    coverFileSize &&
-    Number(coverFileSize) >
-      5 * 1024 * 1024
-  ) {
-    return res.status(400).json({
-      success: false,
-      error:
-        'Cover image must not exceed 5 MB'
-    });
-  }
-
-  // ==================================================
-  // FIND ARTIST PROFILE
-  // ==================================================
-
-  let artistProfile = null;
-
-  const {
-    data: existingArtist,
-    error: artistFindError
-  } =
-    await sb
-      .from('artist_profiles')
-      .select('*')
-      .or(
-        `stage_name.eq.${artistName},artist_name.eq.${artistName}`
-      )
-      .limit(1)
       .maybeSingle();
 
-  if (artistFindError) {
-    console.error(
-      'Artist lookup error:',
-      artistFindError
-    );
-  }
-
-  if (existingArtist) {
-    artistProfile =
-      existingArtist;
-  } else {
-    const {
-      data: newArtist,
-      error: createArtistError
-    } =
-      await sb
-        .from('artist_profiles')
-        .insert([
-          {
-            artist_name:
-              artistName,
-
-            stage_name:
-              artistName,
-
-            genre:
-              genre ||
-              'Afrobeats',
-
-            verified:
-              false
-          }
-        ])
-        .select('*')
-        .single();
-
-    if (createArtistError) {
-      throw createArtistError;
+    if (result.error) {
+      throw result.error;
     }
 
-    artistProfile =
-      newArtist;
-  }
-
-  // ==================================================
-  // CLOUDINARY ENV
-  // ==================================================
-
-  const key =
-    process.env.CLOUDINARY_API_KEY;
-
-  const secret =
-    process.env.CLOUDINARY_API_SECRET;
-
-  const cloud =
-    process.env.CLOUDINARY_CLOUD_NAME;
-
-  if (!key || !secret || !cloud) {
-    return res.status(500).json({
-      success: false,
-      error:
-        'Missing Cloudinary ENV'
-    });
-  }
-
-  const timestamp =
-    Math.round(Date.now() / 1000);
-
-  const songId =
-    crypto.randomUUID();
-
-  const songPublicId =
-    `pasong_${songId}`;
-
-  const sign = params => {
-    return crypto
-      .createHash('sha1')
-      .update(params + secret)
-      .digest('hex');
-  };
-
-  // ==================================================
-  // SONG UPLOAD
-  // ==================================================
-
-  const songFolder =
-    'pasong-songs';
-
-  const songSignatureString =
-    `folder=${songFolder}` +
-    `&public_id=${songPublicId}` +
-    `&timestamp=${timestamp}`;
-
-  const songUpload = {
-    apiKey:
-      key,
-
-    timestamp,
-
-    signature:
-      sign(songSignatureString),
-
-    folder:
-      songFolder,
-
-    public_id:
-      songPublicId,
-
-    publicId:
-      songPublicId,
-
-    uploadUrl:
-      `https://api.cloudinary.com/v1_1/${cloud}/video/upload`
-  };
-
-  // ==================================================
-  // COVER UPLOAD
-  // ==================================================
-
-  const coverFolder =
-    'pasong-covers';
-
-  const coverPublicId =
-    `${songPublicId}_cover`;
-
-  const coverSignatureString =
-    `folder=${coverFolder}` +
-    `&public_id=${coverPublicId}` +
-    `&timestamp=${timestamp}`;
-
-  const coverUpload = {
-    apiKey:
-      key,
-
-    timestamp,
-
-    signature:
-      sign(coverSignatureString),
-
-    folder:
-      coverFolder,
-
-    public_id:
-      coverPublicId,
-
-    publicId:
-      coverPublicId,
-
-    uploadUrl:
-      `https://api.cloudinary.com/v1_1/${cloud}/image/upload`
-  };
-
-  const country =
-    getCountryFromRequest(req);
-
-  const pricing =
-    getSongPricing(country);
-
-  const coverPricing =
-    getCoverPricing(country);
-
-  res.json({
-    success: true,
-
-    songId,
-
-    artistId:
-      artistProfile?.id ||
-      null,
-
-    country,
-
-    pricing,
-
-    coverPricing,
-
-    songUpload,
-
-    coverUpload,
-
-    // Compatibility aliases
-    audio:
-      songUpload,
-
-    cover:
-      coverUpload,
-
-    hasCover:
-      true,
-
-    suggestedStatus:
-      'approved'
-  });
-
-} catch (e) {
-  console.error(
-    'POST /api/songs/sign-upload ERROR:',
-    e
-  );
-
-  res.status(500).json({
-    success: false,
-    error: e.message
-  });
-}
-
-}
-);
-
-// ======================================================
-// CREATE SONG
-// ======================================================
-
-app.post(
-'/api/songs/create',
-async (req, res) => {
-try {
-const sb =
-getSupabase();
-
-  const {
-    id,
-    title,
-    artist_id,
-    genre,
-    description,
-    audio_url,
-    cover_url,
-    preview_url,
-    duration_seconds,
-    file_size
-  } = req.body;
-
-  if (!id) {
-    return res.status(400).json({
-      success: false,
-      error: 'Song ID is required'
-    });
-  }
-
-  if (!title) {
-    return res.status(400).json({
-      success: false,
-      error: 'Song title is required'
-    });
-  }
-
-  if (!audio_url) {
-    return res.status(400).json({
-      success: false,
-      error: 'Audio URL is required'
-    });
-  }
-
-  // COVER REQUIRED
-  if (
-    !cover_url ||
-    !String(cover_url).trim()
-  ) {
-    return res.status(400).json({
-      success: false,
-      code: 'COVER_REQUIRED',
-      error:
-        'Cover artwork is required. Song was not created.'
-    });
-  }
-
-  const country =
-    getCountryFromRequest(req);
-
-  const pricing =
-    getSongPricing(country);
-
-  // Internal catalog price.
-  // Visitor-facing price is calculated from IP.
-  const catalogPrice =
-    700;
-
-  const catalogCurrency =
-    'UGX';
-
-  const {
-    data,
-    error
-  } =
-    await sb
-      .from('songs')
-      .insert([
-        {
-          id,
-
-          title,
-
-          artist_id:
-            artist_id ||
-            null,
-
-          genre:
-            genre ||
-            'Afrobeats',
-
-          description:
-            description ||
-            null,
-
-          audio_url,
-
-          preview_url:
-            preview_url ||
-            audio_url,
-
-          cover_url:
-            String(cover_url).trim(),
-
-          duration_seconds:
-            Number(duration_seconds) || 0,
-
-          file_size:
-            Number(file_size) || 0,
-
-          price:
-            catalogPrice,
-
-          currency:
-            catalogCurrency,
-
-          status:
-            'approved',
-
-          featured:
-            false,
-
-          plays:
-            0,
-
-          downloads:
-            0
-        }
-      ])
-      .select(`
-        *,
-        artist:artist_profiles!songs_artist_id_fkey (
-          id,
-          artist_name,
-          stage_name,
-          profile_image_url,
-          cover_image_url,
-          genre,
-          bio,
-          verified
-        )
-      `)
-      .single();
-
-  if (error) {
-    throw error;
-  }
-
-  const song = {
-    ...data,
-
-    artist_name:
-      data.artist?.stage_name ||
-      data.artist?.artist_name ||
-      'Unknown Artist',
-
-    marketplace_price:
-      pricing.amount,
-
-    marketplace_currency:
-      pricing.currency,
-
-    marketplace_label:
-      pricing.label,
-
-    marketplace_country:
-      country
-  };
-
-  res.json({
-    success: true,
-    status: 'approved',
-    song,
-    pricing
-  });
-
-} catch (e) {
-  console.error(
-    'POST /api/songs/create ERROR:',
-    e
-  );
-
-  res.status(500).json({
-    success: false,
-    error: e.message
-  });
-}
-
-}
-);
-
-// ======================================================
-// COMPATIBILITY SONG CREATE
-// ======================================================
-
-app.post(
-'/api/songs',
-async (req, res) => {
-try {
-const sb =
-getSupabase();
-
-  const {
-    title,
-    artist_id,
-    genre,
-    audio_url,
-    cover_url,
-    preview_url,
-    duration_seconds,
-    file_size
-  } = req.body;
-
-  if (!title || !audio_url) {
-    return res.status(400).json({
-      success: false,
-      error:
-        'Need title + audio_url'
-    });
-  }
-
-  if (
-    !cover_url ||
-    !String(cover_url).trim()
-  ) {
-    return res.status(400).json({
-      success: false,
-      code: 'COVER_REQUIRED',
-      error:
-        'Cover artwork is required'
-    });
-  }
-
-  const country =
-    getCountryFromRequest(req);
-
-  const pricing =
-    getSongPricing(country);
-
-  const {
-    data,
-    error
-  } =
-    await sb
-      .from('songs')
-      .insert([
-        {
-          title,
-
-          artist_id:
-            artist_id ||
-            null,
-
-          genre:
-            genre ||
-            'Afrobeats',
-
-          audio_url,
-
-          preview_url:
-            preview_url ||
-            audio_url,
-
-          cover_url:
-            String(cover_url).trim(),
-
-          duration_seconds:
-            Number(duration_seconds) || 0,
-
-          file_size:
-            Number(file_size) || 0,
-
-          price:
-            700,
-
-          currency:
-            'UGX',
-
-          status:
-            'approved',
-
-          featured:
-            false,
-
-          plays:
-            0,
-
-          downloads:
-            0
-        }
-      ])
-      .select(`
-        *,
-        artist:artist_profiles!songs_artist_id_fkey (
-          id,
-          artist_name,
-          stage_name,
-          profile_image_url,
-          cover_image_url,
-          genre,
-          bio,
-          verified
-        )
-      `)
-      .single();
-
-  if (error) {
-    throw error;
-  }
-
-  const song = {
-    ...data,
-
-    artist_name:
-      data.artist?.stage_name ||
-      data.artist?.artist_name ||
-      'Unknown Artist',
-
-    marketplace_price:
-      pricing.amount,
-
-    marketplace_currency:
-      pricing.currency,
-
-    marketplace_label:
-      pricing.label,
-
-    marketplace_country:
-      country
-  };
-
-  res.json({
-    success: true,
-    song,
-    pricing
-  });
-
-} catch (e) {
-  console.error(
-    'POST /api/songs ERROR:',
-    e
-  );
-
-  res.status(500).json({
-    success: false,
-    error: e.message
-  });
-}
-
-}
-);
-
-// ======================================================
-// COVER STATUS
-// ======================================================
-
-app.get(
-'/api/songs/:id/cover-status',
-async (req, res) => {
-try {
-const sb =
-getSupabase();
-
-  const {
-    data,
-    error
-  } =
-    await sb
-      .from('songs')
-      .select(`
-        id,
-        title,
-        cover_url,
-        status
-      `)
-      .eq('id', req.params.id)
-      .single();
-
-  if (error) {
-    throw error;
-  }
-
-  if (!data) {
-    return res.status(404).json({
-      success: false,
-      error: 'Song not found'
-    });
-  }
-
-  const hasCover =
-    Boolean(
-      data.cover_url &&
-      String(data.cover_url).trim()
+    if (!result.data) {
+      return res.status(404).json({
+        success: false,
+        error: 'Song not found'
+      });
+    }
+
+    const song = Object.assign(
+      {},
+      result.data,
+      {
+        display_price: pricing.amount,
+        display_currency: pricing.currency,
+        display_price_label: pricing.label,
+        country: country
+      }
     );
 
-  res.json({
-    success: true,
+    res.json({
+      success: true,
+      country: country,
+      pricing: pricing,
+      song: song
+    });
+  } catch (error) {
+    console.error(
+      'Get single song error:',
+      error
+    );
 
-    songId:
-      data.id,
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
-    title:
-      data.title,
 
-    hasCover,
+/* =========================================================
+   CREATE SONG
+========================================================= */
 
-    status:
-      data.status,
+app.post('/api/songs/create', async function (req, res) {
+  try {
+    const body = req.body || {};
 
-    live:
-      data.status === 'approved'
-  });
+    const title =
+      body.title
+        ? String(body.title).trim()
+        : '';
 
-} catch (e) {
-  console.error(
-    'GET /api/songs/:id/cover-status ERROR:',
-    e
+    const artistId =
+      body.artist_id ||
+      null;
+
+    const audioUrl =
+      body.audio_url
+        ? String(body.audio_url).trim()
+        : '';
+
+    const coverUrl =
+      body.cover_url
+        ? String(body.cover_url).trim()
+        : '';
+
+    if (!title) {
+      return res.status(400).json({
+        success: false,
+        error: 'Song title is required'
+      });
+    }
+
+    if (!audioUrl) {
+      return res.status(400).json({
+        success: false,
+        error: 'Audio URL is required'
+      });
+    }
+
+    if (!coverUrl) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cover image is required. Songs without covers cannot be uploaded.',
+        coverRequired: true
+      });
+    }
+
+    const insertData = {
+      id: body.id || undefined,
+      artist_id: artistId,
+      album_id: body.album_id || null,
+      category_id: body.category_id || null,
+      title: title,
+
+      price: 700,
+      currency: 'UGX',
+
+      status: 'approved',
+
+      cover_url: coverUrl,
+      audio_url: audioUrl,
+
+      preview_url:
+        body.preview_url ||
+        audioUrl,
+
+      genre:
+        body.genre ||
+        null,
+
+      description:
+        body.description ||
+        null,
+
+      duration_seconds:
+        Number(body.duration_seconds || 0),
+
+      file_size:
+        Number(body.file_size || 0),
+
+      featured:
+        Boolean(body.featured || false),
+
+      plays:
+        Number(body.plays || 0),
+
+      downloads:
+        Number(body.downloads || 0)
+    };
+
+    const result = await supabase
+      .from('songs')
+      .insert(insertData)
+      .select()
+      .single();
+
+    if (result.error) {
+      throw result.error;
+    }
+
+    res.json({
+      success: true,
+      message: 'Song uploaded successfully',
+      song: result.data
+    });
+  } catch (error) {
+    console.error(
+      'Create song error:',
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+
+/* =========================================================
+   COMPATIBILITY POST /api/songs
+========================================================= */
+
+app.post('/api/songs', async function (req, res) {
+  try {
+    const body = req.body || {};
+
+    if (!body.cover_url) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cover image is required.',
+        coverRequired: true
+      });
+    }
+
+    const insertData = {
+      artist_id: body.artist_id || null,
+      album_id: body.album_id || null,
+      category_id: body.category_id || null,
+      title: body.title || '',
+      price: 700,
+      currency: 'UGX',
+      status: 'approved',
+      cover_url: body.cover_url,
+      audio_url: body.audio_url || '',
+      preview_url: body.preview_url || body.audio_url || '',
+      genre: body.genre || null,
+      description: body.description || null,
+      duration_seconds: Number(body.duration_seconds || 0),
+      file_size: Number(body.file_size || 0),
+      featured: Boolean(body.featured || false),
+      plays: Number(body.plays || 0),
+      downloads: Number(body.downloads || 0)
+    };
+
+    const result = await supabase
+      .from('songs')
+      .insert(insertData)
+      .select()
+      .single();
+
+    if (result.error) {
+      throw result.error;
+    }
+
+    res.json({
+      success: true,
+      song: result.data
+    });
+  } catch (error) {
+    console.error(
+      'POST /api/songs error:',
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+
+/* =========================================================
+   COVER STATUS
+========================================================= */
+
+app.get('/api/songs/:id/cover-status', async function (req, res) {
+  try {
+    const result = await supabase
+      .from('songs')
+      .select('id,title,cover_url,status')
+      .eq('id', req.params.id)
+      .maybeSingle();
+
+    if (result.error) {
+      throw result.error;
+    }
+
+    if (!result.data) {
+      return res.status(404).json({
+        success: false,
+        error: 'Song not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      song: result.data,
+      hasCover:
+        Boolean(result.data.cover_url),
+      approved:
+        result.data.status === 'approved'
+    });
+  } catch (error) {
+    console.error(
+      'Cover status error:',
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+
+/* =========================================================
+   START SERVER
+========================================================= */
+
+app.listen(PORT, function () {
+  console.log(
+    'PASONG API running on port ' + PORT
   );
-
-  res.status(404).json({
-    success: false,
-    error: 'Song not found'
-  });
-}
-
-}
-);
-
-// ======================================================
-// 404 API HANDLER
-// ======================================================
-
-app.use('/api', (req, res) => {
-res.status(404).json({
-success: false,
-error: 'PASONG API endpoint not found',
-path: req.originalUrl
-});
 });
 
-// ======================================================
-// SERVER
-// ======================================================
-
-const PORT =
-process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-console.log(
-"PASONG API running on port ${PORT}"
-);
-});
 
 module.exports = app;
