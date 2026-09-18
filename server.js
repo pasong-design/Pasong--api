@@ -246,6 +246,61 @@ function getPricing(req) {
 
 
 /* =========================================================
+   AUTH HELPER
+========================================================= */
+
+async function getAuthenticatedUser(req) {
+
+  const authorization =
+    req.headers.authorization || "";
+
+  if (
+    !authorization.startsWith("Bearer ")
+  ) {
+    return {
+      user: null,
+      error: "Missing authentication token"
+    };
+  }
+
+  const accessToken =
+    authorization
+      .substring(7)
+      .trim();
+
+  if (!accessToken) {
+    return {
+      user: null,
+      error: "Missing access token"
+    };
+  }
+
+  const result =
+    await supabase.auth.getUser(
+      accessToken
+    );
+
+  if (
+    result.error ||
+    !result.data ||
+    !result.data.user
+  ) {
+
+    return {
+      user: null,
+      error: "Invalid or expired login session"
+    };
+
+  }
+
+  return {
+    user: result.data.user,
+    error: null
+  };
+}
+
+
+/* =========================================================
    BASIC ROUTES
 ========================================================= */
 
@@ -293,6 +348,138 @@ app.get(
       country:
         getCountry(req)
     });
+
+  }
+);
+
+
+/* =========================================================
+   FIND PASONG USER BY EMAIL
+   PRIVATE AUTHENTICATED ROUTE
+========================================================= */
+
+app.get(
+  "/api/users/find",
+  async function (req, res) {
+
+    try {
+
+      const auth =
+        await getAuthenticatedUser(req);
+
+      if (!auth.user) {
+
+        return res.status(401).json({
+          success: false,
+          error: auth.error
+        });
+
+      }
+
+      const email =
+        String(
+          req.query.email || ""
+        )
+        .trim()
+        .toLowerCase();
+
+      if (!email) {
+
+        return res.status(400).json({
+          success: false,
+          error:
+            "Email is required"
+        });
+
+      }
+
+      let foundUser = null;
+
+      let page = 1;
+      const perPage = 1000;
+
+      while (page <= 10 && !foundUser) {
+
+        const result =
+          await supabase.auth.admin.listUsers({
+            page: page,
+            perPage: perPage
+          });
+
+        if (result.error) {
+
+          console.error(
+            "Find user error:",
+            result.error
+          );
+
+          return res.status(500).json({
+            success: false,
+            error:
+              result.error.message
+          });
+
+        }
+
+        const users =
+          result.data &&
+          result.data.users
+            ? result.data.users
+            : [];
+
+        foundUser =
+          users.find(function (item) {
+
+            return String(
+              item.email || ""
+            )
+            .trim()
+            .toLowerCase() === email;
+
+          });
+
+        if (
+          users.length < perPage
+        ) {
+          break;
+        }
+
+        page++;
+      }
+
+      if (!foundUser) {
+
+        return res.status(404).json({
+          success: false,
+          error:
+            "No PASONG account found with that email"
+        });
+
+      }
+
+      res.json({
+
+        success: true,
+
+        user_id:
+          foundUser.id
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        "User lookup exception:",
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        error:
+          error.message
+      });
+
+    }
 
   }
 );
@@ -504,112 +691,43 @@ app.post(
 
     try {
 
-      const authorization =
-        req.headers.authorization || "";
+      const auth =
+        await getAuthenticatedUser(req);
 
-
-      if (
-        !authorization.startsWith(
-          "Bearer "
-        )
-      ) {
+      if (!auth.user) {
 
         return res.status(401).json({
           success: false,
-          error:
-            "Missing authentication token"
+          error: auth.error
         });
 
       }
-
-
-      const accessToken =
-        authorization
-          .substring(7)
-          .trim();
-
-
-      if (!accessToken) {
-
-        return res.status(401).json({
-          success: false,
-          error:
-            "Missing access token"
-        });
-
-      }
-
-
-      /* VERIFY USER */
-
-      const userClient =
-        createClient(
-          SUPABASE_URL,
-          SUPABASE_SERVICE_ROLE_KEY
-        );
-
-
-      const userResult =
-        await userClient.auth.getUser(
-          accessToken
-        );
-
-
-      if (
-        userResult.error ||
-        !userResult.data ||
-        !userResult.data.user
-      ) {
-
-        console.error(
-          "User verification error:",
-          userResult.error
-        );
-
-        return res.status(401).json({
-          success: false,
-          error:
-            "Invalid or expired login session"
-        });
-
-      }
-
 
       const user =
-        userResult.data.user;
-
+        auth.user;
 
       const body =
         req.body || {};
-
-
-      /* NEW PASONG FIELDS */
 
       const realName =
         String(
           body.real_name || ""
         ).trim();
 
-
       const performingName =
         String(
           body.performing_name || ""
         ).trim();
-
 
       const mobileMoneyProvider =
         String(
           body.mobile_money_provider || ""
         ).trim();
 
-
       const mobileMoneyNumber =
         String(
           body.mobile_money_number || ""
         ).trim();
-
-
-      /* OLD FIELD COMPATIBILITY */
 
       const artistName =
         String(
@@ -619,7 +737,6 @@ app.post(
           ""
         ).trim();
 
-
       const stageName =
         String(
           body.stage_name ||
@@ -628,7 +745,6 @@ app.post(
           ""
         ).trim();
 
-
       const mobileNumber =
         String(
           body.mobile_number ||
@@ -636,9 +752,6 @@ app.post(
           mobileMoneyNumber ||
           ""
         ).trim();
-
-
-      /* VALIDATION */
 
       if (!realName) {
 
@@ -650,7 +763,6 @@ app.post(
 
       }
 
-
       if (!performingName) {
 
         return res.status(400).json({
@@ -661,7 +773,6 @@ app.post(
 
       }
 
-
       if (!mobileMoneyProvider) {
 
         return res.status(400).json({
@@ -671,7 +782,6 @@ app.post(
         });
 
       }
-
 
       if (
         mobileMoneyProvider !== "MTN" &&
@@ -686,7 +796,6 @@ app.post(
 
       }
 
-
       if (!mobileMoneyNumber) {
 
         return res.status(400).json({
@@ -697,15 +806,11 @@ app.post(
 
       }
 
-
-      /* SAVE BOTH OLD AND NEW COLUMNS */
-
       const profileData = {
 
         user_id:
           user.id,
 
-        /* Existing required columns */
         artist_name:
           artistName,
 
@@ -715,7 +820,6 @@ app.post(
         mobile_number:
           mobileNumber,
 
-        /* New identity fields */
         real_name:
           realName,
 
@@ -733,7 +837,6 @@ app.post(
 
       };
 
-
       const result =
         await supabase
           .from("artist_profiles")
@@ -747,7 +850,6 @@ app.post(
           .select()
           .single();
 
-
       if (result.error) {
 
         console.error(
@@ -756,19 +858,14 @@ app.post(
         );
 
         return res.status(500).json({
-
           success: false,
-
           error:
             result.error.message,
-
           details:
             result.error.details || null
-
         });
 
       }
-
 
       res.json({
 
@@ -782,7 +879,6 @@ app.post(
 
       });
 
-
     } catch (error) {
 
       console.error(
@@ -791,12 +887,9 @@ app.post(
       );
 
       res.status(500).json({
-
         success: false,
-
         error:
           error.message
-
       });
 
     }
@@ -819,7 +912,6 @@ app.get(
         req.query.user_id ||
         req.query.userId;
 
-
       if (!userId) {
 
         return res.status(400).json({
@@ -829,7 +921,6 @@ app.get(
         });
 
       }
-
 
       const result =
         await supabase
@@ -841,7 +932,6 @@ app.get(
           )
           .maybeSingle();
 
-
       if (result.error) {
 
         return res.status(500).json({
@@ -852,7 +942,6 @@ app.get(
 
       }
 
-
       res.json({
 
         success: true,
@@ -862,7 +951,6 @@ app.get(
 
       });
 
-
     } catch (error) {
 
       console.error(
@@ -871,12 +959,9 @@ app.get(
       );
 
       res.status(500).json({
-
         success: false,
-
         error:
           error.message
-
       });
 
     }
@@ -899,19 +984,16 @@ app.get(
         req.query.title ||
         "song";
 
-
       const artistName =
         req.query.artist_name ||
         req.query.artistName ||
         "artist";
-
 
       const hasCover =
         String(
           req.query.has_cover || ""
         ).toLowerCase() ===
         "true";
-
 
       if (!hasCover) {
 
@@ -922,7 +1004,6 @@ app.get(
         });
 
       }
-
 
       const safeTitle =
         String(title)
@@ -935,7 +1016,6 @@ app.get(
             60
           );
 
-
       const safeArtist =
         String(artistName)
           .replace(
@@ -947,23 +1027,19 @@ app.get(
             60
           );
 
-
       const folder =
         "pasong-songs/" +
         safeArtist;
-
 
       const timestamp =
         Math.floor(
           Date.now() / 1000
         );
 
-
       const audioPublicId =
         safeTitle +
         "_" +
         Date.now();
-
 
       const audioParams = {
 
@@ -978,12 +1054,10 @@ app.get(
 
       };
 
-
       const coverPublicId =
         safeTitle +
         "_cover_" +
         Date.now();
-
 
       const coverParams = {
 
@@ -997,7 +1071,6 @@ app.get(
           coverPublicId
 
       };
-
 
       res.json({
 
@@ -1059,7 +1132,6 @@ app.get(
 
       });
 
-
     } catch (error) {
 
       console.error(
@@ -1109,7 +1181,6 @@ app.get(
             }
           );
 
-
       if (result.error) {
 
         return res.status(500).json({
@@ -1120,10 +1191,8 @@ app.get(
 
       }
 
-
       const pricing =
         getPricing(req);
-
 
       const songs =
         (result.data || [])
@@ -1146,7 +1215,6 @@ app.get(
 
           });
 
-
       res.json({
 
         success: true,
@@ -1158,7 +1226,6 @@ app.get(
           null
 
       });
-
 
     } catch (error) {
 
@@ -1199,7 +1266,6 @@ app.get(
           )
           .maybeSingle();
 
-
       if (result.error) {
 
         return res.status(500).json({
@@ -1209,7 +1275,6 @@ app.get(
         });
 
       }
-
 
       if (!result.data) {
 
@@ -1221,10 +1286,8 @@ app.get(
 
       }
 
-
       const pricing =
         getPricing(req);
-
 
       res.json({
 
@@ -1246,7 +1309,6 @@ app.get(
         }
 
       });
-
 
     } catch (error) {
 
@@ -1277,37 +1339,90 @@ app.post(
 
     try {
 
+      /* -----------------------------------------------------
+         VERIFY LOGGED-IN USER
+      ----------------------------------------------------- */
+
+      const auth =
+        await getAuthenticatedUser(req);
+
+      if (!auth.user) {
+
+        return res.status(401).json({
+          success: false,
+          error: auth.error
+        });
+
+      }
+
+      const loggedInUser =
+        auth.user;
+
       const body =
         req.body || {};
 
 
+      /* -----------------------------------------------------
+         BASIC FIELDS
+      ----------------------------------------------------- */
+
       const title =
-        body.title ||
-        "";
-
-
-      const artistId =
-        body.artist_id ||
-        body.artistId ||
-        null;
-
+        String(
+          body.title || ""
+        ).trim();
 
       const audioUrl =
-        body.audio_url ||
-        body.audioUrl ||
-        "";
-
+        String(
+          body.audio_url ||
+          body.audioUrl ||
+          ""
+        ).trim();
 
       const coverUrl =
-        body.cover_url ||
-        body.coverUrl ||
-        "";
-
+        String(
+          body.cover_url ||
+          body.coverUrl ||
+          ""
+        ).trim();
 
       const genre =
-        body.genre ||
+        String(
+          body.genre || ""
+        ).trim() || null;
+
+      const labelName =
+        String(
+          body.label_name ||
+          body.label ||
+          ""
+        ).trim() || null;
+
+
+      /* -----------------------------------------------------
+         CREDIT ACCOUNTS
+      ----------------------------------------------------- */
+
+      const uploaderUserId =
+        loggedInUser.id;
+
+      const artistUserId =
+        body.artist_user_id ||
+        body.artist_id ||
+        body.artistId ||
+        loggedInUser.id;
+
+      const producerUserId =
+        body.producer_user_id ||
         null;
 
+      const writerUserId =
+        body.writer_user_id ||
+        null;
+
+
+      /* -----------------------------------------------------
+         REQUIRED VALIDATION
+      ----------------------------------------------------- */
 
       if (!title) {
 
@@ -1319,7 +1434,6 @@ app.post(
 
       }
 
-
       if (!audioUrl) {
 
         return res.status(400).json({
@@ -1329,7 +1443,6 @@ app.post(
         });
 
       }
-
 
       if (!coverUrl) {
 
@@ -1342,13 +1455,288 @@ app.post(
       }
 
 
+      /* -----------------------------------------------------
+         VERIFY ARTIST ACCOUNT
+      ----------------------------------------------------- */
+
+      const accountIds = [];
+
+      accountIds.push(
+        artistUserId
+      );
+
+      if (producerUserId) {
+        accountIds.push(
+          producerUserId
+        );
+      }
+
+      if (writerUserId) {
+        accountIds.push(
+          writerUserId
+        );
+      }
+
+
+      const uniqueAccountIds =
+        Array.from(
+          new Set(accountIds)
+        );
+
+
+      const userChecks =
+        await Promise.all(
+          uniqueAccountIds.map(
+            async function (userId) {
+
+              const result =
+                await supabase.auth.admin.getUserById(
+                  userId
+                );
+
+              return {
+                userId:
+                  userId,
+                result:
+                  result
+              };
+
+            }
+          )
+        );
+
+
+      for (
+        let i = 0;
+        i < userChecks.length;
+        i++
+      ) {
+
+        const check =
+          userChecks[i];
+
+        if (
+          check.result.error ||
+          !check.result.data ||
+          !check.result.data.user
+        ) {
+
+          return res.status(400).json({
+            success: false,
+            error:
+              "One of the selected PASONG credit accounts does not exist"
+          });
+
+        }
+
+      }
+
+
+      /* -----------------------------------------------------
+         DUPLICATE PROTECTION
+         
+         First protection layer:
+         same title + same credited account.
+         
+         This prevents an artist/producer/writer from
+         repeatedly uploading the same song under the
+         same credit relationship.
+      ----------------------------------------------------- */
+
+      const existingResult =
+        await supabase
+          .from("songs")
+          .select(
+            "id, title, artist_user_id, producer_user_id, writer_user_id, uploader_user_id, status"
+          )
+          .ilike(
+            "title",
+            title
+          );
+
+
+      if (existingResult.error) {
+
+        console.error(
+          "Duplicate check error:",
+          existingResult.error
+        );
+
+        return res.status(500).json({
+          success: false,
+          error:
+            existingResult.error.message
+        });
+
+      }
+
+
+      const existingSongs =
+        existingResult.data || [];
+
+
+      let duplicateSong = null;
+
+
+      for (
+        let i = 0;
+        i < existingSongs.length;
+        i++
+      ) {
+
+        const existing =
+          existingSongs[i];
+
+
+        const sameArtist =
+          existing.artist_user_id &&
+          existing.artist_user_id ===
+          artistUserId;
+
+        const sameProducer =
+          producerUserId &&
+          existing.producer_user_id &&
+          existing.producer_user_id ===
+          producerUserId;
+
+        const sameWriter =
+          writerUserId &&
+          existing.writer_user_id &&
+          existing.writer_user_id ===
+          writerUserId;
+
+        const sameUploader =
+          existing.uploader_user_id &&
+          existing.uploader_user_id ===
+          uploaderUserId;
+
+
+        if (
+          sameArtist ||
+          sameProducer ||
+          sameWriter ||
+          sameUploader
+        ) {
+
+          duplicateSong =
+            existing;
+
+          break;
+
+        }
+
+      }
+
+
+      if (duplicateSong) {
+
+        let ownerId =
+          duplicateSong.artist_user_id ||
+          duplicateSong.uploader_user_id;
+
+        let ownerName =
+          "another PASONG account";
+
+
+        if (ownerId) {
+
+          const profileResult =
+            await supabase
+              .from("artist_profiles")
+              .select(
+                "performing_name, stage_name, artist_name"
+              )
+              .eq(
+                "user_id",
+                ownerId
+              )
+              .maybeSingle();
+
+          if (
+            profileResult.data
+          ) {
+
+            ownerName =
+              profileResult.data.performing_name ||
+              profileResult.data.stage_name ||
+              profileResult.data.artist_name ||
+              ownerName;
+
+          }
+
+        }
+
+
+        return res.status(409).json({
+
+          success: false,
+
+          duplicate: true,
+
+          error:
+            "This song already exists on PASONG under " +
+            ownerName,
+
+          existing_song_id:
+            duplicateSong.id,
+
+          existing_song_status:
+            duplicateSong.status
+
+        });
+
+      }
+
+
+      /* -----------------------------------------------------
+         SERVER-CONTROLLED PRICE
+      ----------------------------------------------------- */
+
+      const pricing =
+        getPricing(req);
+
+
+      /*
+        Database catalog price is kept in UGX 700 for
+        compatibility with the current PASONG songs table.
+
+        Actual customer display/payment price must always
+        come from the backend pricing system.
+      */
+
+      const catalogPrice =
+        700;
+
+      const catalogCurrency =
+        "UGX";
+
+
+      /* -----------------------------------------------------
+         INSERT SONG
+      ----------------------------------------------------- */
+
       const insertData = {
 
         title:
           title,
 
         artist_id:
-          artistId,
+          artistUserId,
+
+        uploader_user_id:
+          uploaderUserId,
+
+        artist_user_id:
+          artistUserId,
+
+        producer_user_id:
+          producerUserId,
+
+        writer_user_id:
+          writerUserId,
+
+        label_name:
+          labelName,
 
         audio_url:
           audioUrl,
@@ -1360,10 +1748,10 @@ app.post(
           genre,
 
         price:
-          700,
+          catalogPrice,
 
         currency:
-          "UGX",
+          catalogCurrency,
 
         status:
           "approved"
@@ -1405,10 +1793,12 @@ app.post(
           "Song uploaded successfully",
 
         song:
-          result.data
+          result.data,
+
+        pricing:
+          pricing
 
       });
-
 
     } catch (error) {
 
@@ -1439,9 +1829,26 @@ app.post(
 
     try {
 
+      const auth =
+        await getAuthenticatedUser(req);
+
+      if (!auth.user) {
+
+        return res.status(401).json({
+          success: false,
+          error: auth.error
+        });
+
+      }
+
       const body =
         req.body || {};
 
+      const artistUserId =
+        body.artist_user_id ||
+        body.artist_id ||
+        body.artistId ||
+        auth.user.id;
 
       const result =
         await supabase
@@ -1452,8 +1859,25 @@ app.post(
               body.title || "",
 
             artist_id:
-              body.artist_id ||
-              body.artistId ||
+              artistUserId,
+
+            uploader_user_id:
+              auth.user.id,
+
+            artist_user_id:
+              artistUserId,
+
+            producer_user_id:
+              body.producer_user_id ||
+              null,
+
+            writer_user_id:
+              body.writer_user_id ||
+              null,
+
+            label_name:
+              body.label_name ||
+              body.label ||
               null,
 
             audio_url:
@@ -1503,7 +1927,6 @@ app.post(
           result.data
 
       });
-
 
     } catch (error) {
 
@@ -1581,7 +2004,6 @@ app.get(
           result.data.status
 
       });
-
 
     } catch (error) {
 
