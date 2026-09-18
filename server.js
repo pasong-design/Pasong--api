@@ -47,7 +47,8 @@ app.get("/", function(req, res) {
     PASONG: "LIVE",
     upload: "READY",
     multi_artist: "READY",
-    pricing: "READY"
+    pricing: "READY",
+    edit_song: "READY"
   });
 });
 
@@ -1405,8 +1406,6 @@ app.post(
   "/api/songs",
   async function(req, res) {
 
-    // Use the same upload logic
-    // by forwarding the request internally.
     try {
 
       const loggedInUser =
@@ -1726,10 +1725,6 @@ app.get(
       const songs =
         result.data || [];
 
-      // --------------------------------------------------
-      // GET ALL MULTI-ARTIST CREDITS
-      // --------------------------------------------------
-
       const songIds =
         songs.map(
           function(song) {
@@ -1764,10 +1759,6 @@ app.get(
         }
       }
 
-
-      // --------------------------------------------------
-      // GET ARTIST PROFILES
-      // --------------------------------------------------
 
       const artistUserIds =
         Array.from(
@@ -1807,10 +1798,6 @@ app.get(
         }
       }
 
-
-      // --------------------------------------------------
-      // FORMAT SONGS
-      // --------------------------------------------------
 
       const pricing =
         getPricing(req);
@@ -2013,10 +2000,6 @@ app.get(
         result.data;
 
 
-      // --------------------------------------------------
-      // ARTIST CREDITS
-      // --------------------------------------------------
-
       const creditsResult =
         await supabase
           .from("song_artists")
@@ -2037,10 +2020,6 @@ app.get(
       const credits =
         creditsResult.data || [];
 
-
-      // --------------------------------------------------
-      // ARTIST PROFILES
-      // --------------------------------------------------
 
       const ids =
         credits.map(
@@ -2199,4 +2178,596 @@ app.get(
 
 app.get(
   "/api/songs/:id/cover-status",
-  async function(req, res
+  async function(req, res) {
+
+    try {
+
+      const result =
+        await supabase
+          .from("songs")
+          .select(
+            "id,cover_url,status"
+          )
+          .eq(
+            "id",
+            req.params.id
+          )
+          .maybeSingle();
+
+      if (result.error) {
+
+        return res.status(500).json({
+          error:
+            result.error.message
+        });
+      }
+
+      if (!result.data) {
+
+        return res.status(404).json({
+          error:
+            "Song not found."
+        });
+      }
+
+      return res.json({
+
+        song_id:
+          result.data.id,
+
+        has_cover:
+          !!result.data.cover_url,
+
+        cover_url:
+          result.data.cover_url,
+
+        status:
+          result.data.status
+      });
+
+    } catch (error) {
+
+      return res.status(500).json({
+        error:
+          "Could not check cover status."
+      });
+    }
+  }
+);
+
+
+// ======================================================
+// EDIT SONG TITLE
+// ======================================================
+
+app.patch(
+  "/api/songs/:id/title",
+  async function(req, res) {
+
+    try {
+
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error:
+            "Authentication required."
+        });
+      }
+
+      const songId =
+        String(
+          req.params.id || ""
+        ).trim();
+
+      const newTitle =
+        String(
+          req.body.title || ""
+        ).trim();
+
+      if (!songId) {
+        return res.status(400).json({
+          error:
+            "Song ID is required."
+        });
+      }
+
+      if (!newTitle) {
+        return res.status(400).json({
+          error:
+            "Song title is required."
+        });
+      }
+
+      if (newTitle.length > 150) {
+        return res.status(400).json({
+          error:
+            "Song title is too long."
+        });
+      }
+
+
+      // --------------------------------------------------
+      // FIND SONG
+      // --------------------------------------------------
+
+      const songResult =
+        await supabase
+          .from("songs")
+          .select(
+            "id,title,uploader_user_id,artist_user_id"
+          )
+          .eq(
+            "id",
+            songId
+          )
+          .maybeSingle();
+
+      if (songResult.error) {
+
+        return res.status(500).json({
+          error:
+            songResult.error.message
+        });
+      }
+
+      if (!songResult.data) {
+
+        return res.status(404).json({
+          error:
+            "Song not found."
+        });
+      }
+
+      const song =
+        songResult.data;
+
+
+      // --------------------------------------------------
+      // OWNERSHIP CHECK
+      // --------------------------------------------------
+
+      if (
+        song.uploader_user_id !==
+        user.id
+      ) {
+
+        return res.status(403).json({
+          error:
+            "You can only edit songs uploaded by your account."
+        });
+      }
+
+
+      // --------------------------------------------------
+      // CHECK DUPLICATE TITLE
+      // --------------------------------------------------
+
+      const duplicateResult =
+        await supabase
+          .from("songs")
+          .select(
+            "id,title"
+          )
+          .ilike(
+            "title",
+            newTitle
+          )
+          .neq(
+            "id",
+            songId
+          )
+          .limit(1);
+
+      if (duplicateResult.error) {
+
+        return res.status(500).json({
+          error:
+            duplicateResult.error.message
+        });
+      }
+
+      if (
+        duplicateResult.data &&
+        duplicateResult.data.length > 0
+      ) {
+
+        return res.status(409).json({
+          error:
+            "Another song with this title already exists on PASONG."
+        });
+      }
+
+
+      // --------------------------------------------------
+      // UPDATE TITLE
+      // --------------------------------------------------
+
+      const updateResult =
+        await supabase
+          .from("songs")
+          .update({
+            title:
+              newTitle
+          })
+          .eq(
+            "id",
+            songId
+          )
+          .select()
+          .single();
+
+      if (updateResult.error) {
+
+        console.error(
+          "Song title update error:",
+          updateResult.error
+        );
+
+        return res.status(500).json({
+          error:
+            updateResult.error.message
+        });
+      }
+
+
+      // --------------------------------------------------
+      // SUCCESS
+      // --------------------------------------------------
+
+      return res.json({
+
+        success:
+          true,
+
+        message:
+          "Song title updated successfully.",
+
+        song:
+          updateResult.data
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Edit title error:",
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          error.message ||
+          "Could not update song title."
+      });
+    }
+  }
+);
+
+
+// ======================================================
+// LISTEN / PREVIEW
+// ======================================================
+
+app.post(
+  "/api/songs/:id/listen",
+  async function(req, res) {
+
+    try {
+
+      const songId =
+        req.params.id;
+
+      const songResult =
+        await supabase
+          .from("songs")
+          .select(
+            "id,status"
+          )
+          .eq(
+            "id",
+            songId
+          )
+          .maybeSingle();
+
+      if (
+        songResult.error ||
+        !songResult.data
+      ) {
+
+        return res.status(404).json({
+          error:
+            "Song not found."
+        });
+      }
+
+      if (
+        songResult.data.status !==
+        "approved"
+      ) {
+
+        return res.status(403).json({
+          error:
+            "Song is not available."
+        });
+      }
+
+      const user =
+        await getAuthenticatedUser(req);
+
+      const insertData = {
+
+        song_id:
+          songId
+      };
+
+      if (user) {
+        insertData.user_id =
+          user.id;
+      }
+
+      const result =
+        await supabase
+          .from("song_plays")
+          .insert(
+            insertData
+          );
+
+      if (result.error) {
+
+        console.error(
+          "Listen tracking error:",
+          result.error
+        );
+      }
+
+      return res.json({
+        success: true
+      });
+
+    } catch (error) {
+
+      return res.json({
+        success: true
+      });
+    }
+  }
+);
+
+
+// ======================================================
+// ROYALTY CALCULATION HELPER
+// ======================================================
+
+function calculateRoyaltyAmounts(
+  saleAmount,
+  artistRows
+) {
+
+  const artistPool =
+    saleAmount * 0.40;
+
+  const producerAmount =
+    saleAmount * 0.20;
+
+  const writerAmount =
+    saleAmount * 0.15;
+
+  const pasongAmount =
+    saleAmount * 0.25;
+
+  const results = [];
+
+  let artistUsed = 0;
+
+  for (
+    let i = 0;
+    i < artistRows.length;
+    i++
+  ) {
+
+    let amount;
+
+    if (
+      i ===
+      artistRows.length - 1
+    ) {
+
+      amount =
+        Number(
+          (
+            artistPool -
+            artistUsed
+          ).toFixed(2)
+        );
+
+    } else {
+
+      amount =
+        Number(
+          (
+            artistPool *
+            (
+              Number(
+                artistRows[i]
+                  .artist_share_percent
+              ) / 40
+            )
+          ).toFixed(2)
+        );
+
+      artistUsed =
+        Number(
+          (
+            artistUsed +
+            amount
+          ).toFixed(2)
+        );
+    }
+
+    results.push({
+
+      recipient_user_id:
+        artistRows[i]
+          .artist_user_id,
+
+      recipient_type:
+        "artist",
+
+      percentage:
+        Number(
+          artistRows[i]
+            .artist_share_percent
+        ),
+
+      amount:
+        amount
+    });
+  }
+
+  return {
+
+    artist:
+      results,
+
+    producer:
+      producerAmount,
+
+    writer:
+      writerAmount,
+
+    pasong:
+      pasongAmount
+  };
+}
+
+
+// ======================================================
+// ROYALTY PREVIEW
+// ======================================================
+
+app.get(
+  "/api/songs/:id/royalty-preview",
+  async function(req, res) {
+
+    try {
+
+      const songId =
+        req.params.id;
+
+      const songResult =
+        await supabase
+          .from("songs")
+          .select(
+            "id,price,currency,producer_user_id,writer_user_id"
+          )
+          .eq(
+            "id",
+            songId
+          )
+          .maybeSingle();
+
+      if (
+        songResult.error ||
+        !songResult.data
+      ) {
+
+        return res.status(404).json({
+          error:
+            "Song not found."
+        });
+      }
+
+      const creditsResult =
+        await supabase
+          .from("song_artists")
+          .select(
+            "artist_user_id,artist_share_percent,artist_order"
+          )
+          .eq(
+            "song_id",
+            songId
+          )
+          .order(
+            "artist_order",
+            {
+              ascending: true
+            }
+          );
+
+      if (creditsResult.error) {
+
+        return res.status(500).json({
+          error:
+            creditsResult.error.message
+        });
+      }
+
+      const credits =
+        creditsResult.data || [];
+
+      const calculation =
+        calculateRoyaltyAmounts(
+          Number(
+            songResult.data.price
+          ),
+          credits
+        );
+
+      return res.json({
+
+        song_id:
+          songId,
+
+        sale_amount:
+          Number(
+            songResult.data.price
+          ),
+
+        currency:
+          songResult.data.currency,
+
+        artist_pool_percent:
+          40,
+
+        producer_percent:
+          20,
+
+        writer_percent:
+          15,
+
+        pasong_percent:
+          25,
+
+        calculation:
+          calculation
+      });
+
+    } catch (error) {
+
+      return res.status(500).json({
+        error:
+          error.message ||
+          "Could not calculate royalties."
+      });
+    }
+  }
+);
+
+
+// ======================================================
+// START SERVER
+// ======================================================
+
+app.listen(
+  PORT,
+  function() {
+
+    console.log(
+      "PASONG API running on port " +
+      PORT
+    );
+
+  }
+);
