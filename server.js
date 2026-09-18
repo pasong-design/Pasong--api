@@ -9,6 +9,11 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
+
+/* =========================================================
+   ENVIRONMENT
+========================================================= */
+
 const PORT =
   process.env.PORT || 3000;
 
@@ -28,27 +33,6 @@ const CLOUDINARY_API_SECRET =
   process.env.CLOUDINARY_API_SECRET;
 
 
-if(!SUPABASE_URL){
-  console.error("Missing SUPABASE_URL");
-}
-
-if(!SUPABASE_SERVICE_ROLE_KEY){
-  console.error("Missing SUPABASE_SERVICE_ROLE_KEY");
-}
-
-if(!CLOUDINARY_CLOUD_NAME){
-  console.error("Missing CLOUDINARY_CLOUD_NAME");
-}
-
-if(!CLOUDINARY_API_KEY){
-  console.error("Missing CLOUDINARY_API_KEY");
-}
-
-if(!CLOUDINARY_API_SECRET){
-  console.error("Missing CLOUDINARY_API_SECRET");
-}
-
-
 const supabase =
   createClient(
     SUPABASE_URL,
@@ -63,7 +47,7 @@ const supabase =
 
 
 /* =========================================================
-   BASIC
+   HOME
 ========================================================= */
 
 app.get("/", function(req, res){
@@ -77,30 +61,40 @@ app.get("/", function(req, res){
 });
 
 
+/* =========================================================
+   HEALTH
+========================================================= */
+
 app.get("/health", function(req, res){
 
   res.json({
+
     success:true,
+
     status:"PASONG: LIVE",
+
     upload:"READY",
+
     cloudinary:
       CLOUDINARY_CLOUD_NAME &&
       CLOUDINARY_API_KEY &&
       CLOUDINARY_API_SECRET
         ? "READY"
         : "NOT READY",
+
     supabase:
       SUPABASE_URL &&
       SUPABASE_SERVICE_ROLE_KEY
         ? "READY"
         : "NOT READY"
+
   });
 
 });
 
 
 /* =========================================================
-   AUTHENTICATED USER
+   AUTHENTICATION
 ========================================================= */
 
 async function getAuthenticatedUser(req){
@@ -108,8 +102,7 @@ async function getAuthenticatedUser(req){
   try{
 
     const authHeader =
-      req.headers.authorization ||
-      "";
+      req.headers.authorization || "";
 
     if(
       !authHeader ||
@@ -120,10 +113,12 @@ async function getAuthenticatedUser(req){
 
     }
 
+
     const accessToken =
       authHeader
         .replace("Bearer ", "")
         .trim();
+
 
     if(!accessToken){
 
@@ -131,21 +126,24 @@ async function getAuthenticatedUser(req){
 
     }
 
+
     const result =
       await supabase.auth.getUser(
         accessToken
       );
 
+
     if(result.error){
 
       console.error(
-        "Supabase auth error:",
+        "Supabase authentication error:",
         result.error.message
       );
 
       return null;
 
     }
+
 
     return result.data.user || null;
 
@@ -164,30 +162,8 @@ async function getAuthenticatedUser(req){
 
 
 /* =========================================================
-   IP / COUNTRY
+   COUNTRY / IP
 ========================================================= */
-
-function getClientIp(req){
-
-  const forwarded =
-    req.headers["x-forwarded-for"];
-
-  if(forwarded){
-
-    return String(forwarded)
-      .split(",")[0]
-      .trim();
-
-  }
-
-  return (
-    req.headers["x-real-ip"] ||
-    req.socket.remoteAddress ||
-    ""
-  );
-
-}
-
 
 function getCountry(req){
 
@@ -204,6 +180,10 @@ function getCountry(req){
 }
 
 
+/* =========================================================
+   SONG PRICING
+========================================================= */
+
 function getPricing(req){
 
   const country =
@@ -215,9 +195,13 @@ function getPricing(req){
   if(country === "UG"){
 
     return {
+
       amount:700,
+
       currency:"UGX",
+
       label:"UGX 700"
+
     };
 
   }
@@ -226,29 +210,37 @@ function getPricing(req){
   /* East Africa */
 
   const eastAfrica = [
+
     "KE",
     "TZ",
     "RW",
     "BI",
     "SS"
+
   ];
+
 
   if(
     eastAfrica.includes(country)
   ){
 
     return {
+
       amount:1000,
+
       currency:"UGX",
+
       label:"UGX 1,000"
+
     };
 
   }
 
 
-  /* Other Africa */
+  /* Other African countries */
 
   const africa = [
+
     "NG",
     "GH",
     "ZA",
@@ -267,16 +259,22 @@ function getPricing(req){
     "NA",
     "SL",
     "LR"
+
   ];
+
 
   if(
     africa.includes(country)
   ){
 
     return {
+
       amount:0.57,
+
       currency:"USD",
+
       label:"$0.57"
+
     };
 
   }
@@ -287,9 +285,13 @@ function getPricing(req){
   if(country === "GB"){
 
     return {
+
       amount:1,
+
       currency:"GBP",
+
       label:"£1"
+
     };
 
   }
@@ -298,9 +300,13 @@ function getPricing(req){
   /* Rest of world */
 
   return {
+
     amount:1,
+
     currency:"USD",
+
     label:"$1"
+
   };
 
 }
@@ -315,43 +321,53 @@ function getCoverDesignPrice(req){
   const country =
     getCountry(req);
 
+
   if(country === "UG"){
 
     return {
+
       amount:10000,
+
       currency:"UGX",
+
       label:"UGX 10,000"
+
     };
 
   }
 
+
   return {
+
     amount:10,
+
     currency:"USD",
+
     label:"$10"
+
   };
 
 }
 
 
 /* =========================================================
-   TIP PRICE / SPLIT
+   TIP SPLIT
 ========================================================= */
 
 function getTipSplit(amount){
 
-  const numericAmount =
+  const total =
     Number(amount) || 0;
 
-  const artist =
-    numericAmount * 0.70;
-
-  const pasong =
-    numericAmount * 0.30;
 
   return {
-    artist:artist,
-    pasong:pasong
+
+    artist:
+      total * 0.70,
+
+    pasong:
+      total * 0.30
+
   };
 
 }
@@ -359,7 +375,6 @@ function getTipSplit(amount){
 
 /* =========================================================
    CLOUDINARY SIGNATURE
-   FIXED
 ========================================================= */
 
 app.post(
@@ -370,6 +385,7 @@ app.post(
 
       const user =
         await getAuthenticatedUser(req);
+
 
       if(!user){
 
@@ -414,9 +430,10 @@ app.post(
 
 
       /*
-       * IMPORTANT:
-       * Cloudinary signs the exact parameters
-       * that will be sent during upload.
+       * Cloudinary signature.
+       *
+       * The parameters here MUST be exactly
+       * the same parameters sent to Cloudinary.
        */
 
       const stringToSign =
@@ -440,11 +457,14 @@ app.post(
 
         success:true,
 
-        signature:signature,
+        signature:
+          signature,
 
-        timestamp:timestamp,
+        timestamp:
+          timestamp,
 
-        folder:folder,
+        folder:
+          folder,
 
         cloud_name:
           CLOUDINARY_CLOUD_NAME,
@@ -492,6 +512,7 @@ app.get(
       const user =
         await getAuthenticatedUser(req);
 
+
       if(!user){
 
         return res.status(401).json({
@@ -537,11 +558,14 @@ app.get(
 
         success:true,
 
-        signature:signature,
+        signature:
+          signature,
 
-        timestamp:timestamp,
+        timestamp:
+          timestamp,
 
-        folder:folder,
+        folder:
+          folder,
 
         cloud_name:
           CLOUDINARY_CLOUD_NAME,
@@ -583,6 +607,7 @@ app.get(
       const loggedInUser =
         await getAuthenticatedUser(req);
 
+
       if(!loggedInUser){
 
         return res.status(401).json({
@@ -599,8 +624,7 @@ app.get(
 
       const email =
         String(
-          req.query.email ||
-          ""
+          req.query.email || ""
         )
         .trim()
         .toLowerCase();
@@ -622,8 +646,11 @@ app.get(
 
       const result =
         await supabase.auth.admin.listUsers({
+
           page:1,
+
           perPage:1000
+
         });
 
 
@@ -643,13 +670,17 @@ app.get(
           function(user){
 
             return (
+
               String(
-                user.email ||
-                ""
+                user.email || ""
               )
               .trim()
-              .toLowerCase() ===
+              .toLowerCase()
+
+              ===
+
               email
+
             );
 
           }
@@ -718,6 +749,7 @@ app.post(
       const user =
         await getAuthenticatedUser(req);
 
+
       if(!user){
 
         return res.status(401).json({
@@ -735,6 +767,12 @@ app.post(
       const body =
         req.body || {};
 
+
+      /*
+       * Get existing profile first.
+       * This allows profile picture uploads
+       * without deleting existing profile information.
+       */
 
       const existingResult =
         await supabase
@@ -778,7 +816,7 @@ app.post(
         ).trim();
 
 
-      const mobileMoneyProvider =
+      const provider =
         String(
           body.mobile_money_provider ||
           existing.mobile_money_provider ||
@@ -786,7 +824,7 @@ app.post(
         ).trim();
 
 
-      const mobileMoneyNumber =
+      const mobileNumber =
         String(
           body.mobile_money_number ||
           body.mobile_number ||
@@ -798,11 +836,16 @@ app.post(
 
       const profileImageUrl =
         body.profile_image_url !== undefined
+
           ? body.profile_image_url
-          : existing.profile_image_url || null;
+
+          : (
+              existing.profile_image_url ||
+              null
+            );
 
 
-      const updateData = {
+      const profileData = {
 
         user_id:
           user.id,
@@ -820,13 +863,13 @@ app.post(
           performingName,
 
         mobile_number:
-          mobileMoneyNumber,
+          mobileNumber,
 
         mobile_money_number:
-          mobileMoneyNumber,
+          mobileNumber,
 
         mobile_money_provider:
-          mobileMoneyProvider,
+          provider,
 
         profile_image_url:
           profileImageUrl
@@ -838,7 +881,7 @@ app.post(
         await supabase
           .from("artist_profiles")
           .upsert(
-            updateData,
+            profileData,
             {
               onConflict:"user_id"
             }
@@ -889,7 +932,7 @@ app.post(
 
 
 /* =========================================================
-   ARTIST PROFILE GET
+   GET ARTIST PROFILE
 ========================================================= */
 
 app.get(
@@ -900,6 +943,7 @@ app.get(
 
       const user =
         await getAuthenticatedUser(req);
+
 
       if(!user){
 
@@ -962,7 +1006,7 @@ app.get(
 
 
 /* =========================================================
-   SONG SIGN UPLOAD CHECK
+   SONG UPLOAD CHECK
 ========================================================= */
 
 app.post(
@@ -973,6 +1017,7 @@ app.post(
 
       const user =
         await getAuthenticatedUser(req);
+
 
       if(!user){
 
@@ -988,12 +1033,10 @@ app.post(
       }
 
 
-      const hasCover =
-        req.body &&
-        req.body.has_cover === true;
-
-
-      if(!hasCover){
+      if(
+        !req.body ||
+        req.body.has_cover !== true
+      ){
 
         return res.status(400).json({
 
@@ -1044,8 +1087,13 @@ app.post(
 
     try{
 
+      /* -----------------------------------------
+         AUTHENTICATE UPLOADER
+      ----------------------------------------- */
+
       const loggedInUser =
         await getAuthenticatedUser(req);
+
 
       if(!loggedInUser){
 
@@ -1065,58 +1113,52 @@ app.post(
         req.body || {};
 
 
+      /* -----------------------------------------
+         BASIC DATA
+      ----------------------------------------- */
+
       const title =
         String(
-          body.title ||
-          ""
+          body.title || ""
         ).trim();
 
 
-      const artistId =
+      const artistUserId =
         body.artist_user_id ||
-        body.artist_id ||
         loggedInUser.id;
 
 
-      const producerId =
+      const producerUserId =
         body.producer_user_id ||
         null;
 
 
-      const writerId =
+      const writerUserId =
         body.writer_user_id ||
         null;
 
 
-      const uploaderId =
-        loggedInUser.id;
-
-
       const labelName =
         String(
-          body.label_name ||
-          ""
+          body.label_name || ""
         ).trim();
 
 
       const genre =
         String(
-          body.genre ||
-          ""
+          body.genre || ""
         ).trim();
 
 
       const coverUrl =
         String(
-          body.cover_url ||
-          ""
+          body.cover_url || ""
         ).trim();
 
 
       const audioUrl =
         String(
-          body.audio_url ||
-          ""
+          body.audio_url || ""
         ).trim();
 
 
@@ -1162,13 +1204,13 @@ app.post(
       }
 
 
-      /*
-       * Validate artist account
-       */
+      /* -----------------------------------------
+         VERIFY ARTIST ACCOUNT
+      ----------------------------------------- */
 
       const artistCheck =
         await supabase.auth.admin.getUserById(
-          artistId
+          artistUserId
         );
 
 
@@ -1189,15 +1231,70 @@ app.post(
       }
 
 
+      /* -----------------------------------------
+         FIND ARTIST PROFILE
+      ----------------------------------------- */
+
+      const artistProfileResult =
+        await supabase
+          .from("artist_profiles")
+          .select("*")
+          .eq(
+            "user_id",
+            artistUserId
+          )
+          .maybeSingle();
+
+
+      if(artistProfileResult.error){
+
+        throw artistProfileResult.error;
+
+      }
+
+
+      if(!artistProfileResult.data){
+
+        return res.status(400).json({
+
+          success:false,
+
+          error:
+            "Artist profile not found. Please save your Artist Profile before uploading."
+
+        });
+
+      }
+
+
+      const artistProfile =
+        artistProfileResult.data;
+
+
       /*
-       * Validate producer
+       * VERY IMPORTANT
+       *
+       * artist_id is an OLD database
+       * foreign key.
+       *
+       * It expects artist_profiles.id.
+       *
+       * artist_user_id expects auth.users.id.
        */
 
-      if(producerId){
+      const artistProfileId =
+        artistProfile.id;
+
+
+      /* -----------------------------------------
+         VERIFY PRODUCER
+      ----------------------------------------- */
+
+      if(producerUserId){
 
         const producerCheck =
           await supabase.auth.admin.getUserById(
-            producerId
+            producerUserId
           );
 
 
@@ -1220,15 +1317,15 @@ app.post(
       }
 
 
-      /*
-       * Validate writer
-       */
+      /* -----------------------------------------
+         VERIFY WRITER
+      ----------------------------------------- */
 
-      if(writerId){
+      if(writerUserId){
 
         const writerCheck =
           await supabase.auth.admin.getUserById(
-            writerId
+            writerUserId
           );
 
 
@@ -1251,12 +1348,12 @@ app.post(
       }
 
 
-      /*
-       * Duplicate song check
-       */
+      /* -----------------------------------------
+         DUPLICATE CHECK
+      ----------------------------------------- */
 
-      let duplicateQuery =
-        supabase
+      const duplicateResult =
+        await supabase
           .from("songs")
           .select(
             "id,title,artist_user_id,producer_user_id,writer_user_id,uploader_user_id"
@@ -1265,11 +1362,7 @@ app.post(
             "title",
             title
           )
-          .limit(20);
-
-
-      const duplicateResult =
-        await duplicateQuery;
+          .limit(50);
 
 
       if(duplicateResult.error){
@@ -1288,41 +1381,35 @@ app.post(
           function(song){
 
             return (
+
               String(
-                song.artist_user_id ||
-                ""
-              ) ===
-              String(
-                artistId ||
-                ""
+                song.artist_user_id || ""
               )
+              ===
+              String(
+                artistUserId || ""
+              )
+
               &&
+
               String(
-                song.producer_user_id ||
-                ""
-              ) ===
-              String(
-                producerId ||
-                ""
+                song.producer_user_id || ""
               )
+              ===
+              String(
+                producerUserId || ""
+              )
+
               &&
+
               String(
-                song.writer_user_id ||
-                ""
-              ) ===
-              String(
-                writerId ||
-                ""
+                song.writer_user_id || ""
               )
-              &&
+              ===
               String(
-                song.uploader_user_id ||
-                ""
-              ) ===
-              String(
-                uploaderId ||
-                ""
+                writerUserId || ""
               )
+
             );
 
           }
@@ -1331,35 +1418,11 @@ app.post(
 
       if(duplicate){
 
-        let performingName =
+        const performingName =
+          artistProfile.performing_name ||
+          artistProfile.stage_name ||
+          artistProfile.artist_name ||
           "";
-
-
-        const profileResult =
-          await supabase
-            .from("artist_profiles")
-            .select(
-              "performing_name,stage_name,artist_name"
-            )
-            .eq(
-              "user_id",
-              duplicate.uploader_user_id ||
-              duplicate.artist_user_id
-            )
-            .maybeSingle();
-
-
-        if(
-          profileResult.data
-        ){
-
-          performingName =
-            profileResult.data.performing_name ||
-            profileResult.data.stage_name ||
-            profileResult.data.artist_name ||
-            "";
-
-        }
 
 
         return res.status(409).json({
@@ -1380,58 +1443,102 @@ app.post(
       }
 
 
-      /*
-       * IP-based pricing
-       */
+      /* -----------------------------------------
+         PRICE
+      ----------------------------------------- */
 
       const pricing =
         getPricing(req);
 
 
-      /*
-       * Insert song
-       */
+      /* -----------------------------------------
+         DATABASE INSERT
+      ----------------------------------------- */
 
       const insertData = {
 
-        uploader_user_id:
-          uploaderId,
+        /*
+         * OLD FK
+         * songs.artist_id
+         * -> artist_profiles.id
+         */
+
+        artist_id:
+          artistProfileId,
+
+
+        /*
+         * NEW USER RELATION
+         * -> auth.users.id
+         */
 
         artist_user_id:
-          artistId,
+          artistUserId,
+
+
+        /*
+         * PERSON WHO UPLOADED
+         */
+
+        uploader_user_id:
+          loggedInUser.id,
+
+
+        /*
+         * PRODUCER
+         */
 
         producer_user_id:
-          producerId,
+          producerUserId,
+
+
+        /*
+         * WRITER
+         */
 
         writer_user_id:
-          writerId,
+          writerUserId,
+
+
+        /*
+         * LABEL
+         */
 
         label_name:
           labelName || null,
 
+
+        /*
+         * SONG
+         */
+
         title:
           title,
 
-        artist_id:
-          artistId,
 
-        category_id:
-          null,
-
-        album_id:
-          null,
-
-        genre:
-          genre || null,
+        /*
+         * PRICE
+         */
 
         price:
           pricing.amount,
 
+
         currency:
           pricing.currency,
 
+
+        /*
+         * STORE STATUS
+         */
+
         status:
           "approved",
+
+
+        /*
+         * FILES
+         */
 
         cover_url:
           coverUrl,
@@ -1440,6 +1547,31 @@ app.post(
           audioUrl
 
       };
+
+
+      console.log(
+        "Creating PASONG song:",
+        {
+          artist_id:
+            artistProfileId,
+
+          artist_user_id:
+            artistUserId,
+
+          uploader_user_id:
+            loggedInUser.id,
+
+          producer_user_id:
+            producerUserId,
+
+          writer_user_id:
+            writerUserId,
+
+          title:
+            title
+
+        }
+      );
 
 
       const result =
@@ -1455,9 +1587,10 @@ app.post(
       if(result.error){
 
         console.error(
-          "Song database error:",
+          "SONG DATABASE INSERT ERROR:",
           result.error
         );
+
 
         return res.status(400).json({
 
@@ -1490,7 +1623,7 @@ app.post(
     }catch(error){
 
       console.error(
-        "Create song error:",
+        "CREATE SONG ERROR:",
         error
       );
 
@@ -1512,7 +1645,7 @@ app.post(
 
 
 /* =========================================================
-   CREATE SONG COMPATIBILITY ROUTE
+   COMPATIBILITY SONG POST
 ========================================================= */
 
 app.post(
@@ -1523,6 +1656,7 @@ app.post(
 
       const user =
         await getAuthenticatedUser(req);
+
 
       if(!user){
 
@@ -1542,18 +1676,60 @@ app.post(
         req.body || {};
 
 
+      const artistUserId =
+        body.artist_user_id ||
+        user.id;
+
+
+      const artistProfileResult =
+        await supabase
+          .from("artist_profiles")
+          .select("id")
+          .eq(
+            "user_id",
+            artistUserId
+          )
+          .maybeSingle();
+
+
+      if(
+        artistProfileResult.error
+      ){
+
+        throw artistProfileResult.error;
+
+      }
+
+
+      if(
+        !artistProfileResult.data
+      ){
+
+        return res.status(400).json({
+
+          success:false,
+
+          error:
+            "Artist profile not found."
+
+        });
+
+      }
+
+
       const pricing =
         getPricing(req);
 
 
-      const data = {
+      const insertData = {
 
-        uploader_user_id:
-          user.id,
+        artist_id:
+          artistProfileResult.data.id,
 
         artist_user_id:
-          body.artist_user_id ||
-          body.artist_id ||
+          artistUserId,
+
+        uploader_user_id:
           user.id,
 
         producer_user_id:
@@ -1570,18 +1746,6 @@ app.post(
 
         title:
           body.title,
-
-        artist_id:
-          body.artist_id ||
-          user.id,
-
-        category_id:
-          body.category_id ||
-          null,
-
-        album_id:
-          body.album_id ||
-          null,
 
         price:
           pricing.amount,
@@ -1604,7 +1768,9 @@ app.post(
       const result =
         await supabase
           .from("songs")
-          .insert(data)
+          .insert(
+            insertData
+          )
           .select()
           .single();
 
@@ -1654,7 +1820,7 @@ app.post(
 
 
 /* =========================================================
-   PUBLIC SONG LIST
+   GET SONGS
 ========================================================= */
 
 app.get(
@@ -1723,11 +1889,14 @@ app.get(
 
         success:true,
 
-        songs:songs,
+        songs:
+          songs,
 
-        nextCursor:null,
+        nextCursor:
+          null,
 
-        pricing:pricing
+        pricing:
+          pricing
 
       });
 
@@ -1750,7 +1919,7 @@ app.get(
 
 
 /* =========================================================
-   SINGLE SONG
+   GET ONE SONG
 ========================================================= */
 
 app.get(
@@ -1759,17 +1928,13 @@ app.get(
 
     try{
 
-      const id =
-        req.params.id;
-
-
       const result =
         await supabase
           .from("songs")
           .select("*")
           .eq(
             "id",
-            id
+            req.params.id
           )
           .eq(
             "status",
@@ -1846,7 +2011,7 @@ app.get(
 
 
 /* =========================================================
-   COVER STATUS
+   SONG COVER STATUS
 ========================================================= */
 
 app.get(
@@ -1923,7 +2088,7 @@ app.get(
 
 
 /* =========================================================
-   PRICING
+   PRICING API
 ========================================================= */
 
 app.get(
@@ -1941,8 +2106,13 @@ app.get(
         getCoverDesignPrice(req),
 
       tip_split:{
-        artist_percent:70,
-        pasong_percent:30
+
+        artist_percent:
+          70,
+
+        pasong_percent:
+          30
+
       }
 
     });
@@ -1952,7 +2122,7 @@ app.get(
 
 
 /* =========================================================
-   TIP SPLIT
+   TIP SPLIT API
 ========================================================= */
 
 app.post(
@@ -1963,6 +2133,7 @@ app.post(
 
       const user =
         await getAuthenticatedUser(req);
+
 
       if(!user){
 
@@ -2011,7 +2182,8 @@ app.post(
 
         success:true,
 
-        amount:amount,
+        amount:
+          amount,
 
         artist:
           split.artist,
@@ -2047,9 +2219,10 @@ app.use(
   function(err, req, res, next){
 
     console.error(
-      "Unhandled error:",
+      "PASONG ERROR:",
       err
     );
+
 
     res.status(500).json({
 
@@ -2066,7 +2239,7 @@ app.use(
 
 
 /* =========================================================
-   START
+   START SERVER
 ========================================================= */
 
 app.listen(
