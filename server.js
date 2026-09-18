@@ -45,12 +45,6 @@ const SUPABASE_SERVICE_ROLE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
   process.env.SUPABASE_SERVICE_KEY;
 
-if (!SUPABASE_SERVICE_ROLE_KEY) {
-  console.error(
-    "WARNING: SUPABASE_SERVICE_ROLE_KEY is missing"
-  );
-}
-
 const supabase =
   createClient(
     SUPABASE_URL,
@@ -175,13 +169,11 @@ function getPricing(req) {
     "EG"
   ];
 
-
   let song = {
     amount: 1,
     currency: "USD",
     label: "$1 USD"
   };
-
 
   let cover = {
     amount: 10,
@@ -236,19 +228,19 @@ function getPricing(req) {
 
 
   return {
-
     country:
       country || "UNKNOWN",
 
-    song: song,
+    song:
+      song,
 
-    cover: cover,
+    cover:
+      cover,
 
     tip: {
       artistPercent: 70,
       pasongPercent: 30
     }
-
   };
 }
 
@@ -270,23 +262,17 @@ app.get("/", function (req, res) {
 app.get("/health", function (req, res) {
 
   res.json({
-
     success: true,
-
     status: "PASONG: LIVE",
-
     upload: "READY",
-
     cloudinary:
       CLOUDINARY_CLOUD_NAME
         ? "READY"
         : "MISSING",
-
     supabase:
       SUPABASE_URL
         ? "READY"
         : "MISSING"
-
   });
 
 });
@@ -301,15 +287,11 @@ app.get(
   function (req, res) {
 
     res.json({
-
       success: true,
-
       pricing:
         getPricing(req),
-
       country:
         getCountry(req)
-
     });
 
   }
@@ -340,26 +322,19 @@ app.get(
           Date.now() / 1000
         );
 
-
       const paramsToSign = {
-
         timestamp:
           timestamp,
-
         folder:
           folder,
-
         public_id:
           publicId
-
       };
-
 
       const signature =
         makeCloudinarySignature(
           paramsToSign
         );
-
 
       res.json({
 
@@ -404,7 +379,6 @@ app.get(
 
       });
 
-
     } catch (error) {
 
       console.error(
@@ -413,12 +387,9 @@ app.get(
       );
 
       res.status(500).json({
-
         success: false,
-
         error:
           error.message
-
       });
 
     }
@@ -447,26 +418,19 @@ app.post(
           Date.now() / 1000
         );
 
-
       const paramsToSign = {
-
         timestamp:
           timestamp,
-
         folder:
           folder,
-
         public_id:
           publicId
-
       };
-
 
       const signature =
         makeCloudinarySignature(
           paramsToSign
         );
-
 
       res.json({
 
@@ -511,7 +475,6 @@ app.post(
 
       });
 
-
     } catch (error) {
 
       console.error(
@@ -520,12 +483,9 @@ app.post(
       );
 
       res.status(500).json({
-
         success: false,
-
         error:
           error.message
-
       });
 
     }
@@ -555,12 +515,9 @@ app.post(
       ) {
 
         return res.status(401).json({
-
           success: false,
-
           error:
             "Missing authentication token"
-
         });
 
       }
@@ -575,12 +532,9 @@ app.post(
       if (!accessToken) {
 
         return res.status(401).json({
-
           success: false,
-
           error:
             "Missing access token"
-
         });
 
       }
@@ -613,12 +567,9 @@ app.post(
         );
 
         return res.status(401).json({
-
           success: false,
-
           error:
             "Invalid or expired login session"
-
         });
 
       }
@@ -627,11 +578,12 @@ app.post(
       const user =
         userResult.data.user;
 
+
       const body =
         req.body || {};
 
 
-      /* NEW PROFILE FIELDS */
+      /* NEW PASONG FIELDS */
 
       const realName =
         String(
@@ -657,17 +609,43 @@ app.post(
         ).trim();
 
 
+      /* OLD FIELD COMPATIBILITY */
+
+      const artistName =
+        String(
+          body.artist_name ||
+          body.artistName ||
+          performingName ||
+          ""
+        ).trim();
+
+
+      const stageName =
+        String(
+          body.stage_name ||
+          body.stageName ||
+          performingName ||
+          ""
+        ).trim();
+
+
+      const mobileNumber =
+        String(
+          body.mobile_number ||
+          body.mobileNumber ||
+          mobileMoneyNumber ||
+          ""
+        ).trim();
+
+
       /* VALIDATION */
 
       if (!realName) {
 
         return res.status(400).json({
-
           success: false,
-
           error:
             "Real/legal name is required"
-
         });
 
       }
@@ -676,12 +654,20 @@ app.post(
       if (!performingName) {
 
         return res.status(400).json({
-
           success: false,
-
           error:
             "Performing/stage name is required"
+        });
 
+      }
+
+
+      if (!mobileMoneyProvider) {
+
+        return res.status(400).json({
+          success: false,
+          error:
+            "Select MTN or Airtel"
         });
 
       }
@@ -693,12 +679,9 @@ app.post(
       ) {
 
         return res.status(400).json({
-
           success: false,
-
           error:
-            "Select MTN or Airtel"
-
+            "Invalid mobile-money provider"
         });
 
       }
@@ -707,24 +690,32 @@ app.post(
       if (!mobileMoneyNumber) {
 
         return res.status(400).json({
-
           success: false,
-
           error:
             "Mobile money number is required"
-
         });
 
       }
 
 
-      /* SAVE NEW PROFILE DATA */
+      /* SAVE BOTH OLD AND NEW COLUMNS */
 
       const profileData = {
 
         user_id:
           user.id,
 
+        /* Existing required columns */
+        artist_name:
+          artistName,
+
+        stage_name:
+          stageName,
+
+        mobile_number:
+          mobileNumber,
+
+        /* New identity fields */
         real_name:
           realName,
 
@@ -815,7 +806,7 @@ app.post(
 
 
 /* =========================================================
-   GET ARTIST / ACCOUNT PROFILE
+   GET ARTIST PROFILE
 ========================================================= */
 
 app.get(
@@ -832,12 +823,9 @@ app.get(
       if (!userId) {
 
         return res.status(400).json({
-
           success: false,
-
           error:
             "user_id is required"
-
         });
 
       }
@@ -857,12 +845,9 @@ app.get(
       if (result.error) {
 
         return res.status(500).json({
-
           success: false,
-
           error:
             result.error.message
-
         });
 
       }
@@ -931,12 +916,9 @@ app.get(
       if (!hasCover) {
 
         return res.status(400).json({
-
           success: false,
-
           error:
             "Cover image is required"
-
         });
 
       }
@@ -1086,12 +1068,9 @@ app.get(
       );
 
       res.status(500).json({
-
         success: false,
-
         error:
           error.message
-
       });
 
     }
@@ -1134,12 +1113,9 @@ app.get(
       if (result.error) {
 
         return res.status(500).json({
-
           success: false,
-
           error:
             result.error.message
-
         });
 
       }
@@ -1192,12 +1168,9 @@ app.get(
       );
 
       res.status(500).json({
-
         success: false,
-
         error:
           error.message
-
       });
 
     }
@@ -1207,7 +1180,7 @@ app.get(
 
 
 /* =========================================================
-   GET SINGLE SONG
+   SINGLE SONG
 ========================================================= */
 
 app.get(
@@ -1230,12 +1203,9 @@ app.get(
       if (result.error) {
 
         return res.status(500).json({
-
           success: false,
-
           error:
             result.error.message
-
         });
 
       }
@@ -1244,12 +1214,9 @@ app.get(
       if (!result.data) {
 
         return res.status(404).json({
-
           success: false,
-
           error:
             "Song not found"
-
         });
 
       }
@@ -1289,12 +1256,9 @@ app.get(
       );
 
       res.status(500).json({
-
         success: false,
-
         error:
           error.message
-
       });
 
     }
@@ -1318,7 +1282,8 @@ app.post(
 
 
       const title =
-        body.title || "";
+        body.title ||
+        "";
 
 
       const artistId =
@@ -1347,12 +1312,9 @@ app.post(
       if (!title) {
 
         return res.status(400).json({
-
           success: false,
-
           error:
             "Song title is required"
-
         });
 
       }
@@ -1361,12 +1323,9 @@ app.post(
       if (!audioUrl) {
 
         return res.status(400).json({
-
           success: false,
-
           error:
             "Audio URL is required"
-
         });
 
       }
@@ -1375,12 +1334,9 @@ app.post(
       if (!coverUrl) {
 
         return res.status(400).json({
-
           success: false,
-
           error:
             "Cover image is required"
-
         });
 
       }
@@ -1433,12 +1389,9 @@ app.post(
         );
 
         return res.status(500).json({
-
           success: false,
-
           error:
             result.error.message
-
         });
 
       }
@@ -1465,12 +1418,9 @@ app.post(
       );
 
       res.status(500).json({
-
         success: false,
-
         error:
           error.message
-
       });
 
     }
@@ -1537,12 +1487,9 @@ app.post(
       if (result.error) {
 
         return res.status(500).json({
-
           success: false,
-
           error:
             result.error.message
-
         });
 
       }
@@ -1601,12 +1548,9 @@ app.get(
       if (result.error) {
 
         return res.status(500).json({
-
           success: false,
-
           error:
             result.error.message
-
         });
 
       }
@@ -1615,12 +1559,9 @@ app.get(
       if (!result.data) {
 
         return res.status(404).json({
-
           success: false,
-
           error:
             "Song not found"
-
         });
 
       }
@@ -1645,12 +1586,9 @@ app.get(
     } catch (error) {
 
       res.status(500).json({
-
         success: false,
-
         error:
           error.message
-
       });
 
     }
