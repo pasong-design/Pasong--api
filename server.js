@@ -1,27 +1,32 @@
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
+const path = require("path");
 const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 
-app.use(cors());
+app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
 const PORT = process.env.PORT || 10000;
 
 const SUPABASE_URL =
-  process.env.SUPABASE_URL;
+  process.env.SUPABASE_URL ||
+  "https://mtufczmjlkvycarxylgh.supabase.co";
 
 const SUPABASE_SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SERVICE_KEY;
 
 const CLOUDINARY_CLOUD_NAME =
-  process.env.CLOUDINARY_CLOUD_NAME;
+  process.env.CLOUDINARY_CLOUD_NAME ||
+  "vuehnvkp";
 
 const CLOUDINARY_API_KEY =
-  process.env.CLOUDINARY_API_KEY;
+  process.env.CLOUDINARY_API_KEY ||
+  "621955771344375";
 
 const CLOUDINARY_API_SECRET =
   process.env.CLOUDINARY_API_SECRET;
@@ -33,26 +38,30 @@ const supabase =
   );
 
 
-/* =========================================================
-   HEALTH
-========================================================= */
+// ======================================================
+// BASIC
+// ======================================================
+
+app.get("/", function(req, res) {
+  res.json({
+    PASONG: "LIVE",
+    upload: "READY",
+    multi_artist: "READY",
+    pricing: "READY"
+  });
+});
 
 app.get("/health", function(req, res) {
-
-  return res.json({
-    success: true,
-    status: "PASONG: LIVE",
-    upload: "READY",
-    cloudinary: "READY",
-    supabase: "READY"
+  res.json({
+    status: "ok",
+    service: "PASONG API"
   });
-
 });
 
 
-/* =========================================================
-   AUTHENTICATED USER
-========================================================= */
+// ======================================================
+// AUTHENTICATED USER
+// ======================================================
 
 async function getAuthenticatedUser(req) {
 
@@ -81,20 +90,17 @@ async function getAuthenticatedUser(req) {
 }
 
 
-/* =========================================================
-   COUNTRY / PRICING
-========================================================= */
+// ======================================================
+// COUNTRY / IP PRICING
+// ======================================================
 
 function getCountry(req) {
 
-  const headers =
-    req.headers || {};
-
   const country =
-    headers["x-vercel-ip-country"] ||
-    headers["cf-ipcountry"] ||
-    headers["x-country-code"] ||
-    "UG";
+    req.headers["x-vercel-ip-country"] ||
+    req.headers["cf-ipcountry"] ||
+    req.headers["x-country-code"] ||
+    "";
 
   return String(country)
     .trim()
@@ -102,97 +108,103 @@ function getCountry(req) {
 }
 
 
-function getPricing(country) {
+function getPricing(req) {
 
-  const eastAfrica = [
-    "KE",
-    "TZ",
-    "RW",
-    "BI",
-    "SS"
-  ];
+  const country =
+    getCountry(req);
 
-  const otherAfrica = [
-    "NG",
-    "GH",
-    "ZA",
-    "ZM",
-    "ZW",
-    "ET",
-    "SN",
-    "CI",
-    "CM",
-    "CD",
-    "CG",
-    "AO",
-    "MZ",
-    "MW",
-    "NA",
-    "BW",
-    "SL",
-    "LR",
-    "GM"
-  ];
-
+  // Uganda
   if (country === "UG") {
-
     return {
       amount: 700,
       currency: "UGX",
       label: "UGX 700"
     };
-
   }
 
-  if (eastAfrica.includes(country)) {
+  // East Africa
+  const eastAfrica = [
+    "KE",
+    "TZ",
+    "RW",
+    "BI",
+    "SS",
+    "ET"
+  ];
 
+  if (eastAfrica.includes(country)) {
     return {
       amount: 1000,
       currency: "UGX",
       label: "UGX 1,000"
     };
-
   }
 
-  if (otherAfrica.includes(country)) {
+  // Other Africa
+  const africa = [
+    "NG",
+    "GH",
+    "ZA",
+    "ZM",
+    "ZW",
+    "MW",
+    "MZ",
+    "BW",
+    "NA",
+    "CM",
+    "SN",
+    "CI",
+    "SL",
+    "LR",
+    "GM",
+    "GN",
+    "EG",
+    "MA",
+    "DZ",
+    "TN"
+  ];
 
+  if (africa.includes(country)) {
     return {
       amount: 0.57,
       currency: "USD",
       label: "$0.57"
     };
-
   }
 
+  // United Kingdom
   if (country === "GB") {
-
     return {
       amount: 1,
       currency: "GBP",
       label: "£1"
     };
-
   }
 
+  // Rest of world
   return {
     amount: 1,
     currency: "USD",
     label: "$1"
   };
-
 }
 
 
-function getCoverDesignPrice(country) {
+// ======================================================
+// COVER DESIGN PRICE
+// ======================================================
+
+function getCoverDesignPrice(req) {
+
+  const country =
+    getCountry(req);
 
   if (country === "UG") {
-
     return {
       amount: 10000,
       currency: "UGX",
       label: "UGX 10,000"
     };
-
   }
 
   return {
@@ -200,94 +212,74 @@ function getCoverDesignPrice(country) {
     currency: "USD",
     label: "$10"
   };
-
 }
 
-
-function getTipSplit(amount) {
-
-  return {
-    artist: Number((amount * 0.70).toFixed(2)),
-    pasong: Number((amount * 0.30).toFixed(2))
-  };
-
-}
-
-
-/* =========================================================
-   ROOT
-========================================================= */
-
-app.get("/", function(req, res) {
-
-  return res.json({
-    success: true,
-    name: "PASONG API",
-    status: "LIVE"
-  });
-
-});
-
-
-/* =========================================================
-   PRICING
-========================================================= */
 
 app.get("/api/pricing", function(req, res) {
 
-  const country =
-    getCountry(req);
-
   const pricing =
-    getPricing(country);
+    getPricing(req);
 
-  return res.json({
-    country: country,
-    price: pricing
+  res.json({
+    country: getCountry(req),
+    price: pricing.amount,
+    currency: pricing.currency,
+    label: pricing.label
   });
-
 });
 
 
 app.get("/api/cover-design-price", function(req, res) {
 
-  const country =
-    getCountry(req);
-
   const pricing =
-    getCoverDesignPrice(country);
+    getCoverDesignPrice(req);
 
-  return res.json({
-    country: country,
-    price: pricing
+  res.json({
+    country: getCountry(req),
+    price: pricing.amount,
+    currency: pricing.currency,
+    label: pricing.label
   });
-
 });
 
+
+// ======================================================
+// TIP SPLIT
+// ======================================================
 
 app.get("/api/tip-split", function(req, res) {
 
-  const amount =
-    Number(req.query.amount || 0);
-
-  if (!amount || amount <= 0) {
-
-    return res.status(400).json({
-      error: "Invalid amount."
-    });
-
-  }
-
-  return res.json(
-    getTipSplit(amount)
-  );
-
+  res.json({
+    artist_percent: 70,
+    pasong_percent: 30
+  });
 });
 
 
-/* =========================================================
-   CLOUDINARY SIGNATURE
-========================================================= */
+// ======================================================
+// CLOUDINARY SIGNATURE
+// ======================================================
+
+function createCloudinarySignature(
+  folder,
+  timestamp
+) {
+
+  const stringToSign =
+    "folder=" +
+    folder +
+    "&timestamp=" +
+    timestamp;
+
+  return crypto
+    .createHash("sha1")
+    .update(
+      stringToSign +
+      CLOUDINARY_API_SECRET
+    )
+    .digest("hex");
+}
+
 
 app.post(
   "/api/cloudinary/signature",
@@ -299,43 +291,27 @@ app.post(
         await getAuthenticatedUser(req);
 
       if (!user) {
-
         return res.status(401).json({
-          error: "Missing authentication token."
+          error: "Authentication required."
         });
-
       }
 
       const folder =
-        String(
-          req.body.folder ||
-          "pasong-songs"
-        ).trim();
+        req.body.folder ||
+        "pasong-songs";
 
       const timestamp =
         Math.floor(
           Date.now() / 1000
         );
 
-      const stringToSign =
-        "folder=" +
-        folder +
-        "&timestamp=" +
-        timestamp;
-
       const signature =
-        crypto
-          .createHash("sha1")
-          .update(
-            stringToSign +
-            CLOUDINARY_API_SECRET
-          )
-          .digest("hex");
+        createCloudinarySignature(
+          folder,
+          timestamp
+        );
 
       return res.json({
-
-        success: true,
-
         cloud_name:
           CLOUDINARY_CLOUD_NAME,
 
@@ -350,17 +326,20 @@ app.post(
 
         folder:
           folder
-
       });
 
     } catch (error) {
 
+      console.error(
+        "Cloudinary signature error:",
+        error
+      );
+
       return res.status(500).json({
-        error: error.message
+        error:
+          "Could not create Cloudinary signature."
       });
-
     }
-
   }
 );
 
@@ -375,43 +354,27 @@ app.get(
         await getAuthenticatedUser(req);
 
       if (!user) {
-
         return res.status(401).json({
-          error: "Missing authentication token."
+          error: "Authentication required."
         });
-
       }
 
       const folder =
-        String(
-          req.query.folder ||
-          "pasong-songs"
-        ).trim();
+        req.query.folder ||
+        "pasong-songs";
 
       const timestamp =
         Math.floor(
           Date.now() / 1000
         );
 
-      const stringToSign =
-        "folder=" +
-        folder +
-        "&timestamp=" +
-        timestamp;
-
       const signature =
-        crypto
-          .createHash("sha1")
-          .update(
-            stringToSign +
-            CLOUDINARY_API_SECRET
-          )
-          .digest("hex");
+        createCloudinarySignature(
+          folder,
+          timestamp
+        );
 
       return res.json({
-
-        success: true,
-
         cloud_name:
           CLOUDINARY_CLOUD_NAME,
 
@@ -426,24 +389,27 @@ app.get(
 
         folder:
           folder
-
       });
 
     } catch (error) {
 
+      console.error(
+        "Cloudinary signature error:",
+        error
+      );
+
       return res.status(500).json({
-        error: error.message
+        error:
+          "Could not create Cloudinary signature."
       });
-
     }
-
   }
 );
 
 
-/* =========================================================
-   FIND PASONG USER
-========================================================= */
+// ======================================================
+// FIND PASONG USER BY EMAIL
+// ======================================================
 
 app.get(
   "/api/users/find",
@@ -455,87 +421,85 @@ app.get(
         await getAuthenticatedUser(req);
 
       if (!loggedInUser) {
-
         return res.status(401).json({
-          error: "Missing authentication token."
+          error:
+            "Authentication required."
         });
-
       }
 
       const email =
         String(
           req.query.email || ""
         )
-        .trim()
-        .toLowerCase();
+          .trim()
+          .toLowerCase();
 
       if (!email) {
-
         return res.status(400).json({
-          error: "Email is required."
+          error:
+            "Email is required."
         });
-
       }
 
       const result =
-        await supabase.auth.admin.listUsers({
-          page: 1,
-          perPage: 1000
-        });
+        await supabase.auth.admin
+          .listUsers({
+            page: 1,
+            perPage: 1000
+          });
 
       if (result.error) {
-
         return res.status(500).json({
-          error: result.error.message
+          error:
+            result.error.message
         });
-
       }
 
-      const users =
-        result.data.users || [];
-
       const found =
-        users.find(function(user) {
-
-          return String(
-            user.email || ""
-          )
-          .trim()
-          .toLowerCase() === email;
-
-        });
+        result.data.users.find(
+          function(user) {
+            return String(
+              user.email || ""
+            )
+              .toLowerCase() === email;
+          }
+        );
 
       if (!found) {
-
         return res.status(404).json({
           error:
             "No PASONG account was found for " +
             email
         });
-
       }
 
       return res.json({
-        success: true,
-        user_id: found.id,
-        email: found.email
+        user_id:
+          found.id,
+
+        email:
+          found.email
       });
 
     } catch (error) {
 
+      console.error(
+        "User find error:",
+        error
+      );
+
       return res.status(500).json({
-        error: error.message
+        error:
+          "Could not find PASONG account."
       });
-
     }
-
   }
 );
 
 
-/* =========================================================
-   SAVE ARTIST PROFILE
-========================================================= */
+// ======================================================
+// ARTIST PROFILE SAVE
+// ======================================================
 
 app.post(
   "/api/artist-profile/save",
@@ -547,11 +511,10 @@ app.post(
         await getAuthenticatedUser(req);
 
       if (!user) {
-
         return res.status(401).json({
-          error: "Missing authentication token."
+          error:
+            "Authentication required."
         });
-
       }
 
       const body =
@@ -564,13 +527,14 @@ app.post(
           .eq("user_id", user.id)
           .maybeSingle();
 
-      if (existingResult.error) {
-
+      if (
+        existingResult.error &&
+        existingResult.error.code !== "PGRST116"
+      ) {
         return res.status(500).json({
           error:
             existingResult.error.message
         });
-
       }
 
       const existing =
@@ -594,7 +558,7 @@ app.post(
           ""
         ).trim();
 
-      const mobileMoneyNumber =
+      const mobileNumber =
         String(
           body.mobile_money_number ||
           body.mobile_number ||
@@ -603,32 +567,26 @@ app.post(
           ""
         ).trim();
 
-      const mobileMoneyProvider =
+      const provider =
         String(
           body.mobile_money_provider ||
           existing.mobile_money_provider ||
           ""
         ).trim();
 
-      if (!performingName) {
+      const profileImage =
+        body.profile_image_url !== undefined
+          ? body.profile_image_url
+          : existing.profile_image_url || null;
 
+      if (!performingName) {
         return res.status(400).json({
           error:
             "Performing name is required."
         });
-
       }
 
-      if (!mobileMoneyNumber) {
-
-        return res.status(400).json({
-          error:
-            "Mobile money number is required."
-        });
-
-      }
-
-      const profileData = {
+      const data = {
 
         user_id:
           user.id,
@@ -643,100 +601,71 @@ app.post(
           performingName,
 
         real_name:
-          realName,
+          realName || null,
 
         mobile_number:
-          mobileMoneyNumber,
+          mobileNumber || null,
 
         mobile_money_number:
-          mobileMoneyNumber,
+          mobileNumber || null,
 
         mobile_money_provider:
-          mobileMoneyProvider ||
+          provider || null,
 
-          existing.mobile_money_provider ||
-
-          "MTN",
-
-        mobile_money_verified:
-          existing.mobile_money_verified ||
-          false,
-
-        identity_verified:
-          existing.identity_verified ||
-          false,
-
-        identity_verified_at:
-          existing.identity_verified_at ||
-          null,
-
-        mobile_money_verified_at:
-          existing.mobile_money_verified_at ||
-          null,
-
-        account_status:
-          existing.account_status ||
-          "active"
-
+        profile_image_url:
+          profileImage
       };
-
-      if (
-        body.profile_image_url !== undefined
-      ) {
-
-        profileData.profile_image_url =
-          body.profile_image_url;
-
-      } else if (
-        existing.profile_image_url
-      ) {
-
-        profileData.profile_image_url =
-          existing.profile_image_url;
-
-      }
 
       const result =
         await supabase
           .from("artist_profiles")
           .upsert(
-            profileData,
+            data,
             {
-              onConflict: "user_id"
+              onConflict:
+                "user_id"
             }
           )
           .select()
           .single();
 
       if (result.error) {
+        console.error(
+          "Profile save error:",
+          result.error
+        );
 
         return res.status(500).json({
           error:
             result.error.message
         });
-
       }
 
       return res.json({
         success: true,
-        profile: result.data
+        profile:
+          result.data
       });
 
     } catch (error) {
 
+      console.error(
+        "Profile save error:",
+        error
+      );
+
       return res.status(500).json({
-        error: error.message
+        error:
+          "Could not save artist profile."
       });
-
     }
-
   }
 );
 
 
-/* =========================================================
-   GET ARTIST PROFILE
-========================================================= */
+// ======================================================
+// GET ARTIST PROFILE
+// ======================================================
 
 app.get(
   "/api/artist-profile",
@@ -748,11 +677,10 @@ app.get(
         await getAuthenticatedUser(req);
 
       if (!user) {
-
         return res.status(401).json({
-          error: "Missing authentication token."
+          error:
+            "Authentication required."
         });
-
       }
 
       const result =
@@ -763,16 +691,13 @@ app.get(
           .maybeSingle();
 
       if (result.error) {
-
         return res.status(500).json({
           error:
             result.error.message
         });
-
       }
 
       return res.json({
-        success: true,
         profile:
           result.data || null
       });
@@ -780,69 +705,238 @@ app.get(
     } catch (error) {
 
       return res.status(500).json({
-        error: error.message
+        error:
+          "Could not load artist profile."
       });
-
     }
-
   }
 );
 
 
-/* =========================================================
-   SIGN SONG UPLOAD
-========================================================= */
+// ======================================================
+// SONG UPLOAD SIGN CHECK
+// ======================================================
 
-app.post(
+app.get(
   "/api/songs/sign-upload",
   async function(req, res) {
 
-    try {
+    const user =
+      await getAuthenticatedUser(req);
 
-      const user =
-        await getAuthenticatedUser(req);
-
-      if (!user) {
-
-        return res.status(401).json({
-          error: "Missing authentication token."
-        });
-
-      }
-
-      const hasCover =
-        req.body &&
-        req.body.has_cover === true;
-
-      if (!hasCover) {
-
-        return res.status(400).json({
-          error:
-            "Cover image is required before song upload."
-        });
-
-      }
-
-      return res.json({
-        success: true,
-        ready: true
+    if (!user) {
+      return res.status(401).json({
+        error:
+          "Authentication required."
       });
-
-    } catch (error) {
-
-      return res.status(500).json({
-        error: error.message
-      });
-
     }
 
+    const hasCover =
+      String(
+        req.query.has_cover || ""
+      ).toLowerCase() === "true";
+
+    if (!hasCover) {
+      return res.status(400).json({
+        error:
+          "Cover image is required before uploading a song."
+      });
+    }
+
+    return res.json({
+      allowed: true
+    });
   }
 );
 
 
-/* =========================================================
-   CREATE SONG
-========================================================= */
+// ======================================================
+// HELPER: VALIDATE PASONG USER
+// ======================================================
+
+async function validateUserId(userId) {
+
+  if (!userId) {
+    return null;
+  }
+
+  const result =
+    await supabase.auth.admin
+      .getUserById(userId);
+
+  if (
+    result.error ||
+    !result.data ||
+    !result.data.user
+  ) {
+    return null;
+  }
+
+  return result.data.user;
+}
+
+
+// ======================================================
+// HELPER: GET ARTIST PROFILE
+// ======================================================
+
+async function getArtistProfile(userId) {
+
+  if (!userId) {
+    return null;
+  }
+
+  const result =
+    await supabase
+      .from("artist_profiles")
+      .select("*")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+  if (result.error) {
+    return null;
+  }
+
+  return result.data || null;
+}
+
+
+// ======================================================
+// HELPER: NORMALIZE ARTIST IDS
+// ======================================================
+
+function normalizeArtistIds(
+  body,
+  loggedInUserId
+) {
+
+  let ids = [];
+
+  // New multiple-artist format
+  if (Array.isArray(body.artist_user_ids)) {
+
+    ids =
+      body.artist_user_ids
+        .map(function(id) {
+          return String(id || "").trim();
+        })
+        .filter(Boolean);
+  }
+
+  // Also allow comma-separated IDs
+  if (
+    ids.length === 0 &&
+    typeof body.artist_user_ids === "string"
+  ) {
+
+    ids =
+      body.artist_user_ids
+        .split(",")
+        .map(function(id) {
+          return String(id || "").trim();
+        })
+        .filter(Boolean);
+  }
+
+  // Backwards-compatible single artist
+  if (
+    ids.length === 0 &&
+    body.artist_user_id
+  ) {
+
+    ids = [
+      String(
+        body.artist_user_id
+      ).trim()
+    ];
+  }
+
+  // If no artist supplied,
+  // uploader becomes artist
+  if (ids.length === 0) {
+    ids = [
+      loggedInUserId
+    ];
+  }
+
+  // Remove duplicates
+  ids =
+    Array.from(
+      new Set(ids)
+    );
+
+  return ids;
+}
+
+
+// ======================================================
+// HELPER: ARTIST SHARES
+// ======================================================
+
+function calculateArtistShares(
+  artistIds
+) {
+
+  const count =
+    artistIds.length;
+
+  if (count <= 0) {
+    return [];
+  }
+
+  const total =
+    40.0;
+
+  const shares = [];
+
+  let used = 0;
+
+  for (
+    let i = 0;
+    i < count;
+    i++
+  ) {
+
+    if (i === count - 1) {
+
+      const last =
+        Number(
+          (
+            total -
+            used
+          ).toFixed(4)
+        );
+
+      shares.push(last);
+
+    } else {
+
+      const share =
+        Number(
+          (
+            total / count
+          ).toFixed(4)
+        );
+
+      shares.push(share);
+
+      used =
+        Number(
+          (
+            used +
+            share
+          ).toFixed(4)
+        );
+    }
+  }
+
+  return shares;
+}
+
+
+// ======================================================
+// CREATE SONG
+// ======================================================
 
 app.post(
   "/api/songs/create",
@@ -854,11 +948,10 @@ app.post(
         await getAuthenticatedUser(req);
 
       if (!loggedInUser) {
-
         return res.status(401).json({
-          error: "Missing authentication token."
+          error:
+            "Missing authentication token."
         });
-
       }
 
       const body =
@@ -869,214 +962,238 @@ app.post(
           body.title || ""
         ).trim();
 
-      const coverUrl =
-        String(
-          body.cover_url || ""
-        ).trim();
-
       const audioUrl =
         String(
           body.audio_url || ""
         ).trim();
 
-      const artistUserId =
-        body.artist_user_id ||
-        loggedInUser.id;
+      const coverUrl =
+        String(
+          body.cover_url || ""
+        ).trim();
 
-      const producerUserId =
-        body.producer_user_id ||
-        null;
-
-      const writerUserId =
-        body.writer_user_id ||
-        null;
+      const genre =
+        String(
+          body.genre ||
+          body.category ||
+          "Music"
+        ).trim();
 
       const labelName =
         String(
-          body.label_name || ""
+          body.label_name ||
+          body.label ||
+          ""
         ).trim();
 
-      if (!title) {
+      const writerUserId =
+        body.writer_user_id
+          ? String(
+              body.writer_user_id
+            ).trim()
+          : null;
 
+      const producerUserId =
+        body.producer_user_id
+          ? String(
+              body.producer_user_id
+            ).trim()
+          : null;
+
+
+      // --------------------------------------------------
+      // BASIC VALIDATION
+      // --------------------------------------------------
+
+      if (!title) {
         return res.status(400).json({
           error:
             "Song title is required."
         });
-
-      }
-
-      if (!coverUrl) {
-
-        return res.status(400).json({
-          error:
-            "Cover image is required."
-        });
-
       }
 
       if (!audioUrl) {
-
         return res.status(400).json({
           error:
             "Audio URL is required."
         });
-
       }
 
-
-      /* -----------------------------------------------------
-         ARTIST PROFILE
-      ----------------------------------------------------- */
-
-      const artistProfileResult =
-        await supabase
-          .from("artist_profiles")
-          .select("*")
-          .eq(
-            "user_id",
-            artistUserId
-          )
-          .maybeSingle();
-
-      if (artistProfileResult.error) {
-
-        return res.status(500).json({
-          error:
-            artistProfileResult.error.message
-        });
-
-      }
-
-      const artistProfile =
-        artistProfileResult.data;
-
-      if (!artistProfile) {
-
+      if (!coverUrl) {
         return res.status(400).json({
           error:
-            "Artist profile not found. Please save your Artist Profile first."
+            "Cover image is required."
         });
-
       }
 
-      const artistProfileId =
-        artistProfile.id;
+
+      // --------------------------------------------------
+      // ARTISTS
+      // --------------------------------------------------
+
+      const artistIds =
+        normalizeArtistIds(
+          body,
+          loggedInUser.id
+        );
+
+      if (artistIds.length === 0) {
+        return res.status(400).json({
+          error:
+            "At least one performing artist is required."
+        });
+      }
 
 
-      /* -----------------------------------------------------
-         PRODUCER VALIDATION
-      ----------------------------------------------------- */
+      // --------------------------------------------------
+      // VALIDATE ALL ARTIST ACCOUNTS
+      // --------------------------------------------------
+
+      const artistUsers = [];
+
+      for (
+        let i = 0;
+        i < artistIds.length;
+        i++
+      ) {
+
+        const artistUser =
+          await validateUserId(
+            artistIds[i]
+          );
+
+        if (!artistUser) {
+          return res.status(400).json({
+            error:
+              "One of the performing artist PASONG accounts could not be found."
+          });
+        }
+
+        const profile =
+          await getArtistProfile(
+            artistIds[i]
+          );
+
+        if (!profile) {
+          return res.status(400).json({
+            error:
+              "Performing artist " +
+              (
+                artistUser.email ||
+                artistIds[i]
+              ) +
+              " has not created an artist profile yet."
+          });
+        }
+
+        artistUsers.push({
+          user: artistUser,
+          profile: profile
+        });
+      }
+
+
+      // --------------------------------------------------
+      // VALIDATE PRODUCER
+      // --------------------------------------------------
 
       if (producerUserId) {
 
-        const producerResult =
-          await supabase.auth.admin.getUserById(
+        const producer =
+          await validateUserId(
             producerUserId
           );
 
-        if (
-          producerResult.error ||
-          !producerResult.data.user
-        ) {
-
+        if (!producer) {
           return res.status(400).json({
             error:
-              "Producer PASONG account could not be verified."
+              "Producer PASONG account could not be found."
           });
-
         }
-
       }
 
 
-      /* -----------------------------------------------------
-         WRITER VALIDATION
-      ----------------------------------------------------- */
+      // --------------------------------------------------
+      // VALIDATE WRITER
+      // --------------------------------------------------
 
       if (writerUserId) {
 
-        const writerResult =
-          await supabase.auth.admin.getUserById(
+        const writer =
+          await validateUserId(
             writerUserId
           );
 
-        if (
-          writerResult.error ||
-          !writerResult.data.user
-        ) {
-
+        if (!writer) {
           return res.status(400).json({
             error:
-              "Writer PASONG account could not be verified."
+              "Writer PASONG account could not be found."
           });
-
         }
-
       }
 
 
-      /* -----------------------------------------------------
-         DUPLICATE AUDIO CHECK
-      ----------------------------------------------------- */
+      // --------------------------------------------------
+      // PRIMARY ARTIST
+      // --------------------------------------------------
 
-      let duplicateQuery =
+      const primaryArtistUserId =
+        artistIds[0];
+
+      const primaryArtistProfile =
+        artistUsers[0].profile;
+
+      const primaryArtistProfileId =
+        primaryArtistProfile.id;
+
+
+      // --------------------------------------------------
+      // CHECK DUPLICATE TITLE
+      // --------------------------------------------------
+
+      const duplicateTitle =
         await supabase
           .from("songs")
           .select(
-            "id,title,artist_id,audio_url"
+            "id,title,artist_id"
           )
-          .eq(
-            "audio_url",
-            audioUrl
+          .ilike(
+            "title",
+            title
           )
           .limit(1);
 
-      if (duplicateQuery.error) {
-
-        return res.status(500).json({
-          error:
-            duplicateQuery.error.message
-        });
-
-      }
-
       if (
-        duplicateQuery.data &&
-        duplicateQuery.data.length > 0
+        duplicateTitle.data &&
+        duplicateTitle.data.length > 0
       ) {
 
         return res.status(409).json({
           error:
-            "This song appears to already be uploaded to PASONG.",
-          song:
-            duplicateQuery.data[0]
+            "A song with this title already exists on PASONG. If this is your song, please use the existing song record or contact Admin."
         });
-
       }
 
 
-      /* -----------------------------------------------------
-         PRICING
-      ----------------------------------------------------- */
-
-      const country =
-        getCountry(req);
+      // --------------------------------------------------
+      // PRICING
+      // --------------------------------------------------
 
       const pricing =
-        getPricing(country);
+        getPricing(req);
 
 
-      /* -----------------------------------------------------
-         SONG INSERT
-      ----------------------------------------------------- */
+      // --------------------------------------------------
+      // CREATE SONG
+      // --------------------------------------------------
 
       const insertData = {
 
         artist_id:
-          artistProfileId,
+          primaryArtistProfileId,
 
         artist_user_id:
-          artistUserId,
+          primaryArtistUserId,
 
         uploader_user_id:
           loggedInUser.id,
@@ -1106,107 +1223,200 @@ app.post(
           coverUrl,
 
         audio_url:
-          audioUrl
+          audioUrl,
 
+        artist_count:
+          artistIds.length
       };
 
 
-      /* Preserve optional fields when supplied */
+      // --------------------------------------------------
+      // INSERT SONG
+      // --------------------------------------------------
 
-      if (
-        body.genre !== undefined &&
-        body.genre !== null &&
-        String(body.genre).trim()
-      ) {
-
-        insertData.genre =
-          String(body.genre).trim();
-
-      }
-
-      if (
-        body.category_id !== undefined &&
-        body.category_id !== null &&
-        String(body.category_id).trim()
-      ) {
-
-        insertData.category_id =
-          body.category_id;
-
-      }
-
-      if (
-        body.album_id !== undefined &&
-        body.album_id !== null &&
-        String(body.album_id).trim()
-      ) {
-
-        insertData.album_id =
-          body.album_id;
-
-      }
-
-
-      const result =
+      const songResult =
         await supabase
           .from("songs")
-          .insert(insertData)
+          .insert(
+            insertData
+          )
           .select()
           .single();
 
-      if (result.error) {
+      if (songResult.error) {
+
+        console.error(
+          "Song insert error:",
+          songResult.error
+        );
 
         return res.status(500).json({
           error:
-            result.error.message
+            songResult.error.message
         });
+      }
 
+      const song =
+        songResult.data;
+
+
+      // --------------------------------------------------
+      // CALCULATE ARTIST SHARES
+      // --------------------------------------------------
+
+      const artistShares =
+        calculateArtistShares(
+          artistIds
+        );
+
+
+      // --------------------------------------------------
+      // CREATE MULTI-ARTIST CREDIT ROWS
+      // --------------------------------------------------
+
+      const artistRows =
+        artistIds.map(
+          function(
+            artistUserId,
+            index
+          ) {
+
+            return {
+
+              song_id:
+                song.id,
+
+              artist_user_id:
+                artistUserId,
+
+              artist_order:
+                index + 1,
+
+              artist_share_percent:
+                artistShares[index]
+            };
+          }
+        );
+
+
+      const artistRowsResult =
+        await supabase
+          .from("song_artists")
+          .insert(
+            artistRows
+          );
+
+      if (artistRowsResult.error) {
+
+        console.error(
+          "Song artists insert error:",
+          artistRowsResult.error
+        );
+
+        // Remove song if credits failed
+        await supabase
+          .from("songs")
+          .delete()
+          .eq(
+            "id",
+            song.id
+          );
+
+        return res.status(500).json({
+          error:
+            "Song was not saved because artist credits could not be created: " +
+            artistRowsResult.error.message
+        });
       }
 
 
+      // --------------------------------------------------
+      // SUCCESS
+      // --------------------------------------------------
+
       return res.status(201).json({
 
-        success: true,
+        success:
+          true,
 
         message:
           "Song uploaded successfully.",
 
         song:
-          result.data
+          song,
 
+        artists:
+          artistIds.map(
+            function(
+              artistUserId,
+              index
+            ) {
+
+              const info =
+                artistUsers[index];
+
+              const profile =
+                info.profile;
+
+              return {
+
+                user_id:
+                  artistUserId,
+
+                name:
+                  profile.performing_name ||
+                  profile.stage_name ||
+                  profile.artist_name ||
+                  info.user.email ||
+                  "Unknown Artist",
+
+                share_percent:
+                  artistShares[index]
+              };
+            }
+          ),
+
+        pricing:
+          pricing
       });
 
     } catch (error) {
 
+      console.error(
+        "Song creation error:",
+        error
+      );
+
       return res.status(500).json({
-        error: error.message
+        error:
+          error.message ||
+          "Could not create song."
       });
-
     }
-
   }
 );
 
 
-/* =========================================================
-   COMPATIBILITY SONG POST
-========================================================= */
+// ======================================================
+// OLD / COMPATIBILITY SONG POST
+// ======================================================
 
 app.post(
   "/api/songs",
   async function(req, res) {
 
+    // Use the same upload logic
+    // by forwarding the request internally.
     try {
 
       const loggedInUser =
         await getAuthenticatedUser(req);
 
       if (!loggedInUser) {
-
         return res.status(401).json({
-          error: "Missing authentication token."
+          error:
+            "Missing authentication token."
         });
-
       }
 
       const body =
@@ -1217,207 +1427,261 @@ app.post(
           body.title || ""
         ).trim();
 
-      const coverUrl =
-        String(
-          body.cover_url || ""
-        ).trim();
-
       const audioUrl =
         String(
           body.audio_url || ""
         ).trim();
 
-      const artistUserId =
-        body.artist_user_id ||
-        loggedInUser.id;
+      const coverUrl =
+        String(
+          body.cover_url || ""
+        ).trim();
 
       if (!title) {
-
         return res.status(400).json({
           error:
             "Song title is required."
         });
-
-      }
-
-      if (!coverUrl) {
-
-        return res.status(400).json({
-          error:
-            "Cover image is required."
-        });
-
       }
 
       if (!audioUrl) {
-
         return res.status(400).json({
           error:
             "Audio URL is required."
         });
-
       }
 
-      const artistProfileResult =
-        await supabase
-          .from("artist_profiles")
-          .select("*")
-          .eq(
-            "user_id",
-            artistUserId
-          )
-          .maybeSingle();
-
-      if (artistProfileResult.error) {
-
-        return res.status(500).json({
-          error:
-            artistProfileResult.error.message
-        });
-
-      }
-
-      if (!artistProfileResult.data) {
-
+      if (!coverUrl) {
         return res.status(400).json({
           error:
-            "Artist profile not found."
+            "Cover image is required."
         });
-
       }
 
-      const country =
-        getCountry(req);
+      const artistIds =
+        normalizeArtistIds(
+          body,
+          loggedInUser.id
+        );
+
+      const artistUsers = [];
+
+      for (
+        let i = 0;
+        i < artistIds.length;
+        i++
+      ) {
+
+        const artistUser =
+          await validateUserId(
+            artistIds[i]
+          );
+
+        if (!artistUser) {
+          return res.status(400).json({
+            error:
+              "Performing artist account could not be found."
+          });
+        }
+
+        const profile =
+          await getArtistProfile(
+            artistIds[i]
+          );
+
+        if (!profile) {
+          return res.status(400).json({
+            error:
+              "Performing artist profile not found."
+          });
+        }
+
+        artistUsers.push({
+          user: artistUser,
+          profile: profile
+        });
+      }
+
+      const primaryProfile =
+        artistUsers[0].profile;
 
       const pricing =
-        getPricing(country);
+        getPricing(req);
 
-      const insertData = {
-
-        artist_id:
-          artistProfileResult.data.id,
-
-        artist_user_id:
-          artistUserId,
-
-        uploader_user_id:
-          loggedInUser.id,
-
-        producer_user_id:
-          body.producer_user_id ||
-          null,
-
-        writer_user_id:
-          body.writer_user_id ||
-          null,
-
-        label_name:
-          body.label_name ||
-          null,
-
-        title:
-          title,
-
-        price:
-          pricing.amount,
-
-        currency:
-          pricing.currency,
-
-        status:
-          "approved",
-
-        cover_url:
-          coverUrl,
-
-        audio_url:
-          audioUrl
-
-      };
-
-      if (
-        body.genre !== undefined &&
-        body.genre !== null &&
-        String(body.genre).trim()
-      ) {
-
-        insertData.genre =
-          String(body.genre).trim();
-
-      }
-
-      if (
-        body.category_id !== undefined &&
-        body.category_id !== null
-      ) {
-
-        insertData.category_id =
-          body.category_id;
-
-      }
-
-      if (
-        body.album_id !== undefined &&
-        body.album_id !== null
-      ) {
-
-        insertData.album_id =
-          body.album_id;
-
-      }
-
-      const result =
+      const songResult =
         await supabase
           .from("songs")
-          .insert(insertData)
+          .insert({
+
+            artist_id:
+              primaryProfile.id,
+
+            artist_user_id:
+              artistIds[0],
+
+            uploader_user_id:
+              loggedInUser.id,
+
+            producer_user_id:
+              body.producer_user_id ||
+              null,
+
+            writer_user_id:
+              body.writer_user_id ||
+              null,
+
+            label_name:
+              body.label_name ||
+              body.label ||
+              null,
+
+            title:
+              title,
+
+            price:
+              pricing.amount,
+
+            currency:
+              pricing.currency,
+
+            status:
+              "approved",
+
+            cover_url:
+              coverUrl,
+
+            audio_url:
+              audioUrl,
+
+            artist_count:
+              artistIds.length
+          })
           .select()
           .single();
 
-      if (result.error) {
+      if (songResult.error) {
 
         return res.status(500).json({
           error:
-            result.error.message
+            songResult.error.message
         });
+      }
 
+      const shares =
+        calculateArtistShares(
+          artistIds
+        );
+
+      const rows =
+        artistIds.map(
+          function(
+            artistUserId,
+            index
+          ) {
+
+            return {
+
+              song_id:
+                songResult.data.id,
+
+              artist_user_id:
+                artistUserId,
+
+              artist_order:
+                index + 1,
+
+              artist_share_percent:
+                shares[index]
+            };
+          }
+        );
+
+      const credits =
+        await supabase
+          .from("song_artists")
+          .insert(rows);
+
+      if (credits.error) {
+
+        await supabase
+          .from("songs")
+          .delete()
+          .eq(
+            "id",
+            songResult.data.id
+          );
+
+        return res.status(500).json({
+          error:
+            credits.error.message
+        });
       }
 
       return res.status(201).json({
-        success: true,
+
+        success:
+          true,
+
         message:
           "Song uploaded successfully.",
+
         song:
-          result.data
+          songResult.data,
+
+        artists:
+          artistIds.map(
+            function(
+              id,
+              index
+            ) {
+
+              const profile =
+                artistUsers[index].profile;
+
+              return {
+
+                user_id:
+                  id,
+
+                name:
+                  profile.performing_name ||
+                  profile.stage_name ||
+                  profile.artist_name ||
+                  "Unknown Artist",
+
+                share_percent:
+                  shares[index]
+              };
+            }
+          )
       });
 
     } catch (error) {
 
+      console.error(
+        "Compatibility song error:",
+        error
+      );
+
       return res.status(500).json({
-        error: error.message
+        error:
+          error.message ||
+          "Could not create song."
       });
-
     }
-
   }
 );
 
 
-/* =========================================================
-   GET ALL APPROVED SONGS
-   ARTIST NAME FIX
-========================================================= */
+// ======================================================
+// GET APPROVED SONGS
+// ======================================================
 
 app.get(
   "/api/songs",
   async function(req, res) {
 
     try {
-
-      const country =
-        getCountry(req);
-
-      const pricing =
-        getPricing(country);
 
       const result =
         await supabase
@@ -1448,98 +1712,260 @@ app.get(
 
       if (result.error) {
 
+        console.error(
+          "Songs list error:",
+          result.error
+        );
+
         return res.status(500).json({
           error:
             result.error.message
         });
-
       }
 
       const songs =
-        (result.data || [])
-          .map(function(song) {
+        result.data || [];
 
-            const profile =
-              song.artist_profiles ||
-              {};
+      // --------------------------------------------------
+      // GET ALL MULTI-ARTIST CREDITS
+      // --------------------------------------------------
 
-            const artistName =
-              profile.performing_name ||
-              profile.stage_name ||
-              profile.artist_name ||
+      const songIds =
+        songs.map(
+          function(song) {
+            return song.id;
+          }
+        );
+
+      let artistCredits = [];
+
+      if (songIds.length > 0) {
+
+        const creditsResult =
+          await supabase
+            .from("song_artists")
+            .select(
+              "song_id,artist_user_id,artist_order,artist_share_percent"
+            )
+            .in(
+              "song_id",
+              songIds
+            )
+            .order(
+              "artist_order",
+              {
+                ascending: true
+              }
+            );
+
+        if (!creditsResult.error) {
+          artistCredits =
+            creditsResult.data || [];
+        }
+      }
+
+
+      // --------------------------------------------------
+      // GET ARTIST PROFILES
+      // --------------------------------------------------
+
+      const artistUserIds =
+        Array.from(
+          new Set(
+            artistCredits.map(
+              function(row) {
+                return row.artist_user_id;
+              }
+            )
+          )
+        );
+
+      let profiles = [];
+
+      if (
+        artistUserIds.length > 0
+      ) {
+
+        const profilesResult =
+          await supabase
+            .from("artist_profiles")
+            .select(`
+              user_id,
+              artist_name,
+              stage_name,
+              performing_name,
+              profile_image_url
+            `)
+            .in(
+              "user_id",
+              artistUserIds
+            );
+
+        if (!profilesResult.error) {
+          profiles =
+            profilesResult.data || [];
+        }
+      }
+
+
+      // --------------------------------------------------
+      // FORMAT SONGS
+      // --------------------------------------------------
+
+      const pricing =
+        getPricing(req);
+
+      const formattedSongs =
+        songs.map(
+          function(song) {
+
+            const credits =
+              artistCredits.filter(
+                function(row) {
+                  return (
+                    row.song_id ===
+                    song.id
+                  );
+                }
+              );
+
+            const artists =
+              credits.map(
+                function(row) {
+
+                  const profile =
+                    profiles.find(
+                      function(p) {
+                        return (
+                          p.user_id ===
+                          row.artist_user_id
+                        );
+                      }
+                    );
+
+                  const name =
+                    profile &&
+                    (
+                      profile.performing_name ||
+                      profile.stage_name ||
+                      profile.artist_name
+                    )
+                      ? (
+                          profile.performing_name ||
+                          profile.stage_name ||
+                          profile.artist_name
+                        )
+                      : "Unknown Artist";
+
+                  return {
+
+                    user_id:
+                      row.artist_user_id,
+
+                    name:
+                      name,
+
+                    profile_image_url:
+                      profile
+                        ? profile.profile_image_url
+                        : null,
+
+                    share_percent:
+                      row.artist_share_percent,
+
+                    order:
+                      row.artist_order
+                  };
+                }
+              );
+
+            let displayArtist =
               "Unknown Artist";
+
+            if (artists.length > 0) {
+
+              displayArtist =
+                artists
+                  .map(
+                    function(a) {
+                      return a.name;
+                    }
+                  )
+                  .join(", ");
+
+            } else if (
+              song.artist_profiles
+            ) {
+
+              displayArtist =
+                song.artist_profiles.performing_name ||
+                song.artist_profiles.stage_name ||
+                song.artist_profiles.artist_name ||
+                "Unknown Artist";
+            }
 
             return {
 
-              id:
-                song.id,
-
-              title:
-                song.title,
-
-              artist_name:
-                artistName,
+              ...song,
 
               artist:
-                artistName,
+                displayArtist,
 
-              genre:
-                song.genre ||
-                "Music",
+              artist_name:
+                displayArtist,
 
-              category:
-                song.category ||
-                "Music",
+              artists:
+                artists,
 
-              cover_url:
-                song.cover_url,
+              artist_count:
+                artists.length ||
+                song.artist_count ||
+                1,
 
-              audio_url:
-                song.audio_url,
-
-              status:
-                song.status,
-
-              price:
+              display_price:
                 pricing.amount,
 
-              currency:
+              display_currency:
                 pricing.currency,
 
-              price_label:
+              display_price_label:
                 pricing.label
-
             };
-
-          });
-
+          }
+        );
 
       return res.json({
 
         songs:
-          songs,
+          formattedSongs,
 
         nextCursor:
-          null
+          null,
 
+        pricing:
+          pricing
       });
 
     } catch (error) {
 
+      console.error(
+        "Songs API error:",
+        error
+      );
+
       return res.status(500).json({
         error:
-          error.message
+          error.message ||
+          "Could not load songs."
       });
-
     }
-
   }
 );
 
 
-/* =========================================================
-   GET SINGLE SONG
-========================================================= */
+// ======================================================
+// GET SINGLE SONG
+// ======================================================
 
 app.get(
   "/api/songs/:id",
@@ -1550,12 +1976,6 @@ app.get(
       const songId =
         req.params.id;
 
-      const country =
-        getCountry(req);
-
-      const pricing =
-        getPricing(country);
-
       const result =
         await supabase
           .from("songs")
@@ -1564,8 +1984,7 @@ app.get(
             artist_profiles:artist_id (
               artist_name,
               stage_name,
-              performing_name,
-              profile_image_url
+              performing_name
             )
           `)
           .eq(
@@ -1580,7 +1999,6 @@ app.get(
           error:
             result.error.message
         });
-
       }
 
       if (!result.data) {
@@ -1589,167 +2007,196 @@ app.get(
           error:
             "Song not found."
         });
-
       }
 
       const song =
         result.data;
 
-      const profile =
-        song.artist_profiles ||
-        {};
 
-      const artistName =
-        profile.performing_name ||
-        profile.stage_name ||
-        profile.artist_name ||
-        "Unknown Artist";
+      // --------------------------------------------------
+      // ARTIST CREDITS
+      // --------------------------------------------------
+
+      const creditsResult =
+        await supabase
+          .from("song_artists")
+          .select(
+            "song_id,artist_user_id,artist_order,artist_share_percent"
+          )
+          .eq(
+            "song_id",
+            song.id
+          )
+          .order(
+            "artist_order",
+            {
+              ascending: true
+            }
+          );
+
+      const credits =
+        creditsResult.data || [];
+
+
+      // --------------------------------------------------
+      // ARTIST PROFILES
+      // --------------------------------------------------
+
+      const ids =
+        credits.map(
+          function(row) {
+            return row.artist_user_id;
+          }
+        );
+
+      let profiles = [];
+
+      if (ids.length > 0) {
+
+        const profileResult =
+          await supabase
+            .from("artist_profiles")
+            .select(`
+              user_id,
+              artist_name,
+              stage_name,
+              performing_name,
+              profile_image_url
+            `)
+            .in(
+              "user_id",
+              ids
+            );
+
+        if (!profileResult.error) {
+          profiles =
+            profileResult.data || [];
+        }
+      }
+
+
+      const artists =
+        credits.map(
+          function(row) {
+
+            const profile =
+              profiles.find(
+                function(p) {
+                  return (
+                    p.user_id ===
+                    row.artist_user_id
+                  );
+                }
+              );
+
+            return {
+
+              user_id:
+                row.artist_user_id,
+
+              name:
+                profile
+                  ? (
+                      profile.performing_name ||
+                      profile.stage_name ||
+                      profile.artist_name ||
+                      "Unknown Artist"
+                    )
+                  : "Unknown Artist",
+
+              profile_image_url:
+                profile
+                  ? profile.profile_image_url
+                  : null,
+
+              share_percent:
+                row.artist_share_percent,
+
+              order:
+                row.artist_order
+            };
+          }
+        );
+
+
+      const pricing =
+        getPricing(req);
+
+      const displayArtist =
+        artists.length > 0
+          ? artists
+              .map(
+                function(a) {
+                  return a.name;
+                }
+              )
+              .join(", ")
+          : (
+              song.artist_profiles &&
+              (
+                song.artist_profiles.performing_name ||
+                song.artist_profiles.stage_name ||
+                song.artist_profiles.artist_name
+              )
+            ) ||
+            "Unknown Artist";
+
 
       return res.json({
-
-        success: true,
 
         song: {
 
-          id:
-            song.id,
-
-          title:
-            song.title,
-
-          artist_name:
-            artistName,
+          ...song,
 
           artist:
-            artistName,
+            displayArtist,
 
-          artist_profile_image:
-            profile.profile_image_url ||
-            null,
+          artist_name:
+            displayArtist,
 
-          genre:
-            song.genre ||
-            "Music",
+          artists:
+            artists,
 
-          category:
-            song.category ||
-            "Music",
+          artist_count:
+            artists.length ||
+            song.artist_count ||
+            1,
 
-          cover_url:
-            song.cover_url,
-
-          audio_url:
-            song.audio_url,
-
-          status:
-            song.status,
-
-          price:
+          display_price:
             pricing.amount,
 
-          currency:
+          display_currency:
             pricing.currency,
 
-          price_label:
+          display_price_label:
             pricing.label
+        },
 
-        }
-
+        pricing:
+          pricing
       });
 
     } catch (error) {
 
+      console.error(
+        "Single song error:",
+        error
+      );
+
       return res.status(500).json({
         error:
-          error.message
+          error.message ||
+          "Could not load song."
       });
-
     }
-
   }
 );
 
 
-/* =========================================================
-   SONG COVER STATUS
-========================================================= */
+// ======================================================
+// COVER STATUS
+// ======================================================
 
 app.get(
   "/api/songs/:id/cover-status",
-  async function(req, res) {
-
-    try {
-
-      const result =
-        await supabase
-          .from("songs")
-          .select(
-            "id,title,cover_url,status"
-          )
-          .eq(
-            "id",
-            req.params.id
-          )
-          .maybeSingle();
-
-      if (result.error) {
-
-        return res.status(500).json({
-          error:
-            result.error.message
-        });
-
-      }
-
-      if (!result.data) {
-
-        return res.status(404).json({
-          error:
-            "Song not found."
-        });
-
-      }
-
-      return res.json({
-
-        success: true,
-
-        has_cover:
-          !!result.data.cover_url,
-
-        cover_url:
-          result.data.cover_url,
-
-        status:
-          result.data.status
-
-      });
-
-    } catch (error) {
-
-      return res.status(500).json({
-        error:
-          error.message
-      });
-
-    }
-
-  }
-);
-
-
-/* =========================================================
-   START SERVER
-========================================================= */
-
-app.listen(
-  PORT,
-  function() {
-
-    console.log(
-      "PASONG API running on port " +
-      PORT
-    );
-
-  }
-);
+  async function(req, res
