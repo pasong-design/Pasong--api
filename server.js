@@ -3,6 +3,8 @@ const cors = require("cors");
 const crypto = require("crypto");
 const path = require("path");
 const { createClient } = require("@supabase/supabase-js");
+const { v2: cloudinary } = require("cloudinary");
+const multer = require("multer");
 
 const app = express();
 
@@ -36,6 +38,55 @@ const supabase =
     SUPABASE_URL,
     SUPABASE_SERVICE_ROLE_KEY
   );
+
+
+// ======================================================
+// CLOUDINARY CONFIGURATION
+// ======================================================
+
+cloudinary.config({
+  cloud_name: CLOUDINARY_CLOUD_NAME,
+  api_key: CLOUDINARY_API_KEY,
+  api_secret: CLOUDINARY_API_SECRET
+});
+
+
+// ======================================================
+// MULTER - COVER IMAGE UPLOADS
+// ======================================================
+
+const coverUpload =
+  multer({
+    storage: multer.memoryStorage(),
+
+    limits: {
+      fileSize: 10 * 1024 * 1024
+    },
+
+    fileFilter: function(req, file, callback) {
+
+      const allowedTypes = [
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/webp"
+      ];
+
+      if (
+        allowedTypes.includes(
+          file.mimetype
+        )
+      ) {
+        callback(null, true);
+      } else {
+        callback(
+          new Error(
+            "Only JPG, JPEG, PNG and WEBP images are allowed."
+          )
+        );
+      }
+    }
+  });
 
 
 // ======================================================
@@ -255,6 +306,126 @@ app.get("/api/tip-split", function(req, res) {
     pasong_percent: 30
   });
 });
+
+
+// ======================================================
+// COVER IMAGE UPLOAD
+// ======================================================
+
+app.post(
+  "/api/upload/cover",
+  coverUpload.single("file"),
+  async function(req, res) {
+
+    try {
+
+      if (!req.file) {
+        return res.status(400).json({
+          error:
+            "No cover image was provided."
+        });
+      }
+
+      if (!CLOUDINARY_API_SECRET) {
+        console.error(
+          "CLOUDINARY_API_SECRET is missing."
+        );
+
+        return res.status(500).json({
+          error:
+            "Cloudinary is not configured on the PASONG API."
+        });
+      }
+
+      const folder =
+        "pasong/covers";
+
+      const result =
+        await new Promise(
+          function(resolve, reject) {
+
+            const uploadStream =
+              cloudinary.uploader.upload_stream(
+                {
+                  folder: folder,
+
+                  resource_type:
+                    "image",
+
+                  transformation: [
+                    {
+                      quality: "auto",
+                      fetch_format: "auto"
+                    }
+                  ]
+                },
+
+                function(error, result) {
+
+                  if (error) {
+                    reject(error);
+                    return;
+                  }
+
+                  resolve(result);
+                }
+              );
+
+            uploadStream.end(
+              req.file.buffer
+            );
+          }
+        );
+
+      if (
+        !result ||
+        !result.secure_url
+      ) {
+
+        return res.status(500).json({
+          error:
+            "Cloudinary did not return an image URL."
+        });
+      }
+
+      return res.json({
+
+        success: true,
+
+        secure_url:
+          result.secure_url,
+
+        public_id:
+          result.public_id,
+
+        resource_type:
+          result.resource_type,
+
+        format:
+          result.format,
+
+        width:
+          result.width,
+
+        height:
+          result.height
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Cover upload error:",
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          error.message ||
+          "Cover image upload failed."
+      });
+    }
+  }
+);
 
 
 // ======================================================
@@ -813,7 +984,6 @@ function normalizeArtistIds(
 
   let ids = [];
 
-  // New multiple-artist format
   if (Array.isArray(body.artist_user_ids)) {
 
     ids =
@@ -824,7 +994,6 @@ function normalizeArtistIds(
         .filter(Boolean);
   }
 
-  // Also allow comma-separated IDs
   if (
     ids.length === 0 &&
     typeof body.artist_user_ids === "string"
@@ -839,7 +1008,6 @@ function normalizeArtistIds(
         .filter(Boolean);
   }
 
-  // Backwards-compatible single artist
   if (
     ids.length === 0 &&
     body.artist_user_id
@@ -852,15 +1020,12 @@ function normalizeArtistIds(
     ];
   }
 
-  // If no artist supplied,
-  // uploader becomes artist
   if (ids.length === 0) {
     ids = [
       loggedInUserId
     ];
   }
 
-  // Remove duplicates
   ids =
     Array.from(
       new Set(ids)
@@ -1001,11 +1166,6 @@ app.post(
             ).trim()
           : null;
 
-
-      // --------------------------------------------------
-      // BASIC VALIDATION
-      // --------------------------------------------------
-
       if (!title) {
         return res.status(400).json({
           error:
@@ -1027,11 +1187,6 @@ app.post(
         });
       }
 
-
-      // --------------------------------------------------
-      // ARTISTS
-      // --------------------------------------------------
-
       const artistIds =
         normalizeArtistIds(
           body,
@@ -1044,11 +1199,6 @@ app.post(
             "At least one performing artist is required."
         });
       }
-
-
-      // --------------------------------------------------
-      // VALIDATE ALL ARTIST ACCOUNTS
-      // --------------------------------------------------
 
       const artistUsers = [];
 
@@ -1093,11 +1243,6 @@ app.post(
         });
       }
 
-
-      // --------------------------------------------------
-      // VALIDATE PRODUCER
-      // --------------------------------------------------
-
       if (producerUserId) {
 
         const producer =
@@ -1112,11 +1257,6 @@ app.post(
           });
         }
       }
-
-
-      // --------------------------------------------------
-      // VALIDATE WRITER
-      // --------------------------------------------------
 
       if (writerUserId) {
 
@@ -1133,11 +1273,6 @@ app.post(
         }
       }
 
-
-      // --------------------------------------------------
-      // PRIMARY ARTIST
-      // --------------------------------------------------
-
       const primaryArtistUserId =
         artistIds[0];
 
@@ -1146,11 +1281,6 @@ app.post(
 
       const primaryArtistProfileId =
         primaryArtistProfile.id;
-
-
-      // --------------------------------------------------
-      // CHECK DUPLICATE TITLE
-      // --------------------------------------------------
 
       const duplicateTitle =
         await supabase
@@ -1175,18 +1305,8 @@ app.post(
         });
       }
 
-
-      // --------------------------------------------------
-      // PRICING
-      // --------------------------------------------------
-
       const pricing =
         getPricing(req);
-
-
-      // --------------------------------------------------
-      // CREATE SONG
-      // --------------------------------------------------
 
       const insertData = {
 
@@ -1230,11 +1350,6 @@ app.post(
           artistIds.length
       };
 
-
-      // --------------------------------------------------
-      // INSERT SONG
-      // --------------------------------------------------
-
       const songResult =
         await supabase
           .from("songs")
@@ -1260,20 +1375,10 @@ app.post(
       const song =
         songResult.data;
 
-
-      // --------------------------------------------------
-      // CALCULATE ARTIST SHARES
-      // --------------------------------------------------
-
       const artistShares =
         calculateArtistShares(
           artistIds
         );
-
-
-      // --------------------------------------------------
-      // CREATE MULTI-ARTIST CREDIT ROWS
-      // --------------------------------------------------
 
       const artistRows =
         artistIds.map(
@@ -1299,7 +1404,6 @@ app.post(
           }
         );
 
-
       const artistRowsResult =
         await supabase
           .from("song_artists")
@@ -1314,7 +1418,6 @@ app.post(
           artistRowsResult.error
         );
 
-        // Remove song if credits failed
         await supabase
           .from("songs")
           .delete()
@@ -1329,11 +1432,6 @@ app.post(
             artistRowsResult.error.message
         });
       }
-
-
-      // --------------------------------------------------
-      // SUCCESS
-      // --------------------------------------------------
 
       return res.status(201).json({
 
@@ -1759,7 +1857,6 @@ app.get(
         }
       }
 
-
       const artistUserIds =
         Array.from(
           new Set(
@@ -1797,7 +1894,6 @@ app.get(
             profilesResult.data || [];
         }
       }
-
 
       const pricing =
         getPricing(req);
@@ -1999,7 +2095,6 @@ app.get(
       const song =
         result.data;
 
-
       const creditsResult =
         await supabase
           .from("song_artists")
@@ -2019,7 +2114,6 @@ app.get(
 
       const credits =
         creditsResult.data || [];
-
 
       const ids =
         credits.map(
@@ -2052,7 +2146,6 @@ app.get(
             profileResult.data || [];
         }
       }
-
 
       const artists =
         credits.map(
@@ -2097,7 +2190,6 @@ app.get(
           }
         );
 
-
       const pricing =
         getPricing(req);
 
@@ -2119,7 +2211,6 @@ app.get(
               )
             ) ||
             "Unknown Artist";
-
 
       return res.json({
 
@@ -2287,11 +2378,6 @@ app.patch(
         });
       }
 
-
-      // --------------------------------------------------
-      // FIND SONG
-      // --------------------------------------------------
-
       const songResult =
         await supabase
           .from("songs")
@@ -2323,11 +2409,6 @@ app.patch(
       const song =
         songResult.data;
 
-
-      // --------------------------------------------------
-      // OWNERSHIP CHECK
-      // --------------------------------------------------
-
       if (
         song.uploader_user_id !==
         user.id
@@ -2338,11 +2419,6 @@ app.patch(
             "You can only edit songs uploaded by your account."
         });
       }
-
-
-      // --------------------------------------------------
-      // CHECK DUPLICATE TITLE
-      // --------------------------------------------------
 
       const duplicateResult =
         await supabase
@@ -2379,11 +2455,6 @@ app.patch(
         });
       }
 
-
-      // --------------------------------------------------
-      // UPDATE TITLE
-      // --------------------------------------------------
-
       const updateResult =
         await supabase
           .from("songs")
@@ -2410,11 +2481,6 @@ app.patch(
             updateResult.error.message
         });
       }
-
-
-      // --------------------------------------------------
-      // SUCCESS
-      // --------------------------------------------------
 
       return res.json({
 
