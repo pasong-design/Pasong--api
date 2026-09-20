@@ -2823,6 +2823,145 @@ app.get(
 
 
 // ======================================================
+// EARNINGS
+// ======================================================
+
+app.get(
+  "/api/earnings",
+  async function(req, res) {
+
+    try {
+
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error:
+            "Authentication required."
+        });
+      }
+
+      const result =
+        await supabase
+          .from("royalty_ledger")
+          .select(`
+            id,
+            recipient_type,
+            song_id,
+            sale_reference,
+            sale_amount,
+            currency,
+            percentage,
+            amount,
+            entry_type,
+            status,
+            withdrawal_id,
+            created_at
+          `)
+          .eq(
+            "recipient_user_id",
+            user.id
+          )
+          .order(
+            "created_at",
+            {
+              ascending: false
+            }
+          );
+
+      if (result.error) {
+
+        console.error(
+          "Earnings ledger error:",
+          result.error
+        );
+
+        return res.status(500).json({
+          error:
+            "Failed to load earnings."
+        });
+      }
+
+      const entries =
+        result.data || [];
+
+      let availableBalance =
+        0;
+
+      for (
+        let i = 0;
+        i < entries.length;
+        i++
+      ) {
+
+        const entry =
+          entries[i];
+
+        const amount =
+          Number(
+            entry.amount || 0
+          );
+
+        if (
+          entry.entry_type ===
+            "credit" &&
+          entry.status ===
+            "available"
+        ) {
+
+          availableBalance +=
+            amount;
+        }
+
+        if (
+          entry.entry_type ===
+            "debit"
+        ) {
+
+          availableBalance -=
+            amount;
+        }
+      }
+
+      availableBalance =
+        Number(
+          availableBalance.toFixed(2)
+        );
+
+      return res.json({
+
+        success:
+          true,
+
+        currency:
+          "UGX",
+
+        available_balance:
+          availableBalance,
+
+        entries:
+          entries
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Earnings endpoint error:",
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          "Failed to load earnings."
+      });
+    }
+  }
+);
+
+
+// ======================================================
 // START SERVER
 // ======================================================
 
