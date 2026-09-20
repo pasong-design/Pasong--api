@@ -705,19 +705,30 @@ app.post("/api/payments/complete", async (req, res) => {
 
     // ---------------------------------------------------------
     // 17. PRODUCER ROYALTY
+    //
+    // If a producer is registered, the producer receives 20%.
+    // If no producer is registered, that 20% goes to PASONG.
     // ---------------------------------------------------------
 
     if (
       royalty.producerAmount > 0
     ) {
+      const producerIsRegistered =
+        !!song.producer_user_id;
+
       royaltyRows.push({
         recipient_user_id:
-          song.producer_user_id ||
-          process.env.PASONG_USER_ID ||
-          null,
+          producerIsRegistered
+            ? song.producer_user_id
+            : (
+                process.env.PASONG_USER_ID ||
+                null
+              ),
 
         recipient_type:
-          "producer",
+          producerIsRegistered
+            ? "producer"
+            : "pasong",
 
         song_id:
           songId,
@@ -732,7 +743,9 @@ app.post("/api/payments/complete", async (req, res) => {
           paidCurrency,
 
         percentage:
-          20,
+          producerIsRegistered
+            ? 20
+            : 20,
 
         amount:
           royalty.producerAmount,
@@ -747,19 +760,30 @@ app.post("/api/payments/complete", async (req, res) => {
 
     // ---------------------------------------------------------
     // 18. WRITER ROYALTY
+    //
+    // If a writer is registered, the writer receives 15%.
+    // If no writer is registered, that 15% goes to PASONG.
     // ---------------------------------------------------------
 
     if (
       royalty.writerAmount > 0
     ) {
+      const writerIsRegistered =
+        !!song.writer_user_id;
+
       royaltyRows.push({
         recipient_user_id:
-          song.writer_user_id ||
-          process.env.PASONG_USER_ID ||
-          null,
+          writerIsRegistered
+            ? song.writer_user_id
+            : (
+                process.env.PASONG_USER_ID ||
+                null
+              ),
 
         recipient_type:
-          "writer",
+          writerIsRegistered
+            ? "writer"
+            : "pasong",
 
         song_id:
           songId,
@@ -774,7 +798,9 @@ app.post("/api/payments/complete", async (req, res) => {
           paidCurrency,
 
         percentage:
-          15,
+          writerIsRegistered
+            ? 15
+            : 15,
 
         amount:
           royalty.writerAmount,
@@ -865,13 +891,28 @@ app.post("/api/payments/complete", async (req, res) => {
     //
     // The tip is completely separate from the
     // 40/20/15/25 song royalty split.
+    //
+    // IMPORTANT:
+    // The primary artist comes from song_artists.
+    // This keeps the tip connected to the same artist
+    // relationship used by the song royalty system.
     // ---------------------------------------------------------
 
     if (tipAmount > 0) {
 
+      const primaryArtist =
+        (artistRows || []).length > 0
+          ? artistRows[0]
+          : null;
+
       const tipArtistId =
-        song.artist_user_id ||
-        null;
+        primaryArtist &&
+        primaryArtist.artist_user_id
+          ? primaryArtist.artist_user_id
+          : (
+              song.artist_user_id ||
+              null
+            );
 
       if (!tipArtistId) {
         console.error(
