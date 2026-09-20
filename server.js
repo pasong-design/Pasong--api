@@ -2962,6 +2962,1019 @@ app.get(
 
 
 // ======================================================
+// PAYMENT COMPLETION
+// SECURE SERVER-TO-SERVER ENDPOINT
+// ======================================================
+
+function safeSecretCompare(a, b) {
+
+  const aBuffer =
+    Buffer.from(
+      String(a || "")
+    );
+
+  const bBuffer =
+    Buffer.from(
+      String(b || "")
+    );
+
+  if (
+    aBuffer.length !==
+    bBuffer.length
+  ) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(
+    aBuffer,
+    bBuffer
+  );
+}
+
+
+app.post(
+  "/api/payments/complete",
+  async function(req, res) {
+
+    try {
+
+      // --------------------------------------------------
+      // SECURITY
+      // --------------------------------------------------
+
+      const expectedSecret =
+        process.env.PASONG_PAYMENT_SECRET;
+
+      const receivedSecret =
+        req.headers[
+          "x-pasong-payment-secret"
+        ];
+
+      if (
+        !expectedSecret ||
+        !safeSecretCompare(
+          receivedSecret,
+          expectedSecret
+        )
+      ) {
+
+        return res.status(401).json({
+          error:
+            "Unauthorized payment completion request."
+        });
+      }
+
+
+      // --------------------------------------------------
+      // REQUEST DATA
+      // --------------------------------------------------
+
+      const body =
+        req.body || {};
+
+      const buyerId =
+        String(
+          body.buyer_id || ""
+        ).trim();
+
+      const songId =
+        String(
+          body.song_id || ""
+        ).trim();
+
+      const transactionId =
+        String(
+          body.transaction_id || ""
+        ).trim();
+
+      const externalReference =
+        String(
+          body.external_reference || ""
+        ).trim();
+
+      const provider =
+        String(
+          body.provider ||
+          "MTN MoMo"
+        ).trim();
+
+      const paidAmount =
+        Number(
+          body.amount || 0
+        );
+
+      const paidCurrency =
+        String(
+          body.currency || ""
+        )
+          .trim()
+          .toUpperCase();
+
+      const paymentStatus =
+        String(
+          body.payment_status || ""
+        )
+          .trim()
+          .toUpperCase();
+
+
+      // --------------------------------------------------
+      // VALIDATION
+      // --------------------------------------------------
+
+      if (!buyerId) {
+
+        return res.status(400).json({
+          error:
+            "buyer_id is required."
+        });
+      }
+
+      if (!songId) {
+
+        return res.status(400).json({
+          error:
+            "song_id is required."
+        });
+      }
+
+      if (!transactionId) {
+
+        return res.status(400).json({
+          error:
+            "transaction_id is required."
+        });
+      }
+
+      if (!externalReference) {
+
+        return res.status(400).json({
+          error:
+            "external_reference is required."
+        });
+      }
+
+      if (
+        paymentStatus !==
+        "SUCCESSFUL"
+      ) {
+
+        return res.status(400).json({
+          error:
+            "Payment has not been verified as successful."
+        });
+      }
+
+      if (
+        !Number.isFinite(
+          paidAmount
+        ) ||
+        paidAmount <= 0
+      ) {
+
+        return res.status(400).json({
+          error:
+            "Invalid payment amount."
+        });
+      }
+
+      if (!paidCurrency) {
+
+        return res.status(400).json({
+          error:
+            "Payment currency is required."
+        });
+      }
+
+
+      // --------------------------------------------------
+      // VERIFY BUYER
+      // --------------------------------------------------
+
+      const buyer =
+        await validateUserId(
+          buyerId
+        );
+
+      if (!buyer) {
+
+        return res.status(400).json({
+          error:
+            "Buyer PASONG account could not be found."
+        });
+      }
+
+
+      // --------------------------------------------------
+      // VERIFY SONG
+      // --------------------------------------------------
+
+      const songResult =
+        await supabase
+          .from("songs")
+          .select(`
+            id,
+            title,
+            price,
+            currency,
+            status,
+            artist_user_id,
+            producer_user_id,
+            writer_user_id
+          `)
+          .eq(
+            "id",
+            songId
+          )
+          .maybeSingle();
+
+
+      if (songResult.error) {
+
+        console.error(
+          "Payment song lookup error:",
+          songResult.error
+        );
+
+        return res.status(500).json({
+          error:
+            "Could not verify the song."
+        });
+      }
+
+
+      if (!songResult.data) {
+
+        return res.status(404).json({
+          error:
+            "Song not found."
+        });
+      }
+
+
+      const song =
+        songResult.data;
+
+
+      if (
+        song.status !==
+        "approved"
+      ) {
+
+        return res.status(403).json({
+          error:
+            "This song is not available for purchase."
+        });
+      }
+
+
+      // --------------------------------------------------
+      // SERVER-SIDE PRICE VERIFICATION
+      // --------------------------------------------------
+
+      const expectedPrice =
+        Number(
+          song.price || 0
+        );
+
+      const expectedCurrency =
+        String(
+          song.currency || ""
+        )
+          .trim()
+          .toUpperCase();
+
+
+      if (
+        paidAmount !==
+        expectedPrice ||
+        paidCurrency !==
+        expectedCurrency
+      ) {
+
+        return res.status(400).json({
+          error:
+            "Payment amount or currency does not match the PASONG song price."
+        });
+      }
+
+
+      // --------------------------------------------------
+      // CHECK DUPLICATE PAYMENT
+      // --------------------------------------------------
+
+      const existingPayment =
+        await supabase
+          .from("payments")
+          .select(`
+            id,
+            order_id,
+            transaction_id,
+            external_reference,
+            status
+          `)
+          .or(
+            "transaction_id.eq." +
+            transactionId +
+            ",external_reference.eq." +
+            externalReference
+          )
+          .limit(1)
+          .maybeSingle();
+
+
+      if (
+        existingPayment.error
+      ) {
+
+        console.error(
+          "Existing payment check error:",
+          existingPayment.error
+        );
+
+        return res.status(500).json({
+          error:
+            "Could not verify payment history."
+        });
+      }
+
+
+      if (
+        existingPayment.data
+      ) {
+
+        return res.json({
+
+          success:
+            true,
+
+          already_completed:
+            true,
+
+          order_id:
+            existingPayment.data.order_id,
+
+          payment_id:
+            existingPayment.data.id,
+
+          status:
+            existingPayment.data.status,
+
+          message:
+            "This payment has already been completed."
+        });
+      }
+
+
+      // --------------------------------------------------
+      // CHECK PREVIOUS SONG OWNERSHIP
+      // --------------------------------------------------
+
+      const existingDownload =
+        await supabase
+          .from("downloads")
+          .select(
+            "id,order_id"
+          )
+          .eq(
+            "user_id",
+            buyerId
+          )
+          .eq(
+            "song_id",
+            songId
+          )
+          .limit(1)
+          .maybeSingle();
+
+
+      if (
+        existingDownload.error
+      ) {
+
+        console.error(
+          "Existing download check error:",
+          existingDownload.error
+        );
+
+        return res.status(500).json({
+          error:
+            "Could not check previous purchase."
+        });
+      }
+
+
+      if (
+        existingDownload.data
+      ) {
+
+        return res.status(409).json({
+
+          error:
+            "This account already owns this song.",
+
+          already_owned:
+            true,
+
+          order_id:
+            existingDownload.data.order_id
+
+        });
+      }
+
+
+      // --------------------------------------------------
+      // CREATE ORDER
+      // --------------------------------------------------
+
+      const orderResult =
+        await supabase
+          .from("orders")
+          .insert({
+
+            buyer_id:
+              buyerId,
+
+            total_amount:
+              paidAmount,
+
+            currency:
+              paidCurrency,
+
+            status:
+              "paid"
+
+          })
+          .select()
+          .single();
+
+
+      if (orderResult.error) {
+
+        console.error(
+          "Order creation error:",
+          orderResult.error
+        );
+
+        return res.status(500).json({
+          error:
+            "Payment was verified but the PASONG order could not be created."
+        });
+      }
+
+
+      const order =
+        orderResult.data;
+
+
+      // --------------------------------------------------
+      // CREATE ORDER ITEM
+      // --------------------------------------------------
+
+      const orderItemResult =
+        await supabase
+          .from("order_items")
+          .insert({
+
+            order_id:
+              order.id,
+
+            song_id:
+              songId,
+
+            price:
+              paidAmount,
+
+            currency:
+              paidCurrency
+
+          })
+          .select()
+          .single();
+
+
+      if (orderItemResult.error) {
+
+        console.error(
+          "Order item creation error:",
+          orderItemResult.error
+        );
+
+        await supabase
+          .from("orders")
+          .update({
+            status:
+              "failed"
+          })
+          .eq(
+            "id",
+            order.id
+          );
+
+        return res.status(500).json({
+          error:
+            "Order could not be completed."
+        });
+      }
+
+
+      // --------------------------------------------------
+      // CREATE PAYMENT RECORD
+      // --------------------------------------------------
+
+      const paymentResult =
+        await supabase
+          .from("payments")
+          .insert({
+
+            order_id:
+              order.id,
+
+            user_id:
+              buyerId,
+
+            provider:
+              provider,
+
+            transaction_id:
+              transactionId,
+
+            external_reference:
+              externalReference,
+
+            amount:
+              paidAmount,
+
+            currency:
+              paidCurrency,
+
+            status:
+              "successful",
+
+            raw_response:
+              body.provider_response ||
+              body
+
+          })
+          .select()
+          .single();
+
+
+      if (paymentResult.error) {
+
+        console.error(
+          "Payment record error:",
+          paymentResult.error
+        );
+
+        return res.status(500).json({
+          error:
+            "Payment was verified but the payment record could not be saved."
+        });
+      }
+
+
+      const payment =
+        paymentResult.data;
+
+
+      // --------------------------------------------------
+      // CREATE DOWNLOAD OWNERSHIP
+      // --------------------------------------------------
+
+      const downloadResult =
+        await supabase
+          .from("downloads")
+          .insert({
+
+            user_id:
+              buyerId,
+
+            song_id:
+              songId,
+
+            order_id:
+              order.id
+
+          })
+          .select()
+          .single();
+
+
+      if (downloadResult.error) {
+
+        console.error(
+          "Download ownership error:",
+          downloadResult.error
+        );
+
+        return res.status(500).json({
+          error:
+            "Payment was successful but download ownership could not be created."
+        });
+      }
+
+
+      // --------------------------------------------------
+      // GET ARTIST CREDITS
+      // --------------------------------------------------
+
+      const creditsResult =
+        await supabase
+          .from("song_artists")
+          .select(
+            "artist_user_id,artist_share_percent,artist_order"
+          )
+          .eq(
+            "song_id",
+            songId
+          )
+          .order(
+            "artist_order",
+            {
+              ascending:
+                true
+            }
+          );
+
+
+      if (
+        creditsResult.error
+      ) {
+
+        console.error(
+          "Artist credits lookup error:",
+          creditsResult.error
+        );
+
+        return res.status(500).json({
+          error:
+            "Payment succeeded but artist royalty information could not be loaded."
+        });
+      }
+
+
+      const artistRows =
+        creditsResult.data || [];
+
+
+      // --------------------------------------------------
+      // CALCULATE ROYALTIES
+      // --------------------------------------------------
+
+      const royalty =
+        calculateRoyaltyAmounts(
+          paidAmount,
+          artistRows
+        );
+
+
+      const ledgerRows =
+        [];
+
+
+      // --------------------------------------------------
+      // ARTIST ROYALTIES
+      // --------------------------------------------------
+
+      for (
+        let i = 0;
+        i < royalty.artist.length;
+        i++
+      ) {
+
+        const artist =
+          royalty.artist[i];
+
+        ledgerRows.push({
+
+          recipient_user_id:
+            artist.recipient_user_id,
+
+          recipient_type:
+            "artist",
+
+          song_id:
+            songId,
+
+          sale_reference:
+            externalReference,
+
+          sale_amount:
+            paidAmount,
+
+          currency:
+            paidCurrency,
+
+          percentage:
+            artist.percentage,
+
+          amount:
+            artist.amount,
+
+          entry_type:
+            "credit",
+
+          status:
+            "available"
+
+        });
+      }
+
+
+      // --------------------------------------------------
+      // PRODUCER
+      // --------------------------------------------------
+
+      if (
+        song.producer_user_id
+      ) {
+
+        ledgerRows.push({
+
+          recipient_user_id:
+            song.producer_user_id,
+
+          recipient_type:
+            "producer",
+
+          song_id:
+            songId,
+
+          sale_reference:
+            externalReference,
+
+          sale_amount:
+            paidAmount,
+
+          currency:
+            paidCurrency,
+
+          percentage:
+            20,
+
+          amount:
+            royalty.producer,
+
+          entry_type:
+            "credit",
+
+          status:
+            "available"
+
+        });
+
+      } else {
+
+        ledgerRows.push({
+
+          recipient_user_id:
+            process.env.PASONG_USER_ID ||
+            null,
+
+          recipient_type:
+            "pasong",
+
+          song_id:
+            songId,
+
+          sale_reference:
+            externalReference,
+
+          sale_amount:
+            paidAmount,
+
+          currency:
+            paidCurrency,
+
+          percentage:
+            20,
+
+          amount:
+            royalty.producer,
+
+          entry_type:
+            "credit",
+
+          status:
+            "available"
+
+        });
+      }
+
+
+      // --------------------------------------------------
+      // WRITER
+      // --------------------------------------------------
+
+      if (
+        song.writer_user_id
+      ) {
+
+        ledgerRows.push({
+
+          recipient_user_id:
+            song.writer_user_id,
+
+          recipient_type:
+            "writer",
+
+          song_id:
+            songId,
+
+          sale_reference:
+            externalReference,
+
+          sale_amount:
+            paidAmount,
+
+          currency:
+            paidCurrency,
+
+          percentage:
+            15,
+
+          amount:
+            royalty.writer,
+
+          entry_type:
+            "credit",
+
+          status:
+            "available"
+
+        });
+
+      } else {
+
+        ledgerRows.push({
+
+          recipient_user_id:
+            process.env.PASONG_USER_ID ||
+            null,
+
+          recipient_type:
+            "pasong",
+
+          song_id:
+            songId,
+
+          sale_reference:
+            externalReference,
+
+          sale_amount:
+            paidAmount,
+
+          currency:
+            paidCurrency,
+
+          percentage:
+            15,
+
+          amount:
+            royalty.writer,
+
+          entry_type:
+            "credit",
+
+          status:
+            "available"
+
+        });
+      }
+
+
+      // --------------------------------------------------
+      // PASONG PLATFORM SHARE
+      // --------------------------------------------------
+
+      ledgerRows.push({
+
+        recipient_user_id:
+          process.env.PASONG_USER_ID ||
+          null,
+
+        recipient_type:
+          "pasong",
+
+        song_id:
+          songId,
+
+        sale_reference:
+          externalReference,
+
+        sale_amount:
+          paidAmount,
+
+        currency:
+          paidCurrency,
+
+        percentage:
+          25,
+
+        amount:
+          royalty.pasong,
+
+        entry_type:
+          "credit",
+
+        status:
+          "available"
+
+      });
+
+
+      // --------------------------------------------------
+      // SAVE ROYALTY LEDGER
+      // --------------------------------------------------
+
+      const ledgerResult =
+        await supabase
+          .from("royalty_ledger")
+          .insert(
+            ledgerRows
+          )
+          .select();
+
+
+      if (
+        ledgerResult.error
+      ) {
+
+        console.error(
+          "Royalty ledger error:",
+          ledgerResult.error
+        );
+
+        return res.status(500).json({
+          error:
+            "Payment succeeded but royalty records could not be created."
+        });
+      }
+
+
+      // --------------------------------------------------
+      // SUCCESS
+      // --------------------------------------------------
+
+      return res.json({
+
+        success:
+          true,
+
+        already_completed:
+          false,
+
+        order_id:
+          order.id,
+
+        payment_id:
+          payment.id,
+
+        download_id:
+          downloadResult.data.id,
+
+        song_id:
+          songId,
+
+        title:
+          song.title,
+
+        amount:
+          paidAmount,
+
+        currency:
+          paidCurrency,
+
+        status:
+          "completed",
+
+        message:
+          "Payment completed successfully. Song ownership and royalties have been recorded."
+
+      });
+
+
+    } catch (error) {
+
+      console.error(
+        "Payment completion error:",
+        error
+      );
+
+      return res.status(500).json({
+
+        error:
+          error.message ||
+          "Payment completion failed."
+
+      });
+    }
+  }
+);
+
+
+// ======================================================
 // START SERVER
 // ======================================================
 
