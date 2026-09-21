@@ -2708,6 +2708,823 @@ app.get(
 );
 
 // ======================================================
+// MTN MOMO COLLECTION
+// SERVER-SIDE PAYMENT REQUEST
+// ======================================================
+
+const MTN_MOMO_API_KEY =
+  process.env.MTN_MOMO_API_KEY;
+
+const MTN_MOMO_API_USER =
+  process.env.MTN_MOMO_API_USER;
+
+const MTN_MOMO_SUBSCRIPTION_KEY =
+  process.env.MTN_MOMO_SUBSCRIPTION_KEY;
+
+const MTN_MOMO_ENVIRONMENT =
+  process.env.MTN_MOMO_ENVIRONMENT ||
+  "sandbox";
+
+const MTN_MOMO_CURRENCY =
+  process.env.MTN_MOMO_CURRENCY ||
+  "UGX";
+
+function getMtnBaseUrl() {
+  if (
+    MTN_MOMO_ENVIRONMENT ===
+    "sandbox"
+  ) {
+    return "https://sandbox.momodeveloper.mtn.com";
+  }
+
+  return "https://momodeveloper.mtn.com";
+}
+
+function generateMtnReferenceId() {
+  return crypto.randomUUID();
+}
+
+function normalizeUgandaPhone(phone) {
+  let value =
+    String(phone || "")
+      .replace(/\s+/g, "")
+      .replace(/-/g, "")
+      .trim();
+
+  if (value.startsWith("+")) {
+    value =
+      value.substring(1);
+  }
+
+  if (value.startsWith("00")) {
+    value =
+      value.substring(2);
+  }
+
+  if (
+    value.startsWith("0") &&
+    value.length === 10
+  ) {
+    value =
+      "256" +
+      value.substring(1);
+  }
+
+  return value;
+}
+
+// ======================================================
+// MTN ACCESS TOKEN
+// ======================================================
+
+async function getMtnAccessToken() {
+  if (
+    !MTN_MOMO_API_KEY ||
+    !MTN_MOMO_API_USER ||
+    !MTN_MOMO_SUBSCRIPTION_KEY
+  ) {
+    throw new Error(
+      "MTN MoMo credentials are not fully configured."
+    );
+  }
+
+  const baseUrl =
+    getMtnBaseUrl();
+
+  const tokenUrl =
+    baseUrl +
+    "/collection/token/";
+
+  const basicCredentials =
+    Buffer.from(
+      MTN_MOMO_API_USER +
+      ":" +
+      MTN_MOMO_API_KEY
+    ).toString("base64");
+
+  const response =
+    await fetch(
+      tokenUrl,
+      {
+        method: "POST",
+
+        headers: {
+          "Authorization":
+            "Basic " +
+            basicCredentials,
+
+          "Ocp-Apim-Subscription-Key":
+            MTN_MOMO_SUBSCRIPTION_KEY,
+
+          "X-Target-Environment":
+            MTN_MOMO_ENVIRONMENT,
+
+          "Content-Type":
+            "application/json"
+        }
+      }
+    );
+
+  const text =
+    await response.text();
+
+  let data = {};
+
+  try {
+    data =
+      text
+        ? JSON.parse(text)
+        : {};
+  } catch (error) {
+    data = {
+      raw:
+        text
+    };
+  }
+
+  if (!response.ok) {
+    console.error(
+      "MTN token error:",
+      response.status,
+      data
+    );
+
+    throw new Error(
+      "MTN authentication failed."
+    );
+  }
+
+  if (!data.access_token) {
+    throw new Error(
+      "MTN did not return an access token."
+    );
+  }
+
+  return data.access_token;
+}
+
+// ======================================================
+// MTN REQUEST TO PAY
+// ======================================================
+
+app.post(
+  "/api/payments/mtn/request",
+  async function (req, res) {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error:
+            "Authentication required."
+        });
+      }
+
+      if (
+        !MTN_MOMO_API_KEY ||
+        !MTN_MOMO_API_USER ||
+        !MTN_MOMO_SUBSCRIPTION_KEY
+      ) {
+        return res.status(500).json({
+          error:
+            "MTN MoMo is not configured on the PASONG server."
+        });
+      }
+
+      const body =
+        req.body || {};
+
+      const songId =
+        String(
+          body.song_id || ""
+        ).trim();
+
+      const phone =
+        normalizeUgandaPhone(
+          body.phone
+        );
+
+      if (!songId) {
+        return res.status(400).json({
+          error:
+            "song_id is required."
+        });
+      }
+
+      if (!phone) {
+        return res.status(400).json({
+          error:
+            "MTN Mobile Money phone number is required."
+        });
+      }
+
+      if (
+        !/^2567\d{8}$/.test(
+          phone
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Enter a valid Uganda MTN Mobile Money number."
+        });
+      }
+
+      const songResult =
+        await supabase
+          .from("songs")
+          .select(`
+            id,
+            title,
+            price,
+            currency,
+            status
+          `)
+          .eq(
+            "id",
+            songId
+          )
+          .maybeSingle();
+
+      if (songResult.error) {
+        console.error(
+          "MTN song lookup error:",
+          songResult.error
+        );
+
+        return res.status(500).json({
+          error:
+            "Could not verify the song."
+        });
+      }
+
+      if (!songResult.data) {
+        return res.status(404).json({
+          error:
+            "Song not found."
+        });
+      }
+
+      const song =
+        songResult.data;
+
+      if (
+        song.status !==
+        "approved"
+      ) {
+        return res.status(403).json({
+          error:
+            "This song is not available for purchase."
+        });
+      }
+
+      const amount =
+        Number(
+          song.price || 0
+        );
+
+      const currency =
+        String(
+          song.currency || ""
+        )
+          .trim()
+          .toUpperCase();
+
+      if (
+        !Number.isFinite(amount) ||
+        amount <= 0
+      ) {
+        return res.status(400).json({
+          error:
+            "The song has an invalid price."
+        });
+      }
+
+      if (
+        currency !==
+        "UGX"
+      ) {
+        return res.status(400).json({
+          error:
+            "MTN Mobile Money currently supports the PASONG Uganda UGX payment flow."
+        });
+      }
+
+      const ownership =
+        await supabase
+          .from("downloads")
+          .select(
+            "id,order_id"
+          )
+          .eq(
+            "user_id",
+            user.id
+          )
+          .eq(
+            "song_id",
+            songId
+          )
+          .limit(1)
+          .maybeSingle();
+
+      if (ownership.error) {
+        console.error(
+          "MTN ownership check error:",
+          ownership.error
+        );
+
+        return res.status(500).json({
+          error:
+            "Could not check previous purchase."
+        });
+      }
+
+      if (
+        ownership.data
+      ) {
+        return res.status(409).json({
+          error:
+            "This account already owns this song.",
+
+          already_owned:
+            true,
+
+          order_id:
+            ownership.data.order_id
+        });
+      }
+
+      const referenceId =
+        generateMtnReferenceId();
+
+      const externalReference =
+        "PASONG-" +
+        songId +
+        "-" +
+        Date.now();
+
+      const accessToken =
+        await getMtnAccessToken();
+
+      const requestUrl =
+        getMtnBaseUrl() +
+        "/collection/v1_0/requesttopay";
+
+      const payload = {
+        amount:
+          String(amount),
+
+        currency:
+          MTN_MOMO_CURRENCY,
+
+        externalId:
+          externalReference,
+
+        payer: {
+          partyIdType:
+            "MSISDN",
+
+          partyId:
+            phone
+        },
+
+        payerMessage:
+          "PASONG music purchase",
+
+        payeeNote:
+          "PASONG song purchase"
+      };
+
+      const response =
+        await fetch(
+          requestUrl,
+          {
+            method: "POST",
+
+            headers: {
+              "Authorization":
+                "Bearer " +
+                accessToken,
+
+              "X-Reference-Id":
+                referenceId,
+
+              "X-Target-Environment":
+                MTN_MOMO_ENVIRONMENT,
+
+              "Ocp-Apim-Subscription-Key":
+                MTN_MOMO_SUBSCRIPTION_KEY,
+
+              "Content-Type":
+                "application/json"
+            },
+
+            body:
+              JSON.stringify(
+                payload
+              )
+          }
+        );
+
+      const responseText =
+        await response.text();
+
+      if (
+        response.status !==
+        202
+      ) {
+        console.error(
+          "MTN RequestToPay error:",
+          response.status,
+          responseText
+        );
+
+        return res.status(502).json({
+          error:
+            "MTN did not accept the payment request.",
+
+          provider_status:
+            response.status
+        });
+      }
+
+      return res.status(202).json({
+        success:
+          true,
+
+        provider:
+          "MTN MoMo",
+
+        status:
+          "PENDING",
+
+        reference_id:
+          referenceId,
+
+        external_reference:
+          externalReference,
+
+        song_id:
+          songId,
+
+        amount:
+          amount,
+
+        currency:
+          currency,
+
+        message:
+          "Payment request sent. Please approve the MTN Mobile Money prompt on your phone."
+      });
+    } catch (error) {
+      console.error(
+        "MTN request payment error:",
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          error.message ||
+          "Could not start MTN Mobile Money payment."
+      });
+    }
+  }
+);
+
+// ======================================================
+// MTN PAYMENT STATUS
+// ======================================================
+
+app.get(
+  "/api/payments/mtn/status/:referenceId",
+  async function (req, res) {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error:
+            "Authentication required."
+        });
+      }
+
+      const referenceId =
+        String(
+          req.params.referenceId ||
+          ""
+        ).trim();
+
+      if (!referenceId) {
+        return res.status(400).json({
+          error:
+            "MTN reference ID is required."
+        });
+      }
+
+      const accessToken =
+        await getMtnAccessToken();
+
+      const statusUrl =
+        getMtnBaseUrl() +
+        "/collection/v1_0/requesttopay/" +
+        encodeURIComponent(
+          referenceId
+        );
+
+      const response =
+        await fetch(
+          statusUrl,
+          {
+            method: "GET",
+
+            headers: {
+              "Authorization":
+                "Bearer " +
+                accessToken,
+
+              "X-Target-Environment":
+                MTN_MOMO_ENVIRONMENT,
+
+              "Ocp-Apim-Subscription-Key":
+                MTN_MOMO_SUBSCRIPTION_KEY
+            }
+          }
+        );
+
+      const text =
+        await response.text();
+
+      let data = {};
+
+      try {
+        data =
+          text
+            ? JSON.parse(text)
+            : {};
+      } catch (error) {
+        data = {
+          raw:
+            text
+        };
+      }
+
+      if (!response.ok) {
+        console.error(
+          "MTN status error:",
+          response.status,
+          data
+        );
+
+        return res.status(502).json({
+          error:
+            "Could not check MTN payment status.",
+
+          provider_status:
+            response.status
+        });
+      }
+
+      const providerStatus =
+        String(
+          data.status ||
+          "PENDING"
+        )
+          .trim()
+          .toUpperCase();
+
+      if (
+        providerStatus !==
+          "SUCCESSFUL" &&
+        providerStatus !==
+          "FAILED"
+      ) {
+        return res.json({
+          success:
+            true,
+
+          status:
+            providerStatus,
+
+          reference_id:
+            referenceId,
+
+          message:
+            "Payment is still pending. Please approve the MTN Mobile Money request."
+        });
+      }
+
+      if (
+        providerStatus ===
+        "FAILED"
+      ) {
+        return res.json({
+          success:
+            false,
+
+          status:
+            "FAILED",
+
+          reference_id:
+            referenceId,
+
+          provider_response:
+            data,
+
+          message:
+            "The MTN Mobile Money payment was not successful."
+        });
+      }
+
+      const songId =
+        String(
+          req.query.song_id ||
+          ""
+        ).trim();
+
+      if (!songId) {
+        return res.status(400).json({
+          error:
+            "song_id is required when completing an MTN payment."
+        });
+      }
+
+      const songResult =
+        await supabase
+          .from("songs")
+          .select(`
+            id,
+            title,
+            price,
+            currency,
+            status
+          `)
+          .eq(
+            "id",
+            songId
+          )
+          .maybeSingle();
+
+      if (
+        songResult.error ||
+        !songResult.data
+      ) {
+        return res.status(404).json({
+          error:
+            "Song could not be found for this payment."
+        });
+      }
+
+      const song =
+        songResult.data;
+
+      const amount =
+        Number(
+          song.price || 0
+        );
+
+      const currency =
+        String(
+          song.currency || ""
+        )
+          .trim()
+          .toUpperCase();
+
+      const externalReference =
+        String(
+          data.externalId ||
+          req.query.external_reference ||
+          referenceId
+        ).trim();
+
+      const completionUrl =
+        "http://127.0.0.1:" +
+        PORT +
+        "/api/payments/complete";
+
+      const completionBody = {
+        buyer_id:
+          user.id,
+
+        song_id:
+          songId,
+
+        transaction_id:
+          referenceId,
+
+        external_reference:
+          externalReference,
+
+        provider:
+          "MTN MoMo",
+
+        amount:
+          amount,
+
+        currency:
+          currency,
+
+        payment_status:
+          "SUCCESSFUL",
+
+        provider_response:
+          data
+      };
+
+      const completionResponse =
+        await fetch(
+          completionUrl,
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+
+              "x-pasong-payment-secret":
+                process.env
+                  .PASONG_PAYMENT_SECRET
+            },
+
+            body:
+              JSON.stringify(
+                completionBody
+              )
+          }
+        );
+
+      const completionText =
+        await completionResponse.text();
+
+      let completionData = {};
+
+      try {
+        completionData =
+          completionText
+            ? JSON.parse(
+                completionText
+              )
+            : {};
+      } catch (error) {
+        completionData = {
+          raw:
+            completionText
+        };
+      }
+
+      if (
+        !completionResponse.ok
+      ) {
+        console.error(
+          "PASONG payment completion error:",
+          completionResponse.status,
+          completionData
+        );
+
+        return res.status(500).json({
+          error:
+            "MTN payment was successful, but PASONG could not complete the order.",
+
+          provider_status:
+            "SUCCESSFUL",
+
+          completion:
+            completionData
+        });
+      }
+
+      return res.json({
+        success:
+          true,
+
+        status:
+          "SUCCESSFUL",
+
+        reference_id:
+          referenceId,
+
+        provider:
+          "MTN MoMo",
+
+        completion:
+          completionData
+      });
+    } catch (error) {
+      console.error(
+        "MTN status error:",
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          error.message ||
+          "Could not check MTN payment status."
+      });
+    }
+  }
+);
+
+// ======================================================
 // PAYMENT COMPLETION
 // SECURE SERVER-TO-SERVER ENDPOINT
 // ======================================================
