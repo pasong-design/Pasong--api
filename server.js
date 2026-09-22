@@ -4232,7 +4232,225 @@ app.get("/api/mtn/payment-status/:referenceId", async (req, res) => {
 // ======================================================
 // START SERVER
 // ======================================================
+app.post(
+  "/api/beats/create",
+  async function(req, res) {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
 
+      if (!user) {
+        return res.status(401).json({
+          error:
+            "Authentication required."
+        });
+      }
+
+      const profile =
+        await getArtistProfile(
+          user.id
+        );
+
+      if (!profile) {
+        return res.status(400).json({
+          error:
+            "Producer profile not found."
+        });
+      }
+
+      const title =
+        String(
+          req.body.title || ""
+        ).trim();
+
+      const genre =
+        String(
+          req.body.genre || ""
+        ).trim();
+
+      const musicalKey =
+        String(
+          req.body.musical_key || ""
+        ).trim();
+
+      const audioUrl =
+        String(
+          req.body.audio_url || ""
+        ).trim();
+
+      const coverUrl =
+        String(
+          req.body.cover_url || ""
+        ).trim();
+
+      const bpm =
+        req.body.bpm
+          ? Number(req.body.bpm)
+          : null;
+
+      const leaseMp3Price =
+        Number(
+          req.body.lease_mp3_price
+        );
+
+      const leaseWavPrice =
+        Number(
+          req.body.lease_wav_price
+        );
+
+      const stemsPrice =
+        Number(
+          req.body.stems_price
+        );
+
+      const exclusivePrice =
+        Number(
+          req.body.exclusive_price
+        );
+
+      if (!title) {
+        return res.status(400).json({
+          error:
+            "Beat title is required."
+        });
+      }
+
+      if (!audioUrl) {
+        return res.status(400).json({
+          error:
+            "Beat audio URL is required."
+        });
+      }
+
+      if (
+        !Number.isFinite(leaseMp3Price) ||
+        leaseMp3Price < 10000 ||
+        leaseMp3Price > 1500000
+      ) {
+        return res.status(400).json({
+          error:
+            "MP3 Lease price must be between UGX 10,000 and UGX 1,500,000."
+        });
+      }
+
+      if (
+        !Number.isFinite(leaseWavPrice) ||
+        leaseWavPrice < 10000 ||
+        leaseWavPrice > 1500000
+      ) {
+        return res.status(400).json({
+          error:
+            "WAV Lease price must be between UGX 10,000 and UGX 1,500,000."
+        });
+      }
+
+      if (
+        !Number.isFinite(stemsPrice) ||
+        stemsPrice < 10000 ||
+        stemsPrice > 1500000
+      ) {
+        return res.status(400).json({
+          error:
+            "Stems price must be between UGX 10,000 and UGX 1,500,000."
+        });
+      }
+
+      if (
+        !Number.isFinite(exclusivePrice) ||
+        exclusivePrice < 500000 ||
+        exclusivePrice > 10000000
+      ) {
+        return res.status(400).json({
+          error:
+            "Exclusive price must be between UGX 500,000 and UGX 10,000,000."
+        });
+      }
+
+      if (
+        bpm !== null &&
+        (
+          !Number.isInteger(bpm) ||
+          bpm < 1 ||
+          bpm > 999
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid BPM."
+        });
+      }
+
+      const result =
+        await supabase
+          .from("beats")
+          .insert({
+            producer_id:
+              profile.id,
+            title:
+              title,
+            genre:
+              genre || null,
+            bpm:
+              bpm,
+            musical_key:
+              musicalKey || null,
+            cover_url:
+              coverUrl || null,
+            audio_url:
+              audioUrl,
+            preview_url:
+              null,
+            lease_mp3_price:
+              leaseMp3Price,
+            lease_wav_price:
+              leaseWavPrice,
+            stems_price:
+              stemsPrice,
+            exclusive_price:
+              exclusivePrice,
+            status:
+              "pending",
+            is_exclusive_sold:
+              false
+          })
+          .select()
+          .single();
+
+      if (result.error) {
+        console.error(
+          "Beat creation error:",
+          result.error
+        );
+
+        return res.status(500).json({
+          error:
+            result.error.message
+        });
+      }
+
+      return res.status(201).json({
+        success:
+          true,
+        message:
+          "Beat uploaded successfully.",
+        beat:
+          result.data
+      });
+
+    } catch (error) {
+      console.error(
+        "Beat creation error:",
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          error.message ||
+          "Could not create beat."
+      });
+    }
+  }
+);
 app.listen(
   PORT,
   function() {
