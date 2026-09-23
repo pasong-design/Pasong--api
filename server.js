@@ -73,6 +73,7 @@ app.use(
 );
 
 app.use(express.json({ limit: "2mb" }));
+
 app.use(
   express.urlencoded({
     extended: true,
@@ -452,10 +453,27 @@ function allowedCloudinaryFolder(
   const value =
     String(folder || "").trim();
 
-  return [
-    "pasong-songs",
-    "pasong/songs"
-  ].includes(value);
+  if (
+    [
+      "pasong-songs",
+      "pasong/songs",
+      "pasong-beats/audio",
+      "pasong-beats/covers",
+      "pasong-producers/profile"
+    ].includes(value)
+  ) {
+    return true;
+  }
+
+  if (
+    /^pasong-beats\/deliveries\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value
+    )
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function createCloudinarySignature(
