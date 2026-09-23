@@ -25,6 +25,9 @@ const CLOUDINARY_API_SECRET =
 const PASONG_PAYMENT_SECRET =
   process.env.PASONG_PAYMENT_SECRET;
 
+const CORS_ORIGIN =
+  process.env.CORS_ORIGIN || "";
+
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error("Missing Supabase environment variables");
   process.exit(1);
@@ -44,9 +47,12 @@ if (!PASONG_PAYMENT_SECRET) {
   process.exit(1);
 }
 
-const allowedOrigins = String(
-  process.env.CORS_ORIGIN || ""
-)
+if (!CORS_ORIGIN.trim()) {
+  console.error("Missing CORS_ORIGIN");
+  process.exit(1);
+}
+
+const allowedOrigins = CORS_ORIGIN
   .split(",")
   .map(v => v.trim())
   .filter(Boolean);
@@ -58,10 +64,7 @@ app.use(
         return callback(null, true);
       }
 
-      if (
-        allowedOrigins.length === 0 ||
-        allowedOrigins.includes(origin)
-      ) {
+      if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
 
@@ -345,6 +348,29 @@ function cleanText(value, maxLength) {
 
 function isSameAmount(a, b) {
   return Number(a) === Number(b);
+}
+
+function validUrl(value) {
+  try {
+    const url =
+      new URL(
+        String(value || "").trim()
+      );
+
+    return (
+      url.protocol === "https:" ||
+      url.protocol === "http:"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isSameUrl(a, b) {
+  return (
+    String(a || "").trim() ===
+    String(b || "").trim()
+  );
 }
 
 app.get("/api/pricing", (req, res) => {
@@ -836,6 +862,12 @@ app.post(
           2000
         );
 
+      const previewUrl =
+        cleanText(
+          body.preview_url,
+          2000
+        );
+
       const coverUrl =
         cleanText(
           body.cover_url,
@@ -845,11 +877,35 @@ app.post(
       if (
         !title ||
         !audioUrl ||
+        !previewUrl ||
         !coverUrl
       ) {
         return res.status(400).json({
           error:
-            "title/audio/cover required"
+            "Title + audio + cover + preview required"
+        });
+      }
+
+      if (
+        !validUrl(audioUrl) ||
+        !validUrl(previewUrl) ||
+        !validUrl(coverUrl)
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid audio, preview or cover URL"
+        });
+      }
+
+      if (
+        isSameUrl(
+          audioUrl,
+          previewUrl
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Preview must be different from full audio"
         });
       }
 
@@ -992,6 +1048,8 @@ app.post(
               coverUrl,
             audio_url:
               audioUrl,
+            preview_url:
+              previewUrl,
             artist_count:
               artistIds.length
           })
@@ -1086,11 +1144,11 @@ function publicSong(song) {
 
   delete safeSong.audio_url;
 
-  safeSong.audio_url =
+  safeSong.preview_url =
     song.preview_url ||
     null;
 
-  safeSong.preview_url =
+  safeSong.audio_url =
     song.preview_url ||
     null;
 
@@ -1552,7 +1610,7 @@ app.post(
         await supabase
           .from("payments")
           .select(
-            "id,order_id,user_id"
+            "id,order_id,user_id,song_id"
           )
           .eq(
             "transaction_id",
@@ -1572,6 +1630,18 @@ app.post(
       if (
         existingTransaction.data
       ) {
+        if (
+          existingTransaction.data
+            .user_id !== buyer_id ||
+          existingTransaction.data
+            .song_id !== song_id
+        ) {
+          return res.status(409).json({
+            error:
+              "Transaction already belongs to another purchase"
+          });
+        }
+
         return res.json({
           success: true,
           already_completed:
@@ -1587,7 +1657,7 @@ app.post(
         await supabase
           .from("payments")
           .select(
-            "id,order_id,user_id"
+            "id,order_id,user_id,song_id"
           )
           .eq(
             "external_reference",
@@ -1607,6 +1677,18 @@ app.post(
       if (
         existingReference.data
       ) {
+        if (
+          existingReference.data
+            .user_id !== buyer_id ||
+          existingReference.data
+            .song_id !== song_id
+        ) {
+          return res.status(409).json({
+            error:
+              "Payment reference already belongs to another purchase"
+          });
+        }
+
         return res.json({
           success: true,
           already_completed:
@@ -1722,6 +1804,7 @@ app.post(
               order.data.id,
             user_id:
               buyer_id,
+            song_id,
             provider:
               normalizedProvider,
             transaction_id:
@@ -2197,6 +2280,13 @@ app.post(
         return res.status(400).json({
           error:
             "Title + preview required"
+        });
+      }
+
+      if (!validUrl(preview)) {
+        return res.status(400).json({
+          error:
+            "Invalid preview URL"
         });
       }
 
@@ -2873,7 +2963,7 @@ app.post(
             "beat_orders"
           )
           .select(
-            "id,status"
+            "id,status,buyer_id,beat_id,package_type"
           )
           .eq(
             "transaction_id",
@@ -2909,7 +2999,7 @@ app.post(
             "beat_orders"
           )
           .select(
-            "id,status"
+            "id,status,buyer_id,beat_id,package_type"
           )
           .eq(
             "external_reference",
