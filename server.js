@@ -2250,6 +2250,7 @@ app.post(
       const {
         title,
         audio_url_preview,
+        preview_url,
         audio_url_mp3,
         audio_url_wav,
         audio_url_stems,
@@ -2269,7 +2270,8 @@ app.post(
 
       const preview =
         cleanText(
-          audio_url_preview,
+          audio_url_preview ||
+            preview_url,
           2000
         );
 
