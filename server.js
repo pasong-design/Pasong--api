@@ -2247,33 +2247,88 @@ app.post(
         });
       }
 
-      const {
-        title,
-        audio_url_preview,
-        preview_url,
-        audio_url_mp3,
-        audio_url_wav,
-        audio_url_stems,
-        audio_url_exclusive,
-        cover_url,
-        bpm,
-        key,
-        genre,
-        description
-      } = req.body || {};
+      const body =
+        req.body || {};
 
       const cleanTitle =
         cleanText(
-          title,
+          body.title,
           200
+        );
+
+      const audioUrl =
+        cleanText(
+          body.audio_url,
+          2000
         );
 
       const preview =
         cleanText(
-          audio_url_preview ||
-            preview_url,
+          body.audio_url_preview ||
+            body.preview_url ||
+            audioUrl,
           2000
         );
+
+      const audioMp3 =
+        cleanText(
+          body.audio_url_mp3 ||
+            audioUrl,
+          2000
+        );
+
+      const audioWav =
+        cleanText(
+          body.audio_url_wav ||
+            audioUrl,
+          2000
+        );
+
+      const audioStems =
+        cleanText(
+          body.audio_url_stems ||
+            audioUrl,
+          2000
+        );
+
+      const audioExclusive =
+        cleanText(
+          body.audio_url_exclusive ||
+            audioUrl,
+          2000
+        );
+
+      const coverUrl =
+        cleanText(
+          body.cover_url,
+          2000
+        );
+
+      const cleanKey =
+        cleanText(
+          body.key,
+          50
+        );
+
+      const cleanGenre =
+        cleanText(
+          body.genre,
+          100
+        ) ||
+        "Afrobeat";
+
+      const cleanDescription =
+        cleanText(
+          body.description,
+          5000
+        );
+
+      const cleanBpm =
+        body.bpm === undefined ||
+        body.bpm === null ||
+        body.bpm === ""
+          ? null
+          : Number(body.bpm);
 
       if (
         !cleanTitle ||
@@ -2292,6 +2347,169 @@ app.post(
         });
       }
 
+      if (
+        audioMp3 &&
+        !validUrl(audioMp3)
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid MP3 URL"
+        });
+      }
+
+      if (
+        audioWav &&
+        !validUrl(audioWav)
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid WAV URL"
+        });
+      }
+
+      if (
+        audioStems &&
+        !validUrl(audioStems)
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid stems URL"
+        });
+      }
+
+      if (
+        audioExclusive &&
+        !validUrl(audioExclusive)
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid exclusive URL"
+        });
+      }
+
+      if (
+        cleanBpm !== null &&
+        (
+          !Number.isFinite(cleanBpm) ||
+          cleanBpm < 1 ||
+          cleanBpm > 400
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid BPM"
+        });
+      }
+
+      const getPriceInput = (
+        ...values
+      ) => {
+        for (
+          const value of values
+        ) {
+          if (
+            value !== undefined &&
+            value !== null &&
+            String(value).trim() !== ""
+          ) {
+            return value;
+          }
+        }
+
+        return null;
+      };
+
+      const mp3PriceRaw =
+        getPriceInput(
+          body.mp3_price,
+          body.lease_mp3_price,
+          body.mp3_lease_price
+        );
+
+      const wavPriceRaw =
+        getPriceInput(
+          body.wav_price,
+          body.lease_wav_price,
+          body.wav_lease_price
+        );
+
+      const stemsPriceRaw =
+        getPriceInput(
+          body.stems_price,
+          body.trackout_price,
+          body.lease_stems_price,
+          body.stems_lease_price
+        );
+
+      const exclusivePriceRaw =
+        getPriceInput(
+          body.exclusive_price
+        );
+
+      const mp3Price =
+        mp3PriceRaw === null
+          ? 10000
+          : Number(mp3PriceRaw);
+
+      const wavPrice =
+        wavPriceRaw === null
+          ? 25000
+          : Number(wavPriceRaw);
+
+      const stemsPrice =
+        stemsPriceRaw === null
+          ? 50000
+          : Number(stemsPriceRaw);
+
+      const exclusivePrice =
+        exclusivePriceRaw === null
+          ? 500000
+          : Number(exclusivePriceRaw);
+
+      if (
+        !Number.isFinite(mp3Price) ||
+        mp3Price < 10000 ||
+        mp3Price > 1500000
+      ) {
+        return res.status(400).json({
+          error:
+            "MP3 lease price must be between UGX 10,000 and UGX 1,500,000"
+        });
+      }
+
+      if (
+        !Number.isFinite(wavPrice) ||
+        wavPrice < 10000 ||
+        wavPrice > 1500000
+      ) {
+        return res.status(400).json({
+          error:
+            "WAV lease price must be between UGX 10,000 and UGX 1,500,000"
+        });
+      }
+
+      if (
+        !Number.isFinite(stemsPrice) ||
+        stemsPrice < 10000 ||
+        stemsPrice > 1500000
+      ) {
+        return res.status(400).json({
+          error:
+            "Stems/Trackout price must be between UGX 10,000 and UGX 1,500,000"
+        });
+      }
+
+      if (
+        !Number.isFinite(exclusivePrice) ||
+        exclusivePrice < 500000 ||
+        exclusivePrice > 10000000
+      ) {
+        return res.status(400).json({
+          error:
+            "Exclusive price must be between UGX 500,000 and UGX 10,000,000"
+        });
+      }
+
       const beatResult =
         await supabase
           .from("beats")
@@ -2303,48 +2521,24 @@ app.post(
             audio_url_preview:
               preview,
             audio_url_mp3:
-              cleanText(
-                audio_url_mp3,
-                2000
-              ) || null,
+              audioMp3 || null,
             audio_url_wav:
-              cleanText(
-                audio_url_wav,
-                2000
-              ) || null,
+              audioWav || null,
             audio_url_stems:
-              cleanText(
-                audio_url_stems,
-                2000
-              ) || null,
+              audioStems || null,
             audio_url_exclusive:
-              cleanText(
-                audio_url_exclusive,
-                2000
-              ) || null,
+              audioExclusive || null,
             cover_url:
-              cleanText(
-                cover_url,
-                2000
-              ) || null,
+              coverUrl || null,
             bpm:
-              bpm || null,
+              cleanBpm,
             key:
-              cleanText(
-                key,
-                50
-              ) || null,
+              cleanKey || null,
             genre:
-              cleanText(
-                genre,
-                100
-              ) ||
-              "Afrobeat",
+              cleanGenre,
             description:
-              cleanText(
-                description,
-                5000
-              ) || null,
+              cleanDescription ||
+              null,
             sales_count:
               0,
             status:
@@ -2356,46 +2550,77 @@ app.post(
       if (beatResult.error) {
         return res.status(500).json({
           error:
-            "Beat creation failed"
+            "Beat creation failed",
+          details:
+            beatResult.error.message ||
+            null,
+          code:
+            beatResult.error.code ||
+            null,
+          hint:
+            beatResult.error.hint ||
+            null
         });
       }
 
-      const packageTypes = [
-        "mp3",
-        "wav",
-        "stems",
-        "exclusive"
+      const packages = [
+        {
+          beat_id:
+            beatResult.data.id,
+          package_type:
+            "mp3",
+          price:
+            mp3Price,
+          currency:
+            "UGX",
+          sales_count:
+            0,
+          max_sales:
+            100
+        },
+        {
+          beat_id:
+            beatResult.data.id,
+          package_type:
+            "wav",
+          price:
+            wavPrice,
+          currency:
+            "UGX",
+          sales_count:
+            0,
+          max_sales:
+            100
+        },
+        {
+          beat_id:
+            beatResult.data.id,
+          package_type:
+            "stems",
+          price:
+            stemsPrice,
+          currency:
+            "UGX",
+          sales_count:
+            0,
+          max_sales:
+            100
+        },
+        {
+          beat_id:
+            beatResult.data.id,
+          package_type:
+            "exclusive",
+          price:
+            exclusivePrice,
+          currency:
+            "UGX",
+          sales_count:
+            0,
+          max_sales:
+            1
+        }
       ];
-
-      const packages =
-        packageTypes.map(
-          packageType => {
-            const pricing =
-              getBeatPackagePricing(
-                packageType
-              );
-
-            return {
-              beat_id:
-                beatResult
-                  .data
-                  .id,
-              package_type:
-                packageType,
-              price:
-                pricing.amount,
-              currency:
-                pricing.currency,
-              sales_count:
-                0,
-              max_sales:
-                packageType ===
-                "exclusive"
-                  ? 1
-                  : 100
-            };
-          }
-        );
 
       const packageResult =
         await supabase
@@ -2419,7 +2644,51 @@ app.post(
 
         return res.status(500).json({
           error:
-            "Beat package creation failed"
+            "Beat package creation failed",
+          details:
+            packageResult.error.message ||
+            null,
+          code:
+            packageResult.error.code ||
+            null,
+          hint:
+            packageResult.error.hint ||
+            null
+        });
+      }
+
+      const completeBeat =
+        await supabase
+          .from("beats")
+          .select(
+            `*, beat_packages(*)`
+          )
+          .eq(
+            "id",
+            beatResult.data.id
+          )
+          .maybeSingle();
+
+      if (
+        completeBeat.error ||
+        !completeBeat.data
+      ) {
+        return res.status(201).json({
+          success: true,
+          beat:
+            publicBeat(
+              beatResult.data
+            ),
+          prices: {
+            mp3:
+              mp3Price,
+            wav:
+              wavPrice,
+            stems:
+              stemsPrice,
+            exclusive:
+              exclusivePrice
+          }
         });
       }
 
@@ -2427,13 +2696,28 @@ app.post(
         success: true,
         beat:
           publicBeat(
-            beatResult.data
-          )
+            completeBeat.data
+          ),
+        prices: {
+          mp3:
+            mp3Price,
+          wav:
+            wavPrice,
+          stems:
+            stemsPrice,
+          exclusive:
+            exclusivePrice
+        }
       });
-    } catch {
+    } catch (error) {
       res.status(500).json({
         error:
-          "Beat creation failed"
+          "Beat creation failed",
+        details:
+          error &&
+          error.message
+            ? error.message
+            : null
       });
     }
   }
