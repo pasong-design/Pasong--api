@@ -499,7 +499,7 @@ return true;
 }
 
 if (
-/^pasong-beats/deliveries/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+/^pasong-beats\/deliveries\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
 value
 )
 ) {
@@ -516,7 +516,7 @@ timestamp
 return crypto
 .createHash("sha1")
 .update(
-"folder=${folder}&timestamp=${timestamp}${CLOUDINARY_API_SECRET}"
+`folder=${folder}&timestamp=${timestamp}${CLOUDINARY_API_SECRET}`
 )
 .digest("hex");
 }
