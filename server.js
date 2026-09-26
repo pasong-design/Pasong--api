@@ -2228,7 +2228,69 @@ app.post(
     }
   }
 );
+app.get("/api/producers", async (req, res) => {
+  try {
+    const profilesResult = await supabase
+      .from("artist_profiles")
+      .select(`
+        id,
+        artist_name,
+        stage_name,
+        performing_name,
+        profile_image_url,
+        location,
+        bio
+      `)
+      .order("created_at", { ascending: false });
 
+    if (profilesResult.error) {
+      return res.status(500).json({
+        error: "Unable to load producers",
+        details: profilesResult.error.message || null
+      });
+    }
+
+    const beatsResult = await supabase
+      .from("beats")
+      .select("*")
+      .in("status", ["approved", "sold_exclusive"])
+      .order("created_at", { ascending: false });
+
+    if (beatsResult.error) {
+      return res.status(500).json({
+        error: "Unable to load producer beats",
+        details: beatsResult.error.message || null
+      });
+    }
+
+    const beats = beatsResult.data || [];
+    const producerIds = new Set(
+      beats.map(beat => beat.producer_id).filter(Boolean)
+    );
+
+    const producers = (profilesResult.data || [])
+      .filter(profile => producerIds.has(profile.id))
+      .map(profile => ({
+        id: profile.id,
+        artist_name: profile.artist_name || null,
+        stage_name: profile.stage_name || null,
+        performing_name: profile.performing_name || null,
+        profile_image_url: profile.profile_image_url || null,
+        location: profile.location || null,
+        bio: profile.bio || null,
+        beats: beats
+          .filter(beat => beat.producer_id === profile.id)
+          .map(publicBeat)
+      }));
+
+    res.json({ producers });
+  } catch (error) {
+    res.status(500).json({
+      error: "Unable to load producers",
+      details: error && error.message ? error.message : null
+    });
+  }
+});
 app.get("/api/beats", async (req, res) => {
   const result = await supabase
     .from("beats")
