@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
 const { v2: cloudinary } = require("cloudinary");
 const multer = require("multer");
+const { Readable } = require("stream");
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -1067,7 +1068,10 @@ app.get(
           "id",
           req.params.id
         )
-        .eq("status", "approved")
+        .eq(
+          "status",
+          "approved"
+        )
         .maybeSingle();
 
       if (
@@ -1086,17 +1090,77 @@ app.get(
         });
       }
 
-      res.json({
-        download_url:
-          song.data.audio_url,
-        preview_url:
-          song.data.preview_url ||
-          null,
-      });
-    } catch {
-      res.status(500).json({
-        error: "Delivery failed",
-      });
+      const upstream = await fetch(
+        song.data.audio_url
+      );
+
+      if (
+        !upstream.ok ||
+        !upstream.body
+      ) {
+        return res.status(502).json({
+          error:
+            "Download file unavailable",
+        });
+      }
+
+      const safeTitle =
+        String(
+          song.data.title ||
+            "PASONG-Song"
+        )
+          .replace(
+            /[^a-z0-9-_]+/gi,
+            "_"
+          )
+          .replace(
+            /^_+|_+$/g,
+            ""
+          ) ||
+        "PASONG-Song";
+
+      res.setHeader(
+        "Content-Type",
+        upstream.headers.get(
+          "content-type"
+        ) ||
+          "audio/mpeg"
+      );
+
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${safeTitle}.mp3"`
+      );
+
+      const contentLength =
+        upstream.headers.get(
+          "content-length"
+        );
+
+      if (contentLength) {
+        res.setHeader(
+          "Content-Length",
+          contentLength
+        );
+      }
+
+      Readable.fromWeb(
+        upstream.body
+      ).pipe(res);
+    } catch (error) {
+      console.error(
+        "Song delivery error:",
+        error
+      );
+
+      if (!res.headersSent) {
+        return res.status(500).json({
+          error:
+            "Delivery failed",
+        });
+      }
+
+      res.end();
     }
   }
 );
@@ -1948,7 +2012,7 @@ app.post(
         getPriceInput(
           body.lease_wav_price,
           body.wav_price,
-          body.wav_lease_price
+          body.lease_wav_price
         );
 
       const stemsPriceRaw =
@@ -2228,6 +2292,7 @@ app.post(
     }
   }
 );
+
 app.get("/api/producers", async (req, res) => {
   try {
     const profilesResult = await supabase
@@ -2241,56 +2306,101 @@ app.get("/api/producers", async (req, res) => {
         location,
         bio
       `)
-      .order("created_at", { ascending: false });
+      .order("created_at", {
+        ascending: false,
+      });
 
     if (profilesResult.error) {
       return res.status(500).json({
         error: "Unable to load producers",
-        details: profilesResult.error.message || null
+        details:
+          profilesResult.error.message ||
+          null,
       });
     }
 
     const beatsResult = await supabase
       .from("beats")
       .select("*")
-      .in("status", ["approved", "sold_exclusive"])
-      .order("created_at", { ascending: false });
+      .in("status", [
+        "approved",
+        "sold_exclusive",
+      ])
+      .order("created_at", {
+        ascending: false,
+      });
 
     if (beatsResult.error) {
       return res.status(500).json({
         error: "Unable to load producer beats",
-        details: beatsResult.error.message || null
+        details:
+          beatsResult.error.message ||
+          null,
       });
     }
 
     const beats = beatsResult.data || [];
+
     const producerIds = new Set(
-      beats.map(beat => beat.producer_id).filter(Boolean)
+      beats
+        .map(
+          (beat) =>
+            beat.producer_id
+        )
+        .filter(Boolean)
     );
 
-    const producers = (profilesResult.data || [])
-      .filter(profile => producerIds.has(profile.id))
-      .map(profile => ({
-        id: profile.id,
-        artist_name: profile.artist_name || null,
-        stage_name: profile.stage_name || null,
-        performing_name: profile.performing_name || null,
-        profile_image_url: profile.profile_image_url || null,
-        location: profile.location || null,
-        bio: profile.bio || null,
-        beats: beats
-          .filter(beat => beat.producer_id === profile.id)
-          .map(publicBeat)
-      }));
+    const producers =
+      (profilesResult.data || [])
+        .filter(
+          (profile) =>
+            producerIds.has(
+              profile.id
+            )
+        )
+        .map((profile) => ({
+          id: profile.id,
+          artist_name:
+            profile.artist_name ||
+            null,
+          stage_name:
+            profile.stage_name ||
+            null,
+          performing_name:
+            profile.performing_name ||
+            null,
+          profile_image_url:
+            profile.profile_image_url ||
+            null,
+          location:
+            profile.location ||
+            null,
+          bio:
+            profile.bio ||
+            null,
+          beats: beats
+            .filter(
+              (beat) =>
+                beat.producer_id ===
+                profile.id
+            )
+            .map(publicBeat),
+        }));
 
-    res.json({ producers });
+    res.json({
+      producers,
+    });
   } catch (error) {
     res.status(500).json({
       error: "Unable to load producers",
-      details: error && error.message ? error.message : null
+      details:
+        error && error.message
+          ? error.message
+          : null,
     });
   }
 });
+
 app.get("/api/beats", async (req, res) => {
   const result = await supabase
     .from("beats")
