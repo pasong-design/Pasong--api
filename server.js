@@ -1196,6 +1196,36 @@ async function getPublicArtistProfile(
   };
 }
 
+async function getSongPlayCount(
+  songId
+) {
+  if (!validUuid(songId)) {
+    return 0;
+  }
+
+  const result =
+    await supabase.rpc(
+      "get_song_play_count",
+      {
+        p_song_id:
+          songId,
+      }
+    );
+
+  if (result.error) {
+    console.error(
+      "Song play count error:",
+      result.error
+    );
+
+    return 0;
+  }
+
+  return Number(
+    result.data || 0
+  );
+}
+
 app.get(
   "/api/songs",
   async (req, res) => {
@@ -1359,59 +1389,66 @@ app.get(
       );
 
       const publicSongs =
-        songs.map((song) => {
-          const profile =
-            profileById.get(
-              song.artist_id
-            ) ||
-            profileByUserId.get(
-              song.artist_user_id
-            ) ||
-            null;
+        await Promise.all(
+          songs.map(async (song) => {
+            const profile =
+              profileById.get(
+                song.artist_id
+              ) ||
+              profileByUserId.get(
+                song.artist_user_id
+              ) ||
+              null;
 
-          const publicArtist =
-            profile
-              ? {
-                  id:
-                    profile.id,
-                  user_id:
-                    profile.user_id ||
-                    null,
-                  artist_name:
-                    profile.artist_name ||
-                    null,
-                  stage_name:
-                    profile.stage_name ||
-                    null,
-                  performing_name:
-                    profile.performing_name ||
-                    null,
-                  profile_image_url:
-                    profile.profile_image_url ||
-                    null,
-                  bio:
-                    profile.bio ||
-                    null,
-                  location:
-                    profile.location ||
-                    null,
-                }
-              : null;
+            const publicArtist =
+              profile
+                ? {
+                    id:
+                      profile.id,
+                    user_id:
+                      profile.user_id ||
+                      null,
+                    artist_name:
+                      profile.artist_name ||
+                      null,
+                    stage_name:
+                      profile.stage_name ||
+                      null,
+                    performing_name:
+                      profile.performing_name ||
+                      null,
+                    profile_image_url:
+                      profile.profile_image_url ||
+                      null,
+                    bio:
+                      profile.bio ||
+                      null,
+                    location:
+                      profile.location ||
+                      null,
+                  }
+                : null;
 
-          const safeSong =
-            publicSong(song);
+            const safeSong =
+              publicSong(song);
 
-          safeSong.artist =
-            publicArtist;
+            safeSong.artist =
+              publicArtist;
 
-          safeSong.artist_profile =
-            publicArtist;
+            safeSong.artist_profile =
+              publicArtist;
 
-          safeSong.artist_profiles =
-            publicArtist;
+            safeSong.artist_profiles =
+              publicArtist;
 
-          return safeSong;
-        });
+            safeSong.play_count =
+              await getSongPlayCount(
+                song.id
+              );
+
+            return safeSong;
+          })
+        );
 
       res.json({
         songs:
