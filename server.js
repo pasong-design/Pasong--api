@@ -1103,87 +1103,408 @@ function publicSong(song) {
   return safeSong;
 }
 
+async function getPublicArtistProfile(
+  artistProfileId,
+  artistUserId
+) {
+  let profile = null;
+
+  if (
+    validUuid(
+      artistProfileId
+    )
+  ) {
+    const result =
+      await supabase
+        .from(
+          "artist_profiles"
+        )
+        .select(
+          "id,user_id,artist_name,stage_name,performing_name,profile_image_url,bio,location"
+        )
+        .eq(
+          "id",
+          artistProfileId
+        )
+        .maybeSingle();
+
+    if (
+      result.error
+    ) {
+      throw result.error;
+    }
+
+    profile =
+      result.data || null;
+  }
+
+  if (
+    !profile &&
+    validUuid(artistUserId)
+  ) {
+    const result =
+      await supabase
+        .from(
+          "artist_profiles"
+        )
+        .select(
+          "id,user_id,artist_name,stage_name,performing_name,profile_image_url,bio,location"
+        )
+        .eq(
+          "user_id",
+          artistUserId
+        )
+        .maybeSingle();
+
+    if (
+      result.error
+    ) {
+      throw result.error;
+    }
+
+    profile =
+      result.data || null;
+  }
+
+  if (!profile) {
+    return null;
+  }
+
+  return {
+    id:
+      profile.id,
+    user_id:
+      profile.user_id || null,
+    artist_name:
+      profile.artist_name ||
+      null,
+    stage_name:
+      profile.stage_name ||
+      null,
+    performing_name:
+      profile.performing_name ||
+      null,
+    profile_image_url:
+      profile.profile_image_url ||
+      null,
+    bio:
+      profile.bio ||
+      null,
+    location:
+      profile.location ||
+      null,
+  };
+}
+
 app.get(
   "/api/songs",
   async (req, res) => {
-    const result =
-      await supabase
-        .from("songs")
-        .select(
-          "*, artist_profiles:artist_id(artist_name,stage_name,performing_name)"
-        )
-        .eq(
-          "status",
-          "approved"
-        )
-        .not(
-          "cover_url",
-          "is",
-          null
-        )
-        .order("created_at", {
-          ascending: false,
+    try {
+      const result =
+        await supabase
+          .from("songs")
+          .select("*")
+          .eq(
+            "status",
+            "approved"
+          )
+          .not(
+            "cover_url",
+            "is",
+            null
+          )
+          .order("created_at", {
+            ascending: false,
+          });
+
+      if (result.error) {
+        return res.status(500).json({
+          error:
+            "Unable to load songs",
+        });
+      }
+
+      const songs =
+        result.data || [];
+
+      const profileIds =
+        Array.from(
+          new Set(
+            songs
+              .map(
+                (song) =>
+                  song.artist_id
+              )
+              .filter(validUuid)
+          )
+        );
+
+      const userIds =
+        Array.from(
+          new Set(
+            songs
+              .map(
+                (song) =>
+                  song.artist_user_id
+              )
+              .filter(validUuid)
+          )
+        );
+
+      let profiles = [];
+
+      if (
+        profileIds.length > 0
+      ) {
+        const profileResult =
+          await supabase
+            .from(
+              "artist_profiles"
+            )
+            .select(
+              "id,user_id,artist_name,stage_name,performing_name,profile_image_url,bio,location"
+            )
+            .in(
+              "id",
+              profileIds
+            );
+
+        if (
+          profileResult.error
+        ) {
+          return res.status(500).json({
+            error:
+              "Unable to load artist profiles",
+          });
+        }
+
+        profiles =
+          profileResult.data || [];
+      }
+
+      const foundProfileUserIds =
+        new Set(
+          profiles
+            .map(
+              (profile) =>
+                profile.user_id
+            )
+            .filter(validUuid)
+        );
+
+      const missingUserIds =
+        userIds.filter(
+          (id) =>
+            !foundProfileUserIds.has(
+              id
+            )
+        );
+
+      if (
+        missingUserIds.length > 0
+      ) {
+        const fallbackResult =
+          await supabase
+            .from(
+              "artist_profiles"
+            )
+            .select(
+              "id,user_id,artist_name,stage_name,performing_name,profile_image_url,bio,location"
+            )
+            .in(
+              "user_id",
+              missingUserIds
+            );
+
+        if (
+          fallbackResult.error
+        ) {
+          return res.status(500).json({
+            error:
+              "Unable to load artist profiles",
+          });
+        }
+
+        profiles = [
+          ...profiles,
+          ...(fallbackResult.data ||
+            []),
+        ];
+      }
+
+      const profileById =
+        new Map();
+
+      const profileByUserId =
+        new Map();
+
+      profiles.forEach(
+        (profile) => {
+          profileById.set(
+            profile.id,
+            profile
+          );
+
+          if (
+            validUuid(
+              profile.user_id
+            )
+          ) {
+            profileByUserId.set(
+              profile.user_id,
+              profile
+            );
+          }
+        }
+      );
+
+      const publicSongs =
+        songs.map((song) => {
+          const profile =
+            profileById.get(
+              song.artist_id
+            ) ||
+            profileByUserId.get(
+              song.artist_user_id
+            ) ||
+            null;
+
+          const publicArtist =
+            profile
+              ? {
+                  id:
+                    profile.id,
+                  user_id:
+                    profile.user_id ||
+                    null,
+                  artist_name:
+                    profile.artist_name ||
+                    null,
+                  stage_name:
+                    profile.stage_name ||
+                    null,
+                  performing_name:
+                    profile.performing_name ||
+                    null,
+                  profile_image_url:
+                    profile.profile_image_url ||
+                    null,
+                  bio:
+                    profile.bio ||
+                    null,
+                  location:
+                    profile.location ||
+                    null,
+                }
+              : null;
+
+          const safeSong =
+            publicSong(song);
+
+          safeSong.artist =
+            publicArtist;
+
+          safeSong.artist_profile =
+            publicArtist;
+
+          safeSong.artist_profiles =
+            publicArtist;
+
+          return safeSong;
         });
 
-    if (result.error) {
-      return res.status(500).json({
+      res.json({
+        songs:
+          publicSongs,
+        pricing:
+          getPricing(req),
+      });
+    } catch (error) {
+      console.error(
+        "Songs loading error:",
+        error
+      );
+
+      res.status(500).json({
         error:
           "Unable to load songs",
       });
     }
-
-    res.json({
-      songs: (
-        result.data || []
-      ).map(publicSong),
-      pricing:
-        getPricing(req),
-    });
   }
 );
 
 app.get(
   "/api/songs/:id",
   async (req, res) => {
-    if (
-      !validUuid(req.params.id)
-    ) {
-      return res.status(400).json({
+    try {
+      if (
+        !validUuid(req.params.id)
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid song id",
+        });
+      }
+
+      const result =
+        await supabase
+          .from("songs")
+          .select("*")
+          .eq(
+            "id",
+            req.params.id
+          )
+          .eq(
+            "status",
+            "approved"
+          )
+          .maybeSingle();
+
+      if (
+        result.error ||
+        !result.data
+      ) {
+        return res.status(404).json({
+          error: "Not found",
+        });
+      }
+
+      const song =
+        result.data;
+
+      const publicArtist =
+        await getPublicArtistProfile(
+          song.artist_id,
+          song.artist_user_id
+        );
+
+      const safeSong =
+        publicSong(song);
+
+      safeSong.artist =
+        publicArtist;
+
+      safeSong.artist_profile =
+        publicArtist;
+
+      safeSong.artist_profiles =
+        publicArtist;
+
+      res.json({
+        song:
+          safeSong,
+      });
+    } catch (error) {
+      console.error(
+        "Song loading error:",
+        error
+      );
+
+      res.status(500).json({
         error:
-          "Invalid song id",
+          "Unable to load song",
       });
     }
-
-    const result =
-      await supabase
-        .from("songs")
-        .select(
-          `*, artist_profiles:artist_id(artist_name,stage_name,performing_name)`
-        )
-        .eq(
-          "id",
-          req.params.id
-        )
-        .eq(
-          "status",
-          "approved"
-        )
-        .maybeSingle();
-
-    if (
-      result.error ||
-      !result.data
-    ) {
-      return res.status(404).json({
-        error: "Not found",
-      });
-    }
-
-    res.json({
-      song: publicSong(
-        result.data
-      ),
-    });
   }
 );
 
@@ -1298,7 +1619,7 @@ app.get(
           )
           .replace(
             /^_+|_+$/g,
-            "" 
+            ""
           ) ||
         "PASONG-Song";
 
