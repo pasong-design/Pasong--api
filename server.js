@@ -141,6 +141,383 @@ app.get("/", (req, res) => {
   });
 });
 
+
+
+// ============================================================
+// PASONG PREMIUM
+// Global Premium plan with localized currency display.
+// Payment activation is intentionally NOT granted by the client;
+// a verified payment webhook/admin completion must activate it.
+// ============================================================
+
+const PREMIUM_PLANS = {
+  monthly: {
+    id: "premium_monthly",
+    interval: "month",
+    days: 30,
+    prices: {
+      UG: { amount: 10000, currency: "UGX", label: "UGX 10,000" },
+      KE: { amount: 399, currency: "KES", label: "KES 399" },
+      TZ: { amount: 7500, currency: "TZS", label: "TZS 7,500" },
+      RW: { amount: 3500, currency: "RWF", label: "RWF 3,500" },
+      NG: { amount: 5000, currency: "NGN", label: "NGN 5,000" },
+      GH: { amount: 45, currency: "GHS", label: "GHS 45" },
+      ZA: { amount: 59, currency: "ZAR", label: "ZAR 59" },
+      GB: { amount: 2.49, currency: "GBP", label: "£2.49" },
+      EU: { amount: 2.99, currency: "EUR", label: "€2.99" },
+      US: { amount: 2.99, currency: "USD", label: "$2.99" },
+      CA: { amount: 4.09, currency: "CAD", label: "CA$4.09" },
+      AU: { amount: 4.49, currency: "AUD", label: "A$4.49" },
+      DEFAULT: { amount: 2.99, currency: "USD", label: "$2.99" },
+    },
+  },
+  yearly: {
+    id: "premium_yearly",
+    interval: "year",
+    days: 365,
+    prices: {
+      UG: { amount: 100000, currency: "UGX", label: "UGX 100,000" },
+      KE: { amount: 3990, currency: "KES", label: "KES 3,990" },
+      TZ: { amount: 75000, currency: "TZS", label: "TZS 75,000" },
+      RW: { amount: 35000, currency: "RWF", label: "RWF 35,000" },
+      NG: { amount: 50000, currency: "NGN", label: "NGN 50,000" },
+      GH: { amount: 450, currency: "GHS", label: "GHS 450" },
+      ZA: { amount: 590, currency: "ZAR", label: "ZAR 590" },
+      GB: { amount: 24.90, currency: "GBP", label: "£24.90" },
+      EU: { amount: 29.90, currency: "EUR", label: "€29.90" },
+      US: { amount: 29.90, currency: "USD", label: "$29.90" },
+      CA: { amount: 40.90, currency: "CAD", label: "CA$40.90" },
+      AU: { amount: 44.90, currency: "AUD", label: "A$44.90" },
+      DEFAULT: { amount: 29.90, currency: "USD", label: "$29.90" },
+    },
+  },
+};
+
+const PREMIUM_FEATURES = [
+  "Premium badge",
+  "Ad-free listening",
+  "Higher-quality audio",
+  "Offline listening for eligible content",
+  "Premium-exclusive releases",
+  "Early access to selected releases",
+  "Premium-only playlists",
+];
+
+function getPremiumCountry(req) {
+  return getCountry(req) || "US";
+}
+
+function getPremiumPrice(req, planKey = "monthly") {
+  const plan = PREMIUM_PLANS[planKey] || PREMIUM_PLANS.monthly;
+  const country = getPremiumCountry(req);
+  return {
+    plan: plan.id,
+    interval: plan.interval,
+    days: plan.days,
+    country,
+    ...(plan.prices[country] || plan.prices.DEFAULT),
+  };
+}
+
+app.get("/api/premium/pricing", (req, res) => {
+  const monthly = getPremiumPrice(req, "monthly");
+  const yearly = getPremiumPrice(req, "yearly");
+  res.json({
+    success: true,
+    country: monthly.country,
+    currency: monthly.currency,
+    monthly,
+    yearly,
+    features: PREMIUM_FEATURES,
+    pricing_note: "PASONG uses fixed regional price points. IP/country detection is for display; the payment provider must confirm the billing country before charging.",
+  });
+});
+
+app.get("/api/premium/status", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.json({
+        success: true,
+        authenticated: false,
+        premium: false,
+        status: "free",
+      });
+    }
+
+    const result = await supabase
+      .from("premium_subscriptions")
+      .select("id,user_id,plan,status,started_at,expires_at,currency,amount,payment_reference")
+      .eq("user_id", user.id)
+      .order("expires_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (result.error) {
+      console.error("Premium status lookup failed:", result.error);
+      return res.status(500).json({ success: false, error: "Unable to load Premium status." });
+    }
+
+    const subscription = result.data || null;
+    const active = !!subscription &&
+      subscription.status === "active" &&
+      (!subscription.expires_at || new Date(subscription.expires_at).getTime() > Date.now());
+
+    res.json({
+      success: true,
+      authenticated: true,
+      premium: active,
+      status: active ? "active" : (subscription?.status || "free"),
+      subscription,
+    });
+  } catch (error) {
+    console.error("Premium status error:", error);
+    res.status(500).json({ success: false, error: "Unable to load Premium status." });
+  }
+});
+
+
+app.post("/api/premium/complete", async (req, res) => {
+  try {
+    // This endpoint is for the payment provider/webhook only.
+    // Never call it directly from premium.html with a public secret.
+    const secret = String(req.headers["x-pasong-payment-secret"] || "");
+
+    if (!PASONG_PAYMENT_SECRET || !safeSecretCompare(secret, PASONG_PAYMENT_SECRET)) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized payment completion.",
+      });
+    }
+
+    const { payment_reference, payment_status, provider_reference } = req.body || {};
+
+    if (!payment_reference || payment_status !== "paid") {
+      return res.status(400).json({
+        success: false,
+        error: "A paid Premium payment is required.",
+      });
+    }
+
+    const paymentResult = await supabase
+      .from("premium_payments")
+      .select("*")
+      .eq("payment_reference", String(payment_reference).trim())
+      .maybeSingle();
+
+    if (paymentResult.error) {
+      console.error("Premium payment lookup failed:", paymentResult.error);
+      return res.status(500).json({
+        success: false,
+        error: "Unable to verify Premium payment.",
+      });
+    }
+
+    if (!paymentResult.data) {
+      return res.status(404).json({
+        success: false,
+        error: "Premium payment not found.",
+      });
+    }
+
+    const payment = paymentResult.data;
+
+    // Idempotency: a webhook/provider may retry the same notification.
+    if (payment.status === "paid") {
+      const existing = await supabase
+        .from("premium_subscriptions")
+        .select("*")
+        .eq("payment_reference", payment.payment_reference)
+        .maybeSingle();
+
+      return res.json({
+        success: true,
+        already_completed: true,
+        premium: true,
+        subscription: existing.data || null,
+        payment,
+      });
+    }
+
+    if (payment.status !== "pending") {
+      return res.status(409).json({
+        success: false,
+        error: `Premium payment is already ${payment.status}.`,
+      });
+    }
+
+    const days = payment.plan === "premium_yearly" ? 365 : 30;
+    const now = new Date();
+
+    // If the user already has an active Premium subscription, extend it
+    // from the current expiry rather than creating overlapping subscriptions.
+    const activeResult = await supabase
+      .from("premium_subscriptions")
+      .select("*")
+      .eq("user_id", payment.user_id)
+      .eq("status", "active")
+      .gt("expires_at", now.toISOString())
+      .order("expires_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (activeResult.error) {
+      console.error("Active Premium lookup failed:", activeResult.error);
+      return res.status(500).json({
+        success: false,
+        error: "Unable to check existing Premium subscription.",
+      });
+    }
+
+    const currentExpiry = activeResult.data
+      ? new Date(activeResult.data.expires_at)
+      : now;
+
+    const start = activeResult.data
+      ? activeResult.data.started_at
+      : now.toISOString();
+
+    const expires = new Date(
+      Math.max(currentExpiry.getTime(), now.getTime()) + days * 86400000
+    ).toISOString();
+
+    let subscriptionData;
+
+    if (activeResult.data) {
+      const updatedSubscription = await supabase
+        .from("premium_subscriptions")
+        .update({
+          expires_at: expires,
+          plan: payment.plan,
+          currency: payment.currency,
+          amount: payment.amount,
+        })
+        .eq("id", activeResult.data.id)
+        .select()
+        .single();
+
+      if (updatedSubscription.error) {
+        console.error(
+          "Premium subscription extension failed:",
+          updatedSubscription.error
+        );
+        return res.status(500).json({
+          success: false,
+          error: "Premium activation failed.",
+        });
+      }
+
+      subscriptionData = updatedSubscription.data;
+    } else {
+      const insertedSubscription = await supabase
+        .from("premium_subscriptions")
+        .insert({
+          user_id: payment.user_id,
+          plan: payment.plan,
+          status: "active",
+          started_at: start,
+          expires_at: expires,
+          currency: payment.currency,
+          amount: payment.amount,
+          payment_reference: payment.payment_reference,
+        })
+        .select()
+        .single();
+
+      if (insertedSubscription.error) {
+        console.error(
+          "Premium subscription activation failed:",
+          insertedSubscription.error
+        );
+        return res.status(500).json({
+          success: false,
+          error: "Premium activation failed.",
+        });
+      }
+
+      subscriptionData = insertedSubscription.data;
+    }
+
+    const updatedPayment = await supabase
+      .from("premium_payments")
+      .update({
+        status: "paid",
+        provider_reference: provider_reference || null,
+        paid_at: now.toISOString(),
+      })
+      .eq("id", payment.id)
+      .eq("status", "pending")
+      .select()
+      .maybeSingle();
+
+    if (updatedPayment.error) {
+      console.error("Premium payment update failed:", updatedPayment.error);
+      return res.status(500).json({
+        success: false,
+        error: "Premium payment status update failed.",
+      });
+    }
+
+    res.json({
+      success: true,
+      premium: true,
+      subscription: subscriptionData,
+      payment: updatedPayment.data || payment,
+    });
+  } catch (error) {
+    console.error("Premium completion error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Premium payment completion failed.",
+    });
+  }
+});
+
+app.post("/api/premium/checkout", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ success: false, error: "You must be logged in to subscribe to PASONG Premium." });
+    }
+
+    const planKey = req.body?.plan === "yearly" ? "yearly" : "monthly";
+    const pricing = getPremiumPrice(req, planKey);
+
+    // A checkout record is created, but Premium is NOT activated here.
+    // Your payment provider/webhook must verify the payment first.
+    const reference = "PREM-" + crypto.randomBytes(10).toString("hex").toUpperCase();
+
+    const result = await supabase
+      .from("premium_payments")
+      .insert({
+        user_id: user.id,
+        plan: pricing.plan,
+        amount: pricing.amount,
+        currency: pricing.currency,
+        country: pricing.country,
+        status: "pending",
+        payment_reference: reference,
+      })
+      .select()
+      .single();
+
+    if (result.error) {
+      console.error("Premium checkout creation failed:", result.error);
+      return res.status(500).json({ success: false, error: "Unable to start Premium checkout." });
+    }
+
+    res.status(201).json({
+      success: true,
+      payment: result.data,
+      pricing,
+      message: "Premium checkout created. Complete payment through the configured payment provider before Premium is activated.",
+    });
+  } catch (error) {
+    console.error("Premium checkout error:", error);
+    res.status(500).json({ success: false, error: "Unable to start Premium checkout." });
+  }
+});
+
 app.get("/health", (req, res) => {
   res.json({
     status: "ok",
