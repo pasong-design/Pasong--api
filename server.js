@@ -4721,12 +4721,43 @@ app.post(
   "/api/producer/withdraw",
   async (req, res) => {
     try {
-      const user =
-        await getAuthenticatedUser(req);
+      // 1. Verify the Supabase user from the dashboard's access token.
+      const user = await getAuthenticatedUser(req);
 
       if (!user) {
         return res.status(401).json({
-          error: "Auth",
+          success: false,
+          error: "You must be logged in to request a withdrawal.",
+        });
+      }
+
+      // 2. Verify that this authenticated user actually has a producer
+      //    profile. The Producer Dashboard uses artist_profiles for the
+      //    producer account, so we verify ownership by user_id here.
+      const profileResult = await supabase
+        .from("artist_profiles")
+        .select("id,user_id")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (profileResult.error) {
+        console.error(
+          "Producer profile lookup failed:",
+          profileResult.error
+        );
+
+        return res.status(500).json({
+          success: false,
+          error: "Unable to verify your producer account.",
+        });
+      }
+
+      if (!profileResult.data || profileResult.data.user_id !== user.id) {
+        return res.status(403).json({
+          success: false,
+          error: "Producer profile not found for this account.",
         });
       }
 
@@ -4736,150 +4767,153 @@ app.post(
         mobile_number,
       } = req.body || {};
 
-      const requestedAmount =
-        Number(amount);
-
-      if (
-        !validPositiveNumber(
-          requestedAmount
-        )
-      ) {
-        return res.status(400).json({
-          error:
-            "Invalid withdrawal amount",
-        });
-      }
-
-      const normalizedProvider =
-        normalizeProvider(
-          provider
-        );
-
-      if (
-        !["MTN", "AIRTEL"].includes(
-          normalizedProvider
-        )
-      ) {
-        return res.status(400).json({
-          error:
-            "Invalid payment provider",
-        });
-      }
-
-      const mobile =
-        String(
-          mobile_number || ""
-        )
+      // 3. Validate withdrawal amount.
+      const requestedAmount = Number(
+        String(amount ?? "")
+          .replace(/,/g, "")
           .trim()
-          .replace(
-            /\s+/g,
-            ""
-          );
+      );
 
-      if (
-        !/^(?:\+256|256|0)7[0-9]{8}$/.test(
-          mobile
-        )
-      ) {
+      if (!validPositiveNumber(requestedAmount)) {
         return res.status(400).json({
-          error:
-            "Invalid Uganda mobile number",
+          success: false,
+          error: "Invalid withdrawal amount.",
         });
       }
 
-      const availableBalance =
-        await getProducerBalance(
-          user.id
+      // Producer withdrawals must be at least UGX 10,000.
+      if (requestedAmount < 10000) {
+        return res.status(400).json({
+          success: false,
+          error: "Minimum withdrawal amount is UGX 10,000.",
+        });
+      }
+
+      // Only the two mobile-money providers supported by the Producer UI.
+      const normalizedProvider = normalizeProvider(provider);
+
+      if (!["MTN", "AIRTEL"].includes(normalizedProvider)) {
+        return res.status(400).json({
+          success: false,
+          error: "Mobile Money provider must be MTN or AIRTEL.",
+        });
+      }
+
+      // 4. Validate and normalize the Uganda mobile number.
+      let mobile = String(mobile_number || "")
+        .trim()
+        .replace(/\s+/g, "");
+
+      if (!/^(?:\+256|256|0)7[0-9]{8}$/.test(mobile)) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid Uganda mobile number.",
+        });
+      }
+
+      // Store one consistent local format: 07XXXXXXXX.
+      if (mobile.startsWith("+256")) {
+        mobile = "0" + mobile.substring(4);
+      } else if (mobile.startsWith("256")) {
+        mobile = "0" + mobile.substring(3);
+      }
+
+      // 5. Calculate the producer's currently available balance.
+      //    This includes existing credits and subtracts every debit,
+      //    including pending withdrawal debits, so the same money cannot
+      //    be withdrawn twice.
+      const availableBalance = await getProducerBalance(user.id);
+
+      if (requestedAmount > availableBalance) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Insufficient producer balance. Available balance is UGX " +
+            Number(availableBalance).toLocaleString("en-UG") + ".",
+          available_balance: availableBalance,
+        });
+      }
+
+      // 6. Create the withdrawal request first as PENDING.
+      //    Payment processing can later move it to processing/paid/failed.
+      const withdrawal = await supabase
+        .from("producer_withdrawals")
+        .insert({
+          producer_user_id: user.id,
+          amount: requestedAmount,
+          currency: "UGX",
+          provider: normalizedProvider,
+          mobile_number: mobile,
+          status: "pending",
+        })
+        .select()
+        .single();
+
+      if (withdrawal.error) {
+        console.error(
+          "Producer withdrawal insert failed:",
+          withdrawal.error
         );
 
-      if (
-        requestedAmount >
-        availableBalance
-      ) {
-        return res.status(400).json({
-          error:
-            "Insufficient balance",
-        });
-      }
-
-      const withdrawal =
-        await supabase
-          .from(
-            "producer_withdrawals"
-          )
-          .insert({
-            producer_user_id:
-              user.id,
-            amount:
-              requestedAmount,
-            currency:
-              "UGX",
-            provider:
-              normalizedProvider,
-            mobile_number:
-              mobile,
-            status:
-              "pending",
-          })
-          .select()
-          .single();
-
-      if (
-        withdrawal.error
-      ) {
         return res.status(500).json({
-          error:
-            "Withdrawal request failed",
+          success: false,
+          error: "Withdrawal request could not be created.",
         });
       }
 
-      const debit =
-        await supabase
-          .from(
-            "royalty_ledger"
-          )
-          .insert({
-            recipient_user_id:
-              user.id,
-            recipient_type:
-              "beat_producer",
-            amount:
-              requestedAmount,
-            percentage: 100,
-            entry_type:
-              "debit",
-            status:
-              "pending_withdrawal",
-            withdrawal_id:
-              withdrawal.data.id,
-          });
+      // 7. Reserve the requested amount in the producer ledger.
+      //    The debit is tied to the withdrawal ID so the payout can be
+      //    traced and reconciled later.
+      const debit = await supabase
+        .from("royalty_ledger")
+        .insert({
+          recipient_user_id: user.id,
+          recipient_type: "beat_producer",
+          amount: requestedAmount,
+          percentage: 100,
+          entry_type: "debit",
+          status: "pending_withdrawal",
+          withdrawal_id: withdrawal.data.id,
+        });
 
       if (debit.error) {
+        console.error(
+          "Producer withdrawal ledger debit failed:",
+          debit.error
+        );
+
+        // Do not leave an orphaned withdrawal request if the balance
+        // reservation could not be created.
         await supabase
-          .from(
-            "producer_withdrawals"
-          )
+          .from("producer_withdrawals")
           .delete()
-          .eq(
-            "id",
-            withdrawal.data.id
-          );
+          .eq("id", withdrawal.data.id);
 
         return res.status(500).json({
-          error:
-            "Withdrawal balance update failed",
+          success: false,
+          error: "Withdrawal balance reservation failed.",
         });
       }
 
-      res.json({
+      const remainingBalance = Number(
+        (availableBalance - requestedAmount).toFixed(2)
+      );
+
+      return res.status(201).json({
         success: true,
-        withdrawal:
-          withdrawal.data,
+        message: "Withdrawal request submitted successfully.",
+        withdrawal: withdrawal.data,
+        available_balance: remainingBalance,
       });
-    } catch {
-      res.status(500).json({
-        error:
-          "Withdrawal failed",
+    } catch (error) {
+      console.error(
+        "Producer withdrawal error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error: "Withdrawal failed. Please try again.",
       });
     }
   }
