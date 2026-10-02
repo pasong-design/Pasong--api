@@ -279,54 +279,163 @@ app.get("/api/premium/status", async (req, res) => {
 
 app.post("/api/premium/complete", async (req, res) => {
   try {
+    // This endpoint is for the payment provider/webhook only.
+    // Never call it directly from premium.html with a public secret.
     const secret = String(req.headers["x-pasong-payment-secret"] || "");
-    if (!PASONG_PAYMENT_SECRET || secret !== PASONG_PAYMENT_SECRET) {
-      return res.status(401).json({ success: false, error: "Unauthorized payment completion." });
+
+    if (!PASONG_PAYMENT_SECRET || !safeSecretCompare(secret, PASONG_PAYMENT_SECRET)) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized payment completion.",
+      });
     }
 
     const { payment_reference, payment_status, provider_reference } = req.body || {};
+
     if (!payment_reference || payment_status !== "paid") {
-      return res.status(400).json({ success: false, error: "A paid Premium payment is required." });
+      return res.status(400).json({
+        success: false,
+        error: "A paid Premium payment is required.",
+      });
     }
 
     const paymentResult = await supabase
       .from("premium_payments")
       .select("*")
-      .eq("payment_reference", String(payment_reference))
+      .eq("payment_reference", String(payment_reference).trim())
       .maybeSingle();
 
-    if (paymentResult.error || !paymentResult.data) {
-      return res.status(404).json({ success: false, error: "Premium payment not found." });
+    if (paymentResult.error) {
+      console.error("Premium payment lookup failed:", paymentResult.error);
+      return res.status(500).json({
+        success: false,
+        error: "Unable to verify Premium payment.",
+      });
+    }
+
+    if (!paymentResult.data) {
+      return res.status(404).json({
+        success: false,
+        error: "Premium payment not found.",
+      });
     }
 
     const payment = paymentResult.data;
+
+    // Idempotency: a webhook/provider may retry the same notification.
     if (payment.status === "paid") {
-      return res.json({ success: true, already_completed: true, payment });
+      const existing = await supabase
+        .from("premium_subscriptions")
+        .select("*")
+        .eq("payment_reference", payment.payment_reference)
+        .maybeSingle();
+
+      return res.json({
+        success: true,
+        already_completed: true,
+        premium: true,
+        subscription: existing.data || null,
+        payment,
+      });
+    }
+
+    if (payment.status !== "pending") {
+      return res.status(409).json({
+        success: false,
+        error: `Premium payment is already ${payment.status}.`,
+      });
     }
 
     const days = payment.plan === "premium_yearly" ? 365 : 30;
     const now = new Date();
-    const start = now.toISOString();
-    const expires = new Date(now.getTime() + days * 86400000).toISOString();
 
-    const subscription = await supabase
+    // If the user already has an active Premium subscription, extend it
+    // from the current expiry rather than creating overlapping subscriptions.
+    const activeResult = await supabase
       .from("premium_subscriptions")
-      .insert({
-        user_id: payment.user_id,
-        plan: payment.plan,
-        status: "active",
-        started_at: start,
-        expires_at: expires,
-        currency: payment.currency,
-        amount: payment.amount,
-        payment_reference: payment.payment_reference,
-      })
-      .select()
-      .single();
+      .select("*")
+      .eq("user_id", payment.user_id)
+      .eq("status", "active")
+      .gt("expires_at", now.toISOString())
+      .order("expires_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    if (subscription.error) {
-      console.error("Premium subscription activation failed:", subscription.error);
-      return res.status(500).json({ success: false, error: "Premium activation failed." });
+    if (activeResult.error) {
+      console.error("Active Premium lookup failed:", activeResult.error);
+      return res.status(500).json({
+        success: false,
+        error: "Unable to check existing Premium subscription.",
+      });
+    }
+
+    const currentExpiry = activeResult.data
+      ? new Date(activeResult.data.expires_at)
+      : now;
+
+    const start = activeResult.data
+      ? activeResult.data.started_at
+      : now.toISOString();
+
+    const expires = new Date(
+      Math.max(currentExpiry.getTime(), now.getTime()) + days * 86400000
+    ).toISOString();
+
+    let subscriptionData;
+
+    if (activeResult.data) {
+      const updatedSubscription = await supabase
+        .from("premium_subscriptions")
+        .update({
+          expires_at: expires,
+          plan: payment.plan,
+          currency: payment.currency,
+          amount: payment.amount,
+        })
+        .eq("id", activeResult.data.id)
+        .select()
+        .single();
+
+      if (updatedSubscription.error) {
+        console.error(
+          "Premium subscription extension failed:",
+          updatedSubscription.error
+        );
+        return res.status(500).json({
+          success: false,
+          error: "Premium activation failed.",
+        });
+      }
+
+      subscriptionData = updatedSubscription.data;
+    } else {
+      const insertedSubscription = await supabase
+        .from("premium_subscriptions")
+        .insert({
+          user_id: payment.user_id,
+          plan: payment.plan,
+          status: "active",
+          started_at: start,
+          expires_at: expires,
+          currency: payment.currency,
+          amount: payment.amount,
+          payment_reference: payment.payment_reference,
+        })
+        .select()
+        .single();
+
+      if (insertedSubscription.error) {
+        console.error(
+          "Premium subscription activation failed:",
+          insertedSubscription.error
+        );
+        return res.status(500).json({
+          success: false,
+          error: "Premium activation failed.",
+        });
+      }
+
+      subscriptionData = insertedSubscription.data;
     }
 
     const updatedPayment = await supabase
@@ -334,26 +443,33 @@ app.post("/api/premium/complete", async (req, res) => {
       .update({
         status: "paid",
         provider_reference: provider_reference || null,
-        paid_at: start,
+        paid_at: now.toISOString(),
       })
       .eq("id", payment.id)
+      .eq("status", "pending")
       .select()
-      .single();
+      .maybeSingle();
 
     if (updatedPayment.error) {
       console.error("Premium payment update failed:", updatedPayment.error);
-      return res.status(500).json({ success: false, error: "Premium payment status update failed." });
+      return res.status(500).json({
+        success: false,
+        error: "Premium payment status update failed.",
+      });
     }
 
     res.json({
       success: true,
       premium: true,
-      subscription: subscription.data,
-      payment: updatedPayment.data,
+      subscription: subscriptionData,
+      payment: updatedPayment.data || payment,
     });
   } catch (error) {
     console.error("Premium completion error:", error);
-    res.status(500).json({ success: false, error: "Premium payment completion failed." });
+    res.status(500).json({
+      success: false,
+      error: "Premium payment completion failed.",
+    });
   }
 });
 
@@ -5697,4 +5813,3 @@ app.listen(
     );
   }
 );
-t
