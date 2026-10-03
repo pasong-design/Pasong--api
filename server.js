@@ -22,6 +22,21 @@ const CLOUDINARY_API_SECRET =
   process.env.CLOUDINARY_API_SECRET;
 const PASONG_PAYMENT_SECRET =
   process.env.PASONG_PAYMENT_SECRET;
+
+// Flutterwave Card Payments
+// Keep the secret key ONLY in Render environment variables.
+const FLUTTERWAVE_SECRET_KEY =
+  process.env.FLUTTERWAVE_SECRET_KEY ||
+  "";
+
+const PASONG_FRONTEND_URL =
+  process.env.PASONG_FRONTEND_URL ||
+  "https://pasong-frontend.vercel.app";
+
+const PASONG_API_PUBLIC_URL =
+  process.env.PASONG_API_PUBLIC_URL ||
+  "https://pasong-api.onrender.com";
+
 const CORS_ORIGIN =
   process.env.CORS_ORIGIN || "";
 
@@ -4113,6 +4128,561 @@ app.post(
   }
 );
 
+
+// ============================================================
+// PASONG BEAT CARD CHECKOUT - FLUTTERWAVE
+// Creates a Flutterwave Standard hosted checkout for a beat order.
+// The Flutterwave secret key never reaches the browser.
+// ============================================================
+
+app.post(
+  "/api/beats/:id/card-checkout",
+  async (req, res) => {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Auth",
+        });
+      }
+
+      if (!validUuid(req.params.id)) {
+        return res.status(400).json({
+          error: "Invalid beat id",
+        });
+      }
+
+      if (!FLUTTERWAVE_SECRET_KEY) {
+        return res.status(503).json({
+          error:
+            "Card payment is not configured yet. Add FLUTTERWAVE_SECRET_KEY to the Render environment variables.",
+        });
+      }
+
+      const orderId =
+        String(req.body?.order_id || "").trim();
+
+      const packageType =
+        String(req.body?.package_type || "").trim();
+
+      if (!validUuid(orderId)) {
+        return res.status(400).json({
+          error: "Invalid order id",
+        });
+      }
+
+      if (
+        ![
+          "mp3",
+          "wav",
+          "stems",
+          "exclusive",
+        ].includes(packageType)
+      ) {
+        return res.status(400).json({
+          error: "Invalid package",
+        });
+      }
+
+      const orderResult =
+        await supabase
+          .from("beat_orders")
+          .select("*")
+          .eq("id", orderId)
+          .eq("buyer_id", user.id)
+          .eq("beat_id", req.params.id)
+          .maybeSingle();
+
+      if (
+        orderResult.error ||
+        !orderResult.data
+      ) {
+        return res.status(404).json({
+          error: "Beat order not found",
+        });
+      }
+
+      const order =
+        orderResult.data;
+
+      if (order.status === "paid") {
+        return res.status(400).json({
+          error: "This order has already been paid",
+        });
+      }
+
+      if (
+        String(order.provider || "")
+          .trim()
+          .toUpperCase() !== "FLUTTERWAVE"
+      ) {
+        return res.status(400).json({
+          error: "This order is not a card payment order",
+        });
+      }
+
+      if (order.package_type !== packageType) {
+        return res.status(400).json({
+          error: "Package does not match the order",
+        });
+      }
+
+      const beatResult =
+        await supabase
+          .from("beats")
+          .select(
+            "id,title,producer_id,status,is_exclusive_sold"
+          )
+          .eq("id", req.params.id)
+          .maybeSingle();
+
+      if (
+        beatResult.error ||
+        !beatResult.data
+      ) {
+        return res.status(404).json({
+          error: "Beat not found",
+        });
+      }
+
+      const beat = beatResult.data;
+
+      if (
+        beat.status !== "approved" ||
+        beat.is_exclusive_sold
+      ) {
+        return res.status(400).json({
+          error: "Beat is no longer available",
+        });
+      }
+
+      if (
+        packageType === "exclusive" &&
+        beat.is_exclusive_sold
+      ) {
+        return res.status(400).json({
+          error: "Exclusive already sold",
+        });
+      }
+
+      const amount = Number(order.price);
+
+      if (
+        !Number.isFinite(amount) ||
+        amount <= 0
+      ) {
+        return res.status(400).json({
+          error: "Invalid order amount",
+        });
+      }
+
+      const txRef =
+        String(
+          order.external_reference || ""
+        ).trim();
+
+      if (!txRef) {
+        return res.status(400).json({
+          error: "Order payment reference is missing",
+        });
+      }
+
+      const customerName =
+        String(
+          user.user_metadata?.full_name ||
+          user.user_metadata?.name ||
+          user.email?.split("@")[0] ||
+          "PASONG Customer"
+        ).trim();
+
+      const customerEmail =
+        String(user.email || "").trim();
+
+      if (!customerEmail) {
+        return res.status(400).json({
+          error: "Your PASONG account has no email address",
+        });
+      }
+
+      const redirectUrl =
+        `${PASONG_API_PUBLIC_URL}/api/beats/flutterwave/callback`;
+
+      const flutterwavePayload = {
+        tx_ref: txRef,
+        amount,
+        currency: "UGX",
+        redirect_url: redirectUrl,
+        payment_options: "card",
+        customer: {
+          email: customerEmail,
+          name: customerName,
+        },
+        customizations: {
+          title: "PASONG Beat Purchase",
+          description:
+            `${beat.title || "Beat"} - ${packageType} licence`,
+          logo:
+            "https://pasong-frontend.vercel.app/favicon.ico",
+        },
+        meta: {
+          pasong_order_id: order.id,
+          beat_id: beat.id,
+          package_type: packageType,
+          buyer_id: user.id,
+        },
+      };
+
+      const flutterwaveResponse =
+        await fetch(
+          "https://api.flutterwave.com/v3/payments",
+          {
+            method: "POST",
+            headers: {
+              Authorization:
+                `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify(
+              flutterwavePayload
+            ),
+          }
+        );
+
+      const flutterwaveText =
+        await flutterwaveResponse.text();
+
+      let flutterwaveData = {};
+
+      try {
+        flutterwaveData =
+          flutterwaveText
+            ? JSON.parse(flutterwaveText)
+            : {};
+      } catch {
+        flutterwaveData = {};
+      }
+
+      if (!flutterwaveResponse.ok) {
+        console.error(
+          "Flutterwave checkout creation failed:",
+          flutterwaveData
+        );
+
+        return res.status(502).json({
+          error:
+            "Flutterwave could not create the card checkout",
+          details:
+            flutterwaveData.message ||
+            flutterwaveData.error ||
+            null,
+        });
+      }
+
+      const checkoutUrl =
+        flutterwaveData?.data?.link ||
+        flutterwaveData?.link ||
+        "";
+
+      if (!checkoutUrl) {
+        console.error(
+          "Flutterwave checkout link missing:",
+          flutterwaveData
+        );
+
+        return res.status(502).json({
+          error:
+            "Flutterwave did not return a checkout link",
+        });
+      }
+
+      return res.json({
+        success: true,
+        provider: "FLUTTERWAVE",
+        order_id: order.id,
+        external_reference: txRef,
+        checkout_url: checkoutUrl,
+      });
+    } catch (error) {
+      console.error(
+        "Beat card checkout error:",
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          "Card checkout setup failed",
+        details:
+          error && error.message
+            ? error.message
+            : null,
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// PASONG BEAT CARD CALLBACK - FLUTTERWAVE
+// Flutterwave redirects here after the hosted card checkout.
+// The transaction is verified server-to-server before PASONG
+// marks the beat order paid.
+// ============================================================
+
+app.get(
+  "/api/beats/flutterwave/callback",
+  async (req, res) => {
+    const frontendUrl =
+      PASONG_FRONTEND_URL.replace(/\/$/, "");
+
+    try {
+      if (!FLUTTERWAVE_SECRET_KEY) {
+        return res.redirect(
+          `${frontendUrl}/beat-checkout.html?payment=error&message=${encodeURIComponent(
+            "Card payment is not configured on PASONG."
+          )}`
+        );
+      }
+
+      const status =
+        String(req.query.status || "")
+          .trim()
+          .toLowerCase();
+
+      const txRef =
+        String(
+          req.query.tx_ref || ""
+        ).trim();
+
+      const transactionId =
+        String(
+          req.query.transaction_id || ""
+        ).trim();
+
+      if (
+        status !== "successful" ||
+        !txRef ||
+        !transactionId
+      ) {
+        return res.redirect(
+          `${frontendUrl}/beat-checkout.html?payment=failed&tx_ref=${encodeURIComponent(
+            txRef
+          )}`
+        );
+      }
+
+      const verifyResponse =
+        await fetch(
+          `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(
+            transactionId
+          )}/verify`,
+          {
+            method: "GET",
+            headers: {
+              Authorization:
+                `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
+              "Content-Type":
+                "application/json",
+            },
+          }
+        );
+
+      const verifyText =
+        await verifyResponse.text();
+
+      let verifyData = {};
+
+      try {
+        verifyData =
+          verifyText
+            ? JSON.parse(verifyText)
+            : {};
+      } catch {
+        verifyData = {};
+      }
+
+      const payment =
+        verifyData?.data || {};
+
+      const verifiedStatus =
+        String(payment.status || "")
+          .trim()
+          .toLowerCase();
+
+      const verifiedTxRef =
+        String(payment.tx_ref || "").trim();
+
+      const verifiedAmount =
+        Number(payment.amount);
+
+      const verifiedCurrency =
+        String(payment.currency || "")
+          .trim()
+          .toUpperCase();
+
+      if (
+        !verifyResponse.ok ||
+        String(verifyData.status || "")
+          .toLowerCase() !== "success" ||
+        verifiedStatus !== "successful" ||
+        verifiedTxRef !== txRef ||
+        !Number.isFinite(verifiedAmount) ||
+        verifiedAmount <= 0 ||
+        verifiedCurrency !== "UGX"
+      ) {
+        console.error(
+          "Flutterwave verification failed:",
+          verifyData
+        );
+
+        return res.redirect(
+          `${frontendUrl}/beat-checkout.html?payment=failed&tx_ref=${encodeURIComponent(
+            txRef
+          )}`
+        );
+      }
+
+      const orderLookup =
+        await supabase
+          .from("beat_orders")
+          .select(
+            "id,beat_id,package_type,price,currency,buyer_id,external_reference,status"
+          )
+          .eq(
+            "external_reference",
+            txRef
+          )
+          .maybeSingle();
+
+      if (
+        orderLookup.error ||
+        !orderLookup.data
+      ) {
+        return res.redirect(
+          `${frontendUrl}/beat-checkout.html?payment=error&message=${encodeURIComponent(
+            "PASONG could not find this payment order."
+          )}`
+        );
+      }
+
+      const order =
+        orderLookup.data;
+
+      const expectedAmount =
+        Number(order.price);
+
+      const expectedCurrency =
+        String(order.currency || "")
+          .trim()
+          .toUpperCase();
+
+      if (
+        !isSameAmount(
+          verifiedAmount,
+          expectedAmount
+        ) ||
+        verifiedCurrency !== expectedCurrency
+      ) {
+        console.error(
+          "Flutterwave amount/currency mismatch:",
+          {
+            verifiedAmount,
+            expectedAmount,
+            verifiedCurrency,
+            expectedCurrency,
+          }
+        );
+
+        return res.redirect(
+          `${frontendUrl}/beat-checkout.html?payment=failed&tx_ref=${encodeURIComponent(
+            txRef
+          )}`
+        );
+      }
+
+      const completeResponse =
+        await fetch(
+          `http://127.0.0.1:${PORT}/api/beats/payments/complete`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+              "x-pasong-payment-secret":
+                PASONG_PAYMENT_SECRET,
+            },
+            body: JSON.stringify({
+              order_id: order.id,
+              transaction_id:
+                transactionId,
+              external_reference:
+                txRef,
+              payment_status:
+                "SUCCESSFUL",
+              amount:
+                verifiedAmount,
+              currency:
+                verifiedCurrency,
+            }),
+          }
+        );
+
+      const completeText =
+        await completeResponse.text();
+
+      let completeData = {};
+
+      try {
+        completeData =
+          completeText
+            ? JSON.parse(completeText)
+            : {};
+      } catch {
+        completeData = {};
+      }
+
+      if (!completeResponse.ok) {
+        console.error(
+          "PASONG beat payment completion failed:",
+          completeData
+        );
+
+        return res.redirect(
+          `${frontendUrl}/beat-checkout.html?payment=error&order_id=${encodeURIComponent(
+            order.id
+          )}&message=${encodeURIComponent(
+            completeData.error ||
+              "Payment was verified but PASONG could not finish the order."
+          )}`
+        );
+      }
+
+      return res.redirect(
+        `${frontendUrl}/beat-checkout.html?id=${encodeURIComponent(
+          order.beat_id
+        )}&package=${encodeURIComponent(
+          order.package_type
+        )}&payment=success&order_id=${encodeURIComponent(
+          order.id
+        )}`
+      );
+    } catch (error) {
+      console.error(
+        "Flutterwave callback error:",
+        error
+      );
+
+      return res.redirect(
+        `${frontendUrl}/beat-checkout.html?payment=error&message=${encodeURIComponent(
+          "Unable to verify the card payment."
+        )}`
+      );
+    }
+  }
+);
+
 app.post(
   "/api/beats/payments/complete",
   async (req, res) => {
@@ -5803,6 +6373,473 @@ app.use(
     });
   }
 );
+
+
+
+// ============================================================
+// PASONG ADVERTISING CHECKOUT
+// Advertiser pays through Flutterwave.
+// Package prices are controlled SERVER-SIDE through Render
+// environment variables. The browser cannot choose its own price.
+// ============================================================
+
+const PASONG_AD_PACKAGES = {
+  home_image: {
+    amount: Number(process.env.PASONG_AD_HOME_IMAGE_UGX || 25000),
+    days: 7,
+    name: "Homepage Image",
+  },
+  home_video: {
+    amount: Number(process.env.PASONG_AD_HOME_VIDEO_UGX || 40000),
+    days: 7,
+    name: "Homepage Video",
+  },
+  sitewide: {
+    amount: Number(process.env.PASONG_AD_SITEWIDE_UGX || 60000),
+    days: 7,
+    name: "PASONG Sitewide",
+  },
+};
+
+// Public pricing endpoint. Prices can be overridden safely from Render
+// environment variables, but these defaults are the official PASONG launch prices.
+app.get("/api/advertising/packages", (req, res) => {
+  res.json({
+    success: true,
+    currency: "UGX",
+    packages: Object.entries(PASONG_AD_PACKAGES).map(([key, pkg]) => ({
+      key,
+      name: pkg.name,
+      days: pkg.days,
+      amount: pkg.amount,
+      currency: "UGX",
+    })),
+  });
+});
+
+app.post("/api/advertising/checkout", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Auth required" });
+
+    if (!FLUTTERWAVE_SECRET_KEY) {
+      return res.status(503).json({
+        error: "Advertising payment is not configured. Add FLUTTERWAVE_SECRET_KEY to Render."
+      });
+    }
+
+    const body = req.body || {};
+
+    const packageKey = String(body.package_key || "").trim();
+    const advertiserName = String(body.advertiser_name || "").trim();
+    const advertiserEmail = String(body.advertiser_email || "").trim();
+    const advertiserPhone = String(body.advertiser_phone || "").trim();
+    const title = String(body.title || "").trim();
+    const description = String(body.description || "").trim();
+    const targetUrl = String(body.target_url || "").trim();
+    const placement = String(body.placement || "home").trim();
+    const mediaUrl = String(body.media_url || "").trim();
+    const mediaType = String(body.media_type || "image").trim().toLowerCase();
+
+    const allowedPlacements = ["home", "all", "music", "beats", "dj"];
+    const allowedMediaTypes = ["image", "video"];
+
+    const pkg = PASONG_AD_PACKAGES[packageKey];
+
+    if (!pkg) {
+      return res.status(400).json({ error: "Invalid advertising package" });
+    }
+
+    if (!Number.isFinite(pkg.amount) || pkg.amount <= 0) {
+      return res.status(503).json({
+        error: `The ${packageKey} advertising price is not configured on PASONG.`
+      });
+    }
+
+    if (!advertiserName || !advertiserEmail || !advertiserPhone ||
+        !title || !mediaUrl) {
+      return res.status(400).json({
+        error: "Missing advertising campaign details"
+      });
+    }
+
+    if (!allowedPlacements.includes(placement)) {
+      return res.status(400).json({ error: "Invalid placement" });
+    }
+
+    if (!allowedMediaTypes.includes(mediaType)) {
+      return res.status(400).json({ error: "Invalid media type" });
+    }
+
+    if (targetUrl && !/^https?:\/\//i.test(targetUrl)) {
+      return res.status(400).json({
+        error: "Destination URL must start with http:// or https://"
+      });
+    }
+
+    const amount = pkg.amount;
+    const durationDays = pkg.days;
+    const currency = "UGX";
+
+    const reference =
+      "PASONG-AD-" +
+      Date.now() +
+      "-" +
+      crypto.randomBytes(8).toString("hex").toUpperCase();
+
+    const startAt = new Date().toISOString();
+    const endAt = new Date(
+      Date.now() + durationDays * 86400000
+    ).toISOString();
+
+    const insertResult = await supabase
+      .from("advertisements")
+      .insert({
+        title,
+        description: description || null,
+        image_url: mediaUrl,
+        target_url: targetUrl || null,
+        placement,
+        start_at: startAt,
+        end_at: endAt,
+        status: "pending",
+        clicks: 0,
+        impressions: 0,
+        created_by: user.id,
+        media_type: mediaType,
+        advertiser_name: advertiserName,
+        advertiser_email: advertiserEmail,
+        advertiser_phone: advertiserPhone,
+        package_key: packageKey,
+        duration_days: durationDays,
+        payment_reference: reference,
+        payment_status: "pending",
+        amount,
+        currency
+      })
+      .select()
+      .single();
+
+    if (insertResult.error || !insertResult.data) {
+      console.error(
+        "Advertising campaign insert failed:",
+        insertResult.error
+      );
+
+      return res.status(500).json({
+        error: "Unable to create advertising campaign"
+      });
+    }
+
+    const campaign = insertResult.data;
+
+    const callbackUrl =
+      `${PASONG_API_PUBLIC_URL}/api/advertising/flutterwave/callback`;
+
+    const customerName =
+      advertiserName || "PASONG Advertiser";
+
+    const flutterwavePayload = {
+      tx_ref: reference,
+      amount,
+      currency,
+      redirect_url: callbackUrl,
+      payment_options: "card,mobilemoneyuganda",
+      customer: {
+        email: advertiserEmail,
+        phonenumber: advertiserPhone,
+        name: customerName
+      },
+      customizations: {
+        title: "PASONG Advertising",
+        description: title,
+        logo:
+          `${PASONG_FRONTEND_URL.replace(/\/$/, "")}/favicon.ico`
+      },
+      meta: {
+        pasong_advertisement_id: campaign.id,
+        package_key: packageKey,
+        user_id: user.id
+      }
+    };
+
+    const fwResponse = await fetch(
+      "https://api.flutterwave.com/v3/payments",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(flutterwavePayload)
+      }
+    );
+
+    const fwText = await fwResponse.text();
+
+    let fwData = {};
+
+    try {
+      fwData = fwText ? JSON.parse(fwText) : {};
+    } catch {
+      fwData = {};
+    }
+
+    const checkoutUrl =
+      fwData?.data?.link ||
+      fwData?.link ||
+      "";
+
+    if (!fwResponse.ok || !checkoutUrl) {
+      await supabase
+        .from("advertisements")
+        .update({
+          payment_status: "checkout_failed"
+        })
+        .eq("id", campaign.id);
+
+      console.error(
+        "Advertising Flutterwave checkout failed:",
+        fwData
+      );
+
+      return res.status(502).json({
+        error:
+          "Flutterwave could not create the advertising checkout",
+        details:
+          fwData.message ||
+          fwData.error ||
+          null
+      });
+    }
+
+    return res.json({
+      success: true,
+      provider: "FLUTTERWAVE",
+      advertisement_id: campaign.id,
+      external_reference: reference,
+      checkout_url: checkoutUrl
+    });
+  } catch (error) {
+    console.error(
+      "Advertising checkout error:",
+      error
+    );
+
+    return res.status(500).json({
+      error: "Advertising checkout setup failed",
+      details:
+        error && error.message
+          ? error.message
+          : null
+    });
+  }
+});
+
+
+// ============================================================
+// PASONG ADVERTISING CALLBACK - FLUTTERWAVE
+// Verify the payment server-to-server before marking paid.
+// ============================================================
+
+app.get(
+  "/api/advertising/flutterwave/callback",
+  async (req, res) => {
+    const frontendUrl =
+      PASONG_FRONTEND_URL.replace(/\/$/, "");
+
+    try {
+      if (!FLUTTERWAVE_SECRET_KEY) {
+        return res.redirect(
+          `${frontendUrl}/advertise.html?payment=error`
+        );
+      }
+
+      const status =
+        String(req.query.status || "")
+          .trim()
+          .toLowerCase();
+
+      const txRef =
+        String(req.query.tx_ref || "").trim();
+
+      const transactionId =
+        String(req.query.transaction_id || "").trim();
+
+      if (
+        status !== "successful" ||
+        !txRef ||
+        !transactionId
+      ) {
+        return res.redirect(
+          `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(
+            txRef
+          )}`
+        );
+      }
+
+      const verifyResponse = await fetch(
+        `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(
+          transactionId
+        )}/verify`,
+        {
+          method: "GET",
+          headers: {
+            Authorization:
+              `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
+            "Content-Type":
+              "application/json"
+          }
+        }
+      );
+
+      const verifyText =
+        await verifyResponse.text();
+
+      let verifyData = {};
+
+      try {
+        verifyData =
+          verifyText
+            ? JSON.parse(verifyText)
+            : {};
+      } catch {
+        verifyData = {};
+      }
+
+      const payment =
+        verifyData?.data || {};
+
+      const verifiedStatus =
+        String(payment.status || "")
+          .trim()
+          .toLowerCase();
+
+      const verifiedTxRef =
+        String(payment.tx_ref || "")
+          .trim();
+
+      const verifiedAmount =
+        Number(payment.amount);
+
+      const verifiedCurrency =
+        String(payment.currency || "")
+          .trim()
+          .toUpperCase();
+
+      if (
+        !verifyResponse.ok ||
+        String(verifyData.status || "")
+          .toLowerCase() !== "success" ||
+        verifiedStatus !== "successful" ||
+        verifiedTxRef !== txRef ||
+        !Number.isFinite(verifiedAmount) ||
+        verifiedAmount <= 0 ||
+        verifiedCurrency !== "UGX"
+      ) {
+        console.error(
+          "Advertising payment verification failed:",
+          verifyData
+        );
+
+        return res.redirect(
+          `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(
+            txRef
+          )}`
+        );
+      }
+
+      const campaignResult =
+        await supabase
+          .from("advertisements")
+          .select("*")
+          .eq("payment_reference", txRef)
+          .maybeSingle();
+
+      if (
+        campaignResult.error ||
+        !campaignResult.data
+      ) {
+        return res.redirect(
+          `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
+            "PASONG could not find the advertising campaign."
+          )}`
+        );
+      }
+
+      const campaign =
+        campaignResult.data;
+
+      const expectedAmount =
+        Number(campaign.amount);
+
+      const expectedCurrency =
+        String(campaign.currency || "")
+          .trim()
+          .toUpperCase();
+
+      if (
+        !Number.isFinite(expectedAmount) ||
+        expectedAmount !== verifiedAmount ||
+        expectedCurrency !== verifiedCurrency
+      ) {
+        console.error(
+          "Advertising payment amount mismatch",
+          {
+            expectedAmount,
+            verifiedAmount,
+            expectedCurrency,
+            verifiedCurrency
+          }
+        );
+
+        return res.redirect(
+          `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(
+            txRef
+          )}`
+        );
+      }
+
+      const paymentUpdate =
+        await supabase
+          .from("advertisements")
+          .update({
+            payment_status: "paid",
+            status: "pending"
+          })
+          .eq("id", campaign.id);
+
+      if (paymentUpdate.error) {
+        console.error(
+          "Advertising payment database update failed:",
+          paymentUpdate.error
+        );
+
+        return res.redirect(
+          `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
+            "Payment was verified but PASONG could not update the campaign."
+          )}`
+        );
+      }
+
+      return res.redirect(
+        `${frontendUrl}/advertise.html?payment=success&campaign=${encodeURIComponent(
+          campaign.id
+        )}`
+      );
+    } catch (error) {
+      console.error(
+        "Advertising callback error:",
+        error
+      );
+
+      return res.redirect(
+        `${frontendUrl}/advertise.html?payment=error`
+      );
+    }
+  }
+);
+
 
 app.listen(
   PORT,
