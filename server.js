@@ -6762,11 +6762,6 @@ app.get("/api/advertising/flutterwave/callback", async (req, res) => {
 });
 
 
-
-// ============================================================
-// PASONG COPYRIGHT / NOTICE-AND-TAKEDOWN SYSTEM
-// International best-practice workflow with Uganda section 30
-// notice fields and section 49A blocking/takedown support.
 // ============================================================
 
 function copyrightClean(value, max = 5000) {
