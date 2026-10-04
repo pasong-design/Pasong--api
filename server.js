@@ -6512,7 +6512,9 @@ app.post("/api/advertising/checkout", async (req, res) => {
       amount: pkg.amount,
       currency: "UGX",
       redirect_url: redirectUrl,
-      payment_options: "card",
+      // Uganda customers can pay by card or MTN/Airtel Mobile Money.
+      // Flutterwave accepts payment_options as a comma + space separated list.
+      payment_options: "card, mobilemoneyuganda",
       customer: {
         email: advertiserEmail,
         name: customerName,
