@@ -1632,6 +1632,10 @@ app.get(
             "status",
             "approved"
           )
+          .in(
+            "copyright_status",
+            ["clear", "restored"]
+          )
           .not(
             "cover_url",
             "is",
@@ -1889,6 +1893,10 @@ app.get(
             "status",
             "approved"
           )
+          .in(
+            "copyright_status",
+            ["clear", "restored"]
+          )
           .maybeSingle();
 
       if (
@@ -2004,6 +2012,10 @@ app.get(
           .eq(
             "status",
             "approved"
+          )
+          .in(
+            "copyright_status",
+            ["clear", "restored"]
           )
           .maybeSingle();
 
@@ -6748,6 +6760,483 @@ app.get("/api/advertising/flutterwave/callback", async (req, res) => {
     );
   }
 });
+
+
+
+// ============================================================
+// PASONG COPYRIGHT / NOTICE-AND-TAKEDOWN SYSTEM
+// International best-practice workflow with Uganda section 30
+// notice fields and section 49A blocking/takedown support.
+// ============================================================
+
+function copyrightClean(value, max = 5000) {
+  return String(value == null ? "" : value).trim().slice(0, max);
+}
+
+function copyrightStatusValue(value) {
+  const v = copyrightClean(value, 40).toLowerCase();
+  return ["clear", "review", "takedown"].includes(v) ? v : "clear";
+}
+
+async function isAdminUser(user) {
+  if (!user) return false;
+
+  const roles = [
+    user?.user_metadata?.role,
+    user?.app_metadata?.role,
+    user?.user_metadata?.user_role,
+    user?.app_metadata?.user_role,
+  ].map(v => String(v || "").toLowerCase());
+
+  if (roles.includes("admin") || roles.includes("super_admin")) {
+    return true;
+  }
+
+  const checks = [
+    ["profiles", "id"],
+    ["user_profiles", "id"],
+    ["admin_users", "id"],
+    ["profiles", "user_id"],
+    ["user_profiles", "user_id"],
+    ["admin_users", "user_id"],
+  ];
+
+  for (const [table, column] of checks) {
+    try {
+      const result = await supabase
+        .from(table)
+        .select("role")
+        .eq(column, user.id)
+        .maybeSingle();
+
+      if (!result.error) {
+        const role = String(result.data?.role || "").toLowerCase();
+        if (role === "admin" || role === "super_admin") return true;
+      }
+    } catch (_) {}
+  }
+
+  const envEmails = String(process.env.PASONG_ADMIN_EMAILS || "")
+    .split(",")
+    .map(v => v.trim().toLowerCase())
+    .filter(Boolean);
+
+  return !!user.email && envEmails.includes(String(user.email).toLowerCase());
+}
+
+async function requireAdmin(req, res) {
+  const user = await getAuthenticatedUser(req);
+  if (!user) {
+    res.status(401).json({ error: "Please sign in." });
+    return null;
+  }
+
+  if (!(await isAdminUser(user))) {
+    res.status(403).json({ error: "Administrator access required." });
+    return null;
+  }
+
+  return user;
+}
+
+async function getCopyrightComplaintForAdmin(id) {
+  if (!validUuid(id)) return null;
+
+  const result = await supabase
+    .from("copyright_complaints")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (result.error) throw result.error;
+  return result.data || null;
+}
+
+async function createCopyrightStrike({ complaint, adminUser, notes = "" }) {
+  const existing = await supabase
+    .from("copyright_strikes")
+    .select("strike_number")
+    .eq("user_id", complaint.reported_user_id)
+    .order("strike_number", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existing.error) throw existing.error;
+
+  const strikeNumber = Number(existing.data?.strike_number || 0) + 1;
+
+  const strike = await supabase
+    .from("copyright_strikes")
+    .insert({
+      user_id: complaint.reported_user_id,
+      complaint_id: complaint.id,
+      song_id: complaint.song_id,
+      strike_number: strikeNumber,
+      status: "active",
+      reason: complaint.reason,
+      admin_notes: copyrightClean(notes, 5000) || null,
+      issued_by: adminUser.id,
+    })
+    .select()
+    .single();
+
+  if (strike.error) throw strike.error;
+  return strike.data;
+}
+
+app.post("/api/copyright/complaints", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    const body = req.body || {};
+
+    const songId = copyrightClean(body.song_id, 80);
+    if (!validUuid(songId)) {
+      return res.status(400).json({ error: "Invalid song id." });
+    }
+
+    const songResult = await supabase
+      .from("songs")
+      .select("id,title,artist_user_id,status,copyright_status")
+      .eq("id", songId)
+      .maybeSingle();
+
+    if (songResult.error || !songResult.data) {
+      return res.status(404).json({ error: "Song not found." });
+    }
+
+    const song = songResult.data;
+    const complainantName = copyrightClean(body.complainant_name, 160);
+    const complainantEmail = copyrightClean(body.complainant_email, 200);
+    const complainantPhone = copyrightClean(body.complainant_phone, 60);
+    const complainantAddress = copyrightClean(body.complainant_address, 500);
+    const rightsClaim = copyrightClean(body.rights_claim, 5000);
+    const materialDescription = copyrightClean(body.material_description, 5000);
+    const remedialAction = copyrightClean(body.remedial_action, 2000);
+    const signature = copyrightClean(body.signature, 160);
+    const evidenceUrl = copyrightClean(body.evidence_url, 2000);
+    const reason = copyrightClean(body.reason, 5000);
+    const claimantRole = copyrightClean(body.claimant_role || "copyright_owner", 40).toLowerCase();
+    const songUrl = copyrightClean(body.song_url, 2000);
+
+    if (!complainantName || !complainantEmail || !complainantAddress || !rightsClaim || !materialDescription || !remedialAction || !signature || !reason) {
+      return res.status(400).json({
+        error: "Name, email, address, rights claim, material description, requested action, signature and complaint reason are required."
+      });
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(complainantEmail)) {
+      return res.status(400).json({ error: "Invalid complainant email." });
+    }
+
+    if (evidenceUrl && !validHttpUrl(evidenceUrl)) {
+      return res.status(400).json({ error: "Evidence URL must be a valid HTTP/HTTPS URL." });
+    }
+
+    if (!songUrl || !validHttpUrl(songUrl)) {
+      return res.status(400).json({ error: "A valid PASONG song URL is required." });
+    }
+
+    const openComplaint = await supabase
+      .from("copyright_complaints")
+      .select("id,status")
+      .eq("song_id", songId)
+      .in("status", ["submitted", "reviewing", "takedown"])
+      .limit(1)
+      .maybeSingle();
+
+    if (openComplaint.error) throw openComplaint.error;
+    if (openComplaint.data) {
+      return res.status(409).json({
+        error: "This song already has an open copyright complaint.",
+        complaint_id: openComplaint.data.id,
+      });
+    }
+
+    const complaint = await supabase
+      .from("copyright_complaints")
+      .insert({
+        song_id: songId,
+        reported_user_id: song.artist_user_id || null,
+        complainant_user_id: user?.id || null,
+        complainant_name: complainantName,
+        complainant_email: complainantEmail,
+        complainant_phone: complainantPhone || null,
+        complainant_address: complainantAddress,
+        claimant_role: claimantRole,
+        song_url: songUrl,
+        rights_claim: rightsClaim,
+        material_description: materialDescription,
+        remedial_action: remedialAction,
+        signature,
+        good_faith_declaration: body.good_faith_declaration === true,
+        accuracy_declaration: body.accuracy_declaration === true,
+        evidence_url: evidenceUrl || null,
+        reason,
+        status: "submitted",
+      })
+      .select("id,song_id,status,created_at")
+      .single();
+
+    if (complaint.error || !complaint.data) {
+      console.error("Copyright complaint insert failed:", complaint.error);
+      return res.status(500).json({ error: "Unable to submit copyright complaint." });
+    }
+
+    // Put the song into review immediately. Public song APIs only expose clear/restored songs.
+    await supabase
+      .from("songs")
+      .update({ copyright_status: "review" })
+      .eq("id", songId);
+
+    return res.status(201).json({
+      success: true,
+      complaint: complaint.data,
+      message: "Copyright complaint submitted. The song has been placed under copyright review.",
+    });
+  } catch (error) {
+    console.error("Copyright complaint error:", error);
+    return res.status(500).json({ error: "Unable to submit copyright complaint." });
+  }
+});
+
+app.get("/api/copyright/complaints/mine", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in." });
+
+    const result = await supabase
+      .from("copyright_complaints")
+      .select("*")
+      .or(`complainant_user_id.eq.${user.id},reported_user_id.eq.${user.id}`)
+      .order("created_at", { ascending: false });
+
+    if (result.error) throw result.error;
+
+    const rows = result.data || [];
+    const songIds = [...new Set(rows.map(item => item.song_id).filter(validUuid))];
+    let songs = [];
+    if (songIds.length) {
+      const songResult = await supabase
+        .from("songs")
+        .select("id,title,status,copyright_status")
+        .in("id", songIds);
+      if (songResult.error) throw songResult.error;
+      songs = songResult.data || [];
+    }
+    const songMap = new Map(songs.map(song => [song.id, song]));
+
+    const complaints = rows.map(item => ({
+      ...item,
+      song: songMap.get(item.song_id) || null,
+      can_respond: item.reported_user_id === user.id && ["submitted", "reviewing", "takedown"].includes(item.status),
+    }));
+
+    res.json({ success: true, complaints });
+  } catch (error) {
+    console.error("Copyright mine error:", error);
+    res.status(500).json({ error: "Unable to load copyright complaints." });
+  }
+});
+
+app.post("/api/copyright/complaints/:id/respond", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in." });
+    if (!validUuid(req.params.id)) return res.status(400).json({ error: "Invalid complaint id." });
+
+    const complaint = await getCopyrightComplaintForAdmin(req.params.id);
+    if (!complaint) return res.status(404).json({ error: "Complaint not found." });
+    if (complaint.reported_user_id !== user.id) return res.status(403).json({ error: "Only the uploader can submit a counter-notice." });
+    if (!["submitted", "reviewing", "takedown"].includes(complaint.status)) {
+      return res.status(409).json({ error: "This complaint is no longer accepting a counter-notice." });
+    }
+
+    const responseText = copyrightClean(req.body?.uploader_response, 8000);
+    const evidenceUrl = copyrightClean(req.body?.response_evidence_url, 2000);
+    if (!responseText) return res.status(400).json({ error: "Your response is required." });
+    if (evidenceUrl && !validHttpUrl(evidenceUrl)) return res.status(400).json({ error: "Evidence URL must be valid HTTP/HTTPS." });
+
+    const result = await supabase
+      .from("copyright_complaints")
+      .update({
+        uploader_response: responseText,
+        response_evidence_url: evidenceUrl || null,
+        response_submitted_at: new Date().toISOString(),
+        status: "reviewing",
+      })
+      .eq("id", complaint.id)
+      .eq("reported_user_id", user.id)
+      .select("id,status,response_submitted_at")
+      .single();
+
+    if (result.error) throw result.error;
+    res.json({ success: true, complaint: result.data });
+  } catch (error) {
+    console.error("Copyright counter-notice error:", error);
+    res.status(500).json({ error: "Unable to submit counter-notice." });
+  }
+});
+
+app.get("/api/admin/copyright/complaints", async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const status = copyrightClean(req.query.status, 40).toLowerCase();
+    let query = supabase
+      .from("copyright_complaints")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (status && status !== "all") query = query.eq("status", status);
+
+    const result = await query;
+    if (result.error) throw result.error;
+
+    const rows = result.data || [];
+    const songIds = [...new Set(rows.map(r => r.song_id).filter(validUuid))];
+    let songs = [];
+    if (songIds.length) {
+      const sr = await supabase.from("songs").select("id,title,status,copyright_status,artist_user_id").in("id", songIds);
+      if (!sr.error) songs = sr.data || [];
+    }
+    const songMap = new Map(songs.map(s => [s.id, s]));
+
+    res.json({
+      success: true,
+      complaints: rows.map(r => ({ ...r, song: songMap.get(r.song_id) || null })),
+    });
+  } catch (error) {
+    console.error("Admin copyright list error:", error);
+    res.status(500).json({ error: "Unable to load copyright complaints." });
+  }
+});
+
+app.get("/api/admin/copyright/strikes", async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const result = await supabase
+      .from("copyright_strikes")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (result.error) throw result.error;
+    res.json({ success: true, strikes: result.data || [] });
+  } catch (error) {
+    console.error("Admin copyright strikes error:", error);
+    res.status(500).json({ error: "Unable to load copyright strikes." });
+  }
+});
+
+app.post("/api/admin/copyright/complaints/:id/action", async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    if (!validUuid(req.params.id)) return res.status(400).json({ error: "Invalid complaint id." });
+
+    const complaint = await getCopyrightComplaintForAdmin(req.params.id);
+    if (!complaint) return res.status(404).json({ error: "Complaint not found." });
+
+    const action = copyrightClean(req.body?.action, 40).toLowerCase();
+    const notes = copyrightClean(req.body?.admin_notes, 5000);
+
+    if (!["review", "takedown", "restore", "reject", "resolve"].includes(action)) {
+      return res.status(400).json({ error: "Invalid copyright action." });
+    }
+
+    let strike = null;
+    let complaintStatus = complaint.status;
+    let songCopyrightStatus = "review";
+
+    if (action === "takedown") {
+      complaintStatus = "takedown";
+      songCopyrightStatus = "takedown";
+      if (complaint.reported_user_id) {
+        // Do not create duplicate strikes when an admin clicks Takedown twice.
+        const prior = await supabase
+          .from("copyright_strikes")
+          .select("id,strike_number")
+          .eq("complaint_id", complaint.id)
+          .maybeSingle();
+        if (prior.error) throw prior.error;
+        if (!prior.data) {
+          strike = await createCopyrightStrike({ complaint, adminUser: admin, notes });
+        } else {
+          strike = prior.data;
+        }
+      }
+    } else if (action === "restore") {
+      complaintStatus = "restored";
+      songCopyrightStatus = "clear";
+    } else if (action === "reject") {
+      complaintStatus = "rejected";
+      songCopyrightStatus = "clear";
+    } else if (action === "resolve") {
+      complaintStatus = "resolved";
+      songCopyrightStatus = "clear";
+    } else {
+      complaintStatus = "reviewing";
+      songCopyrightStatus = "review";
+    }
+
+    const complaintUpdate = await supabase
+      .from("copyright_complaints")
+      .update({
+        status: complaintStatus,
+        admin_notes: notes || complaint.admin_notes || null,
+        strike_number: strike?.strike_number || complaint.strike_number || null,
+        resolved_at: ["restore", "reject", "resolve"].includes(action) ? new Date().toISOString() : null,
+        resolved_by: ["restore", "reject", "resolve"].includes(action) ? admin.id : null,
+      })
+      .eq("id", complaint.id)
+      .select("*")
+      .single();
+
+    if (complaintUpdate.error) throw complaintUpdate.error;
+
+    const songUpdate = await supabase
+      .from("songs")
+      .update({ copyright_status: songCopyrightStatus })
+      .eq("id", complaint.song_id);
+
+    if (songUpdate.error) throw songUpdate.error;
+
+    res.json({
+      success: true,
+      complaint: complaintUpdate.data,
+      strike,
+      message:
+        action === "takedown"
+          ? "Song taken down and copyright strike recorded."
+          : action === "restore"
+            ? "Song restored to PASONG."
+            : action === "reject"
+              ? "Copyright complaint rejected and song restored."
+              : "Copyright review updated.",
+    });
+  } catch (error) {
+    console.error("Admin copyright action error:", error);
+    res.status(500).json({ error: "Unable to apply copyright action." });
+  }
+});
+
+app.get("/api/copyright/status/:songId", async (req, res) => {
+  try {
+    if (!validUuid(req.params.songId)) return res.status(400).json({ error: "Invalid song id." });
+    const result = await supabase
+      .from("songs")
+      .select("id,title,copyright_status")
+      .eq("id", req.params.songId)
+      .maybeSingle();
+    if (result.error || !result.data) return res.status(404).json({ error: "Song not found." });
+    res.json({ success: true, song: result.data });
+  } catch {
+    res.status(500).json({ error: "Unable to load copyright status." });
+  }
+});
+
 
 app.use(
   (error, req, res, next) => {
