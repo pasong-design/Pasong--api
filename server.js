@@ -40,17 +40,6 @@ const PASONG_API_PUBLIC_URL =
 const CORS_ORIGIN =
   process.env.CORS_ORIGIN || "";
 
-// ============================================================
-// PASONG ADVERTISING
-// Server-authoritative launch pricing. Browser-supplied amounts
-// are never trusted.
-// ============================================================
-const PASONG_AD_PACKAGES = {
-  home_image: { amount: Number(process.env.PASONG_AD_HOME_IMAGE_UGX || 25000), days: 7, name: "Homepage Image", placement: "home", media_type: "image" },
-  home_video: { amount: Number(process.env.PASONG_AD_HOME_VIDEO_UGX || 40000), days: 7, name: "Homepage Video", placement: "home", media_type: "video" },
-  sitewide: { amount: Number(process.env.PASONG_AD_SITEWIDE_UGX || 60000), days: 7, name: "PASONG Sitewide", placement: "sitewide", media_type: "image" },
-};
-
 if (
   !SUPABASE_URL ||
   !SUPABASE_SERVICE_ROLE_KEY
@@ -6347,58 +6336,77 @@ app.post(
 
 
 // ============================================================
-// PASONG ADVERTISING - PUBLIC PACKAGES
+// PASONG ADVERTISING
+// Public package list + authenticated campaign checkout.
+// Prices are controlled by the backend, never by the browser.
 // ============================================================
-app.get("/api/advertising/packages", (req, res) => {
-  res.json({
-    success: true,
-    currency: "UGX",
-    packages: Object.entries(PASONG_AD_PACKAGES).map(([key, value]) => ({
-      key,
-      name: value.name,
-      amount: value.amount,
-      currency: "UGX",
-      days: value.days,
-    })),
-  });
-});
+
+const PASONG_AD_PACKAGES = {
+  home_image: {
+    amount: Number(process.env.PASONG_AD_HOME_IMAGE_UGX || 25000),
+    days: 7,
+    name: "Homepage Image",
+  },
+  home_video: {
+    amount: Number(process.env.PASONG_AD_HOME_VIDEO_UGX || 40000),
+    days: 7,
+    name: "Homepage Video",
+  },
+  sitewide: {
+    amount: Number(process.env.PASONG_AD_SITEWIDE_UGX || 60000),
+    days: 7,
+    name: "PASONG Sitewide",
+  },
+};
 
 function cleanAdText(value, max = 5000) {
-  return String(value == null ? "" : value)
-    .trim()
-    .slice(0, max);
+  return String(value == null ? "" : value).trim().slice(0, max);
 }
 
 function validHttpUrl(value) {
   if (!value) return true;
   try {
-    const u = new URL(value);
-    return u.protocol === "http:" || u.protocol === "https:";
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
   } catch {
     return false;
   }
 }
 
 function normalizeAdMediaType(value) {
-  const v = String(value || "").trim().toLowerCase();
-  return v === "video" ? "video" : "image";
+  return String(value || "").trim().toLowerCase() === "video"
+    ? "video"
+    : "image";
 }
 
-// ============================================================
-// PASONG ADVERTISING - CHECKOUT
-// Creates a pending advertising campaign and a Flutterwave hosted
-// checkout. Price comes ONLY from PASONG_AD_PACKAGES on the server.
-// ============================================================
+app.get("/api/advertising/packages", (req, res) => {
+  res.json({
+    success: true,
+    currency: "UGX",
+    packages: Object.entries(PASONG_AD_PACKAGES).map(([key, pkg]) => ({
+      key,
+      name: pkg.name,
+      amount: pkg.amount,
+      currency: "UGX",
+      days: pkg.days,
+    })),
+  });
+});
+
 app.post("/api/advertising/checkout", async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
+
     if (!user) {
-      return res.status(401).json({ error: "Please sign in to advertise on PASONG." });
+      return res.status(401).json({
+        error: "Please sign in to advertise on PASONG.",
+      });
     }
 
     if (!FLUTTERWAVE_SECRET_KEY) {
       return res.status(503).json({
-        error: "Advertising payment is not configured. Add FLUTTERWAVE_SECRET_KEY to Render."
+        error:
+          "Advertising payment is not configured. Add FLUTTERWAVE_SECRET_KEY to Render.",
       });
     }
 
@@ -6407,7 +6415,9 @@ app.post("/api/advertising/checkout", async (req, res) => {
     const pkg = PASONG_AD_PACKAGES[packageKey];
 
     if (!pkg || !Number.isFinite(pkg.amount) || pkg.amount <= 0) {
-      return res.status(400).json({ error: "Invalid advertising package." });
+      return res.status(400).json({
+        error: "Invalid advertising package.",
+      });
     }
 
     const advertiserName = cleanAdText(body.advertiser_name, 160);
@@ -6421,27 +6431,41 @@ app.post("/api/advertising/checkout", async (req, res) => {
     const mediaType = normalizeAdMediaType(body.media_type);
 
     if (!advertiserName || !advertiserEmail || !title || !description || !mediaUrl) {
-      return res.status(400).json({ error: "Advertiser name, email, title, description and advert media are required." });
+      return res.status(400).json({
+        error:
+          "Advertiser name, email, title, description and advert media are required.",
+      });
     }
 
     if (!validHttpUrl(mediaUrl) || !validHttpUrl(targetUrl)) {
-      return res.status(400).json({ error: "Invalid media or destination URL." });
+      return res.status(400).json({
+        error: "Invalid media or destination URL.",
+      });
     }
 
     if (packageKey === "home_image" && mediaType !== "image") {
-      return res.status(400).json({ error: "Homepage Image requires an image advert." });
+      return res.status(400).json({
+        error: "Homepage Image requires an image advert.",
+      });
     }
 
     if (packageKey === "home_video" && mediaType !== "video") {
-      return res.status(400).json({ error: "Homepage Video requires a video advert." });
+      return res.status(400).json({
+        error: "Homepage Video requires a video advert.",
+      });
     }
 
+    // Keep placement values compatible with the existing PASONG
+    // Advertisement Manager shown in the admin dashboard.
     const placement =
       packageKey === "home_image" || packageKey === "home_video"
         ? "home"
-        : (requestedPlacement || "sitewide");
+        : packageKey === "sitewide"
+          ? "all"
+          : requestedPlacement || "home";
 
-    const txRef = `PASONG-AD-${Date.now()}-${crypto.randomBytes(8).toString("hex")}`;
+    const txRef =
+      `PASONG-AD-${Date.now()}-${crypto.randomBytes(8).toString("hex")}`;
 
     const campaignResult = await supabase
       .from("advertising_campaigns")
@@ -6475,8 +6499,13 @@ app.post("/api/advertising/checkout", async (req, res) => {
       });
     }
 
-    const customerName = advertiserName || user.email?.split("@")[0] || "PASONG Advertiser";
-    const redirectUrl = `${PASONG_API_PUBLIC_URL}/api/advertising/flutterwave/callback`;
+    const customerName =
+      advertiserName ||
+      user.email?.split("@")[0] ||
+      "PASONG Advertiser";
+
+    const redirectUrl =
+      `${PASONG_API_PUBLIC_URL}/api/advertising/flutterwave/callback`;
 
     const flutterwavePayload = {
       tx_ref: txRef,
@@ -6487,7 +6516,7 @@ app.post("/api/advertising/checkout", async (req, res) => {
       customer: {
         email: advertiserEmail,
         name: customerName,
-        phonenumber: advertiserPhone || undefined,
+        ...(advertiserPhone ? { phonenumber: advertiserPhone } : {}),
       },
       customizations: {
         title: "PASONG Advertising",
@@ -6512,11 +6541,21 @@ app.post("/api/advertising/checkout", async (req, res) => {
 
     const fwText = await fwResponse.text();
     let fwData = {};
-    try { fwData = fwText ? JSON.parse(fwText) : {}; } catch { fwData = {}; }
+
+    try {
+      fwData = fwText ? JSON.parse(fwText) : {};
+    } catch {
+      fwData = {};
+    }
 
     if (!fwResponse.ok) {
       console.error("Advertising Flutterwave checkout failed:", fwData);
-      await supabase.from("advertising_campaigns").update({ status: "payment_failed" }).eq("id", campaignResult.data.id);
+
+      await supabase
+        .from("advertising_campaigns")
+        .update({ status: "payment_failed" })
+        .eq("id", campaignResult.data.id);
+
       return res.status(502).json({
         error: "Flutterwave could not create the advertising checkout.",
         details: fwData.message || fwData.error || null,
@@ -6524,9 +6563,16 @@ app.post("/api/advertising/checkout", async (req, res) => {
     }
 
     const checkoutUrl = fwData?.data?.link || fwData?.link || "";
+
     if (!checkoutUrl) {
-      await supabase.from("advertising_campaigns").update({ status: "payment_failed" }).eq("id", campaignResult.data.id);
-      return res.status(502).json({ error: "Flutterwave did not return a checkout link." });
+      await supabase
+        .from("advertising_campaigns")
+        .update({ status: "payment_failed" })
+        .eq("id", campaignResult.data.id);
+
+      return res.status(502).json({
+        error: "Flutterwave did not return a checkout link.",
+      });
     }
 
     return res.json({
@@ -6541,6 +6587,7 @@ app.post("/api/advertising/checkout", async (req, res) => {
     });
   } catch (error) {
     console.error("Advertising checkout error:", error);
+
     return res.status(500).json({
       error: "Advertising checkout setup failed.",
       details: error?.message || null,
@@ -6548,25 +6595,24 @@ app.post("/api/advertising/checkout", async (req, res) => {
   }
 });
 
-// ============================================================
-// PASONG ADVERTISING - FLUTTERWAVE CALLBACK
-// Verifies the transaction server-to-server, then creates the
-// public advertisement in PENDING status for admin approval.
-// ============================================================
 app.get("/api/advertising/flutterwave/callback", async (req, res) => {
   const frontendUrl = PASONG_FRONTEND_URL.replace(/\/$/, "");
+
   try {
     const txRef = cleanAdText(req.query.tx_ref, 200);
     const transactionId = cleanAdText(req.query.transaction_id, 100);
     const status = cleanAdText(req.query.status, 40).toLowerCase();
 
     if (!FLUTTERWAVE_SECRET_KEY || status !== "successful" || !txRef || !transactionId) {
-      return res.redirect(`${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`);
+      return res.redirect(
+        `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`
+      );
     }
 
     const verifyResponse = await fetch(
       `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(transactionId)}/verify`,
       {
+        method: "GET",
         headers: {
           Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
           "Content-Type": "application/json",
@@ -6576,7 +6622,12 @@ app.get("/api/advertising/flutterwave/callback", async (req, res) => {
 
     const verifyText = await verifyResponse.text();
     let verifyData = {};
-    try { verifyData = verifyText ? JSON.parse(verifyText) : {}; } catch { verifyData = {}; }
+
+    try {
+      verifyData = verifyText ? JSON.parse(verifyText) : {};
+    } catch {
+      verifyData = {};
+    }
 
     const payment = verifyData?.data || {};
     const verifiedStatus = String(payment.status || "").trim().toLowerCase();
@@ -6592,7 +6643,9 @@ app.get("/api/advertising/flutterwave/callback", async (req, res) => {
       !Number.isFinite(verifiedAmount) ||
       verifiedCurrency !== "UGX"
     ) {
-      return res.redirect(`${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`);
+      return res.redirect(
+        `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`
+      );
     }
 
     const campaignResult = await supabase
@@ -6602,23 +6655,40 @@ app.get("/api/advertising/flutterwave/callback", async (req, res) => {
       .maybeSingle();
 
     if (campaignResult.error || !campaignResult.data) {
-      return res.redirect(`${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent("Advertising campaign was not found.")}`);
+      return res.redirect(
+        `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
+          "Advertising campaign was not found."
+        )}`
+      );
     }
 
     const campaign = campaignResult.data;
     const expectedAmount = Number(campaign.amount);
 
     if (!Number.isFinite(expectedAmount) || verifiedAmount !== expectedAmount) {
-      await supabase.from("advertising_campaigns").update({ status: "payment_failed" }).eq("id", campaign.id);
-      return res.redirect(`${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`);
+      await supabase
+        .from("advertising_campaigns")
+        .update({ status: "payment_failed" })
+        .eq("id", campaign.id);
+
+      return res.redirect(
+        `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`
+      );
     }
 
+    // Protect against duplicate callback processing.
     if (campaign.payment_status === "paid" && campaign.advertisement_id) {
-      return res.redirect(`${frontendUrl}/advertise.html?payment=success&campaign_id=${encodeURIComponent(campaign.id)}`);
+      return res.redirect(
+        `${frontendUrl}/advertise.html?payment=success&campaign_id=${encodeURIComponent(
+          campaign.id
+        )}`
+      );
     }
 
     const startAt = new Date();
-    const endAt = new Date(startAt.getTime() + Number(campaign.days || 7) * 24 * 60 * 60 * 1000);
+    const endAt = new Date(
+      startAt.getTime() + Number(campaign.days || 7) * 24 * 60 * 60 * 1000
+    );
 
     const adResult = await supabase
       .from("advertisements")
@@ -6641,7 +6711,12 @@ app.get("/api/advertising/flutterwave/callback", async (req, res) => {
 
     if (adResult.error || !adResult.data) {
       console.error("Advertising ad creation failed:", adResult.error);
-      return res.redirect(`${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent("Payment was verified but PASONG could not create the campaign.")}`);
+
+      return res.redirect(
+        `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
+          "Payment was verified but PASONG could not create the campaign."
+        )}`
+      );
     }
 
     await supabase
@@ -6656,13 +6731,21 @@ app.get("/api/advertising/flutterwave/callback", async (req, res) => {
       })
       .eq("id", campaign.id);
 
-    return res.redirect(`${frontendUrl}/advertise.html?payment=success&campaign_id=${encodeURIComponent(campaign.id)}`);
+    return res.redirect(
+      `${frontendUrl}/advertise.html?payment=success&campaign_id=${encodeURIComponent(
+        campaign.id
+      )}`
+    );
   } catch (error) {
     console.error("Advertising callback error:", error);
-    return res.redirect(`${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent("Unable to verify the advertising payment.")}`);
+
+    return res.redirect(
+      `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
+        "Unable to verify the advertising payment."
+      )}`
+    );
   }
 });
-
 
 app.use(
   (error, req, res, next) => {
