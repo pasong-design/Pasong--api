@@ -116,6 +116,53 @@ const supabase = createClient(
   SUPABASE_SERVICE_ROLE_KEY
 );
 
+// ============================================================
+// PASONG USER NOTIFICATIONS
+// All notification creation happens server-side through the
+// service-role-only Supabase RPC. Frontend clients cannot call
+// create_notification directly.
+// ============================================================
+async function createUserNotification({
+  userId,
+  type,
+  title,
+  message,
+  link = null,
+  metadata = {},
+}) {
+  if (!userId) return false;
+
+  try {
+    const result = await supabase.rpc(
+      "create_notification",
+      {
+        p_user_id: userId,
+        p_type: type,
+        p_title: title,
+        p_message: message,
+        p_link: link,
+        p_metadata: metadata || {},
+      }
+    );
+
+    if (result.error) {
+      console.error(
+        "Notification creation failed:",
+        result.error
+      );
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error(
+      "Notification creation error:",
+      error
+    );
+    return false;
+  }
+}
+
 cloudinary.config({
   cloud_name: CLOUDINARY_CLOUD_NAME,
   api_key: CLOUDINARY_API_KEY,
@@ -472,6 +519,19 @@ app.post("/api/premium/complete", async (req, res) => {
         error: "Premium payment status update failed.",
       });
     }
+
+    await createUserNotification({
+      userId: payment.user_id,
+      type: "account",
+      title: "PASONG Premium activated",
+      message: `Your PASONG Premium ${payment.plan === "premium_yearly" ? "yearly" : "monthly"} plan is now active until ${new Date(expires).toLocaleDateString("en-UG")}.`,
+      link: "premium.html",
+      metadata: {
+        plan: payment.plan,
+        payment_reference: payment.payment_reference,
+        expires_at: expires,
+      },
+    });
 
     res.json({
       success: true,
@@ -884,8 +944,6 @@ function allowedCloudinaryFolder(
       "pasong-beats/audio",
       "pasong-beats/covers",
       "pasong-producers/profile",
-      "pasong/ads",
-      "pasong-ads",
     ].includes(value)
   ) {
     return true;
@@ -1632,10 +1690,6 @@ app.get(
             "status",
             "approved"
           )
-          .in(
-            "copyright_status",
-            ["clear", "restored"]
-          )
           .not(
             "cover_url",
             "is",
@@ -1893,10 +1947,6 @@ app.get(
             "status",
             "approved"
           )
-          .in(
-            "copyright_status",
-            ["clear", "restored"]
-          )
           .maybeSingle();
 
       if (
@@ -2012,10 +2062,6 @@ app.get(
           .eq(
             "status",
             "approved"
-          )
-          .in(
-            "copyright_status",
-            ["clear", "restored"]
           )
           .maybeSingle();
 
@@ -3107,6 +3153,48 @@ app.post(
         return res.status(500).json({
           error:
             "Download record failed",
+        });
+      }
+
+      const songNotificationMessage =
+        tipAmount > 0
+          ? `Your purchase of ${song.title} was successful for ${paidTotal} ${storedCurrency}, including a ${tipAmount} ${storedCurrency} tip.`
+          : `Your purchase of ${song.title} was successful for ${storedAmount} ${storedCurrency}. Your download is ready.`;
+
+      await createUserNotification({
+        userId: buyer_id,
+        type: "music",
+        title: "Song purchase successful",
+        message: songNotificationMessage,
+        link: `song.html?id=${encodeURIComponent(song_id)}`,
+        metadata: {
+          song_id,
+          order_id: order.data.id,
+          amount: paidTotal,
+          currency: storedCurrency,
+          tip_amount: tipAmount,
+        },
+      });
+
+      const songRecipientIds = [
+        ...artistIds,
+        validUuid(song.producer_user_id) ? song.producer_user_id : null,
+        hasWriter && validUuid(song.writer_user_id) ? song.writer_user_id : null,
+      ].filter(validUuid);
+
+      for (const recipientId of [...new Set(songRecipientIds)]) {
+        await createUserNotification({
+          userId: recipientId,
+          type: "earnings",
+          title: "Song sale earnings",
+          message: `${song.title} was purchased for ${storedAmount} ${storedCurrency}. Your PASONG royalty has been recorded.`,
+          link: "account.html",
+          metadata: {
+            song_id,
+            order_id: order.data.id,
+            sale_amount: storedAmount,
+            currency: storedCurrency,
+          },
         });
       }
 
@@ -5254,6 +5342,37 @@ app.post(
               order.id,
           });
 
+      await createUserNotification({
+        userId: producerUserId,
+        type: "earnings",
+        title: "Your beat was sold",
+        message: `Your beat ${beat.title} sold as a ${order.package_type} licence for ${storedAmount} ${storedCurrency}. Your 75% producer earning has been recorded.`,
+        link: "producer.html",
+        metadata: {
+          beat_id: beat.id,
+          order_id: order.id,
+          package_type: order.package_type,
+          sale_amount: storedAmount,
+          producer_earning: producerAmount,
+          currency: storedCurrency,
+        },
+      });
+
+      await createUserNotification({
+        userId: order.buyer_id,
+        type: "music",
+        title: "Beat purchase successful",
+        message: `Your ${order.package_type} licence for ${beat.title} was paid successfully for ${storedAmount} ${storedCurrency}.`,
+        link: "producer.html",
+        metadata: {
+          beat_id: beat.id,
+          order_id: order.id,
+          package_type: order.package_type,
+          amount: storedAmount,
+          currency: storedCurrency,
+        },
+      });
+
       res.json({
         success: true,
         producer_earning:
@@ -5860,6 +5979,22 @@ app.post(
         (availableBalance - requestedAmount).toFixed(2)
       );
 
+      await createUserNotification({
+        userId: user.id,
+        type: "earnings",
+        title: "Withdrawal request submitted",
+        message: `Your UGX ${requestedAmount.toLocaleString("en-UG")} withdrawal request to ${normalizedProvider} ${mobile} is pending processing.`,
+        link: "producer.html",
+        metadata: {
+          withdrawal_id: withdrawal.data.id,
+          amount: requestedAmount,
+          currency: "UGX",
+          provider: normalizedProvider,
+          mobile_number: mobile,
+          status: "pending",
+        },
+      });
+
       return res.status(201).json({
         success: true,
         message: "Withdrawal request submitted successfully.",
@@ -6344,894 +6479,6 @@ app.post(
     }
   }
 );
-
-
-
-// ============================================================
-// PASONG ADVERTISING
-// Public package list + authenticated campaign checkout.
-// Prices are controlled by the backend, never by the browser.
-// ============================================================
-
-const PASONG_AD_PACKAGES = {
-  home_image: {
-    amount: Number(process.env.PASONG_AD_HOME_IMAGE_UGX || 25000),
-    days: 7,
-    name: "Homepage Image",
-  },
-  home_video: {
-    amount: Number(process.env.PASONG_AD_HOME_VIDEO_UGX || 40000),
-    days: 7,
-    name: "Homepage Video",
-  },
-  sitewide: {
-    amount: Number(process.env.PASONG_AD_SITEWIDE_UGX || 60000),
-    days: 7,
-    name: "PASONG Sitewide",
-  },
-};
-
-function cleanAdText(value, max = 5000) {
-  return String(value == null ? "" : value).trim().slice(0, max);
-}
-
-function validHttpUrl(value) {
-  if (!value) return true;
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function normalizeAdMediaType(value) {
-  return String(value || "").trim().toLowerCase() === "video"
-    ? "video"
-    : "image";
-}
-
-app.get("/api/advertising/packages", (req, res) => {
-  res.json({
-    success: true,
-    currency: "UGX",
-    packages: Object.entries(PASONG_AD_PACKAGES).map(([key, pkg]) => ({
-      key,
-      name: pkg.name,
-      amount: pkg.amount,
-      currency: "UGX",
-      days: pkg.days,
-    })),
-  });
-});
-
-app.post("/api/advertising/checkout", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-
-    if (!user) {
-      return res.status(401).json({
-        error: "Please sign in to advertise on PASONG.",
-      });
-    }
-
-    if (!FLUTTERWAVE_SECRET_KEY) {
-      return res.status(503).json({
-        error:
-          "Advertising payment is not configured. Add FLUTTERWAVE_SECRET_KEY to Render.",
-      });
-    }
-
-    const body = req.body || {};
-    const packageKey = cleanAdText(body.package_key, 40);
-    const pkg = PASONG_AD_PACKAGES[packageKey];
-
-    if (!pkg || !Number.isFinite(pkg.amount) || pkg.amount <= 0) {
-      return res.status(400).json({
-        error: "Invalid advertising package.",
-      });
-    }
-
-    const advertiserName = cleanAdText(body.advertiser_name, 160);
-    const advertiserEmail = cleanAdText(body.advertiser_email || user.email, 200);
-    const advertiserPhone = cleanAdText(body.advertiser_phone, 60);
-    const title = cleanAdText(body.title, 200);
-    const description = cleanAdText(body.description, 5000);
-    const targetUrl = cleanAdText(body.target_url, 1000);
-    const requestedPlacement = cleanAdText(body.placement, 60).toLowerCase();
-    const mediaUrl = cleanAdText(body.media_url, 2000);
-    const mediaType = normalizeAdMediaType(body.media_type);
-
-    if (!advertiserName || !advertiserEmail || !title || !description || !mediaUrl) {
-      return res.status(400).json({
-        error:
-          "Advertiser name, email, title, description and advert media are required.",
-      });
-    }
-
-    if (!validHttpUrl(mediaUrl) || !validHttpUrl(targetUrl)) {
-      return res.status(400).json({
-        error: "Invalid media or destination URL.",
-      });
-    }
-
-    if (packageKey === "home_image" && mediaType !== "image") {
-      return res.status(400).json({
-        error: "Homepage Image requires an image advert.",
-      });
-    }
-
-    if (packageKey === "home_video" && mediaType !== "video") {
-      return res.status(400).json({
-        error: "Homepage Video requires a video advert.",
-      });
-    }
-
-    // Keep placement values compatible with the existing PASONG
-    // Advertisement Manager shown in the admin dashboard.
-    const placement =
-      packageKey === "home_image" || packageKey === "home_video"
-        ? "home"
-        : packageKey === "sitewide"
-          ? "all"
-          : requestedPlacement || "home";
-
-    const txRef =
-      `PASONG-AD-${Date.now()}-${crypto.randomBytes(8).toString("hex")}`;
-
-    const campaignResult = await supabase
-      .from("advertising_campaigns")
-      .insert({
-        user_id: user.id,
-        package_key: packageKey,
-        amount: pkg.amount,
-        currency: "UGX",
-        days: pkg.days,
-        advertiser_name: advertiserName,
-        advertiser_email: advertiserEmail,
-        advertiser_phone: advertiserPhone || null,
-        title,
-        description,
-        target_url: targetUrl || null,
-        placement,
-        media_url: mediaUrl,
-        media_type: mediaType,
-        tx_ref: txRef,
-        payment_status: "pending",
-        status: "pending",
-      })
-      .select()
-      .single();
-
-    if (campaignResult.error || !campaignResult.data) {
-      console.error("Advertising campaign insert failed:", campaignResult.error);
-      return res.status(500).json({
-        error: "Unable to create advertising campaign.",
-        details: campaignResult.error?.message || null,
-      });
-    }
-
-    const customerName =
-      advertiserName ||
-      user.email?.split("@")[0] ||
-      "PASONG Advertiser";
-
-    const redirectUrl =
-      `${PASONG_API_PUBLIC_URL}/api/advertising/flutterwave/callback`;
-
-    const flutterwavePayload = {
-      tx_ref: txRef,
-      amount: pkg.amount,
-      currency: "UGX",
-      redirect_url: redirectUrl,
-      // Uganda customers can pay by card or MTN/Airtel Mobile Money.
-      // Flutterwave accepts payment_options as a comma + space separated list.
-      payment_options: "card, mobilemoneyuganda",
-      customer: {
-        email: advertiserEmail,
-        name: customerName,
-        ...(advertiserPhone ? { phonenumber: advertiserPhone } : {}),
-      },
-      customizations: {
-        title: "PASONG Advertising",
-        description: `${pkg.name} - ${pkg.days} days`,
-        logo: "https://pasong-frontend.vercel.app/favicon.ico",
-      },
-      meta: {
-        pasong_ad_campaign_id: campaignResult.data.id,
-        package_key: packageKey,
-        user_id: user.id,
-      },
-    };
-
-    const fwResponse = await fetch("https://api.flutterwave.com/v3/payments", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(flutterwavePayload),
-    });
-
-    const fwText = await fwResponse.text();
-    let fwData = {};
-
-    try {
-      fwData = fwText ? JSON.parse(fwText) : {};
-    } catch {
-      fwData = {};
-    }
-
-    if (!fwResponse.ok) {
-      console.error("Advertising Flutterwave checkout failed:", fwData);
-
-      await supabase
-        .from("advertising_campaigns")
-        .update({ status: "payment_failed" })
-        .eq("id", campaignResult.data.id);
-
-      return res.status(502).json({
-        error: "Flutterwave could not create the advertising checkout.",
-        details: fwData.message || fwData.error || null,
-      });
-    }
-
-    const checkoutUrl = fwData?.data?.link || fwData?.link || "";
-
-    if (!checkoutUrl) {
-      await supabase
-        .from("advertising_campaigns")
-        .update({ status: "payment_failed" })
-        .eq("id", campaignResult.data.id);
-
-      return res.status(502).json({
-        error: "Flutterwave did not return a checkout link.",
-      });
-    }
-
-    return res.json({
-      success: true,
-      provider: "FLUTTERWAVE",
-      campaign_id: campaignResult.data.id,
-      external_reference: txRef,
-      checkout_url: checkoutUrl,
-      amount: pkg.amount,
-      currency: "UGX",
-      days: pkg.days,
-    });
-  } catch (error) {
-    console.error("Advertising checkout error:", error);
-
-    return res.status(500).json({
-      error: "Advertising checkout setup failed.",
-      details: error?.message || null,
-    });
-  }
-});
-
-app.get("/api/advertising/flutterwave/callback", async (req, res) => {
-  const frontendUrl = PASONG_FRONTEND_URL.replace(/\/$/, "");
-
-  try {
-    const txRef = cleanAdText(req.query.tx_ref, 200);
-    const transactionId = cleanAdText(req.query.transaction_id, 100);
-    const status = cleanAdText(req.query.status, 40).toLowerCase();
-
-    if (!FLUTTERWAVE_SECRET_KEY || status !== "successful" || !txRef || !transactionId) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`
-      );
-    }
-
-    const verifyResponse = await fetch(
-      `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(transactionId)}/verify`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    const verifyText = await verifyResponse.text();
-    let verifyData = {};
-
-    try {
-      verifyData = verifyText ? JSON.parse(verifyText) : {};
-    } catch {
-      verifyData = {};
-    }
-
-    const payment = verifyData?.data || {};
-    const verifiedStatus = String(payment.status || "").trim().toLowerCase();
-    const verifiedTxRef = String(payment.tx_ref || "").trim();
-    const verifiedAmount = Number(payment.amount);
-    const verifiedCurrency = String(payment.currency || "").trim().toUpperCase();
-
-    if (
-      !verifyResponse.ok ||
-      String(verifyData.status || "").toLowerCase() !== "success" ||
-      verifiedStatus !== "successful" ||
-      verifiedTxRef !== txRef ||
-      !Number.isFinite(verifiedAmount) ||
-      verifiedCurrency !== "UGX"
-    ) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`
-      );
-    }
-
-    const campaignResult = await supabase
-      .from("advertising_campaigns")
-      .select("*")
-      .eq("tx_ref", txRef)
-      .maybeSingle();
-
-    if (campaignResult.error || !campaignResult.data) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
-          "Advertising campaign was not found."
-        )}`
-      );
-    }
-
-    const campaign = campaignResult.data;
-    const expectedAmount = Number(campaign.amount);
-
-    if (!Number.isFinite(expectedAmount) || verifiedAmount !== expectedAmount) {
-      await supabase
-        .from("advertising_campaigns")
-        .update({ status: "payment_failed" })
-        .eq("id", campaign.id);
-
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`
-      );
-    }
-
-    // Protect against duplicate callback processing.
-    if (campaign.payment_status === "paid" && campaign.advertisement_id) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=success&campaign_id=${encodeURIComponent(
-          campaign.id
-        )}`
-      );
-    }
-
-    const startAt = new Date();
-    const endAt = new Date(
-      startAt.getTime() + Number(campaign.days || 7) * 24 * 60 * 60 * 1000
-    );
-
-    const adResult = await supabase
-      .from("advertisements")
-      .insert({
-        title: campaign.title,
-        description: campaign.description,
-        image_url: campaign.media_url,
-        target_url: campaign.target_url,
-        placement: campaign.placement,
-        start_at: startAt.toISOString(),
-        end_at: endAt.toISOString(),
-        status: "pending",
-        clicks: 0,
-        impressions: 0,
-        created_by: campaign.user_id,
-        media_type: campaign.media_type,
-      })
-      .select()
-      .single();
-
-    if (adResult.error || !adResult.data) {
-      console.error("Advertising ad creation failed:", adResult.error);
-
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
-          "Payment was verified but PASONG could not create the campaign."
-        )}`
-      );
-    }
-
-    await supabase
-      .from("advertising_campaigns")
-      .update({
-        payment_status: "paid",
-        status: "pending",
-        transaction_id: transactionId,
-        advertisement_id: adResult.data.id,
-        start_at: startAt.toISOString(),
-        end_at: endAt.toISOString(),
-      })
-      .eq("id", campaign.id);
-
-    return res.redirect(
-      `${frontendUrl}/advertise.html?payment=success&campaign_id=${encodeURIComponent(
-        campaign.id
-      )}`
-    );
-  } catch (error) {
-    console.error("Advertising callback error:", error);
-
-    return res.redirect(
-      `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
-        "Unable to verify the advertising payment."
-      )}`
-    );
-  }
-});
-
-
-// ============================================================
-
-function copyrightClean(value, max = 5000) {
-  return String(value == null ? "" : value).trim().slice(0, max);
-}
-
-function copyrightStatusValue(value) {
-  const v = copyrightClean(value, 40).toLowerCase();
-  return ["clear", "review", "takedown"].includes(v) ? v : "clear";
-}
-
-async function isAdminUser(user) {
-  if (!user) return false;
-
-  const roles = [
-    user?.user_metadata?.role,
-    user?.app_metadata?.role,
-    user?.user_metadata?.user_role,
-    user?.app_metadata?.user_role,
-  ].map(v => String(v || "").toLowerCase());
-
-  if (roles.includes("admin") || roles.includes("super_admin")) {
-    return true;
-  }
-
-  const checks = [
-    ["profiles", "id"],
-    ["user_profiles", "id"],
-    ["admin_users", "id"],
-    ["profiles", "user_id"],
-    ["user_profiles", "user_id"],
-    ["admin_users", "user_id"],
-  ];
-
-  for (const [table, column] of checks) {
-    try {
-      const result = await supabase
-        .from(table)
-        .select("role")
-        .eq(column, user.id)
-        .maybeSingle();
-
-      if (!result.error) {
-        const role = String(result.data?.role || "").toLowerCase();
-        if (role === "admin" || role === "super_admin") return true;
-      }
-    } catch (_) {}
-  }
-
-  const envEmails = String(process.env.PASONG_ADMIN_EMAILS || "")
-    .split(",")
-    .map(v => v.trim().toLowerCase())
-    .filter(Boolean);
-
-  return !!user.email && envEmails.includes(String(user.email).toLowerCase());
-}
-
-async function requireAdmin(req, res) {
-  const user = await getAuthenticatedUser(req);
-  if (!user) {
-    res.status(401).json({ error: "Please sign in." });
-    return null;
-  }
-
-  if (!(await isAdminUser(user))) {
-    res.status(403).json({ error: "Administrator access required." });
-    return null;
-  }
-
-  return user;
-}
-
-async function getCopyrightComplaintForAdmin(id) {
-  if (!validUuid(id)) return null;
-
-  const result = await supabase
-    .from("copyright_complaints")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-
-  if (result.error) throw result.error;
-  return result.data || null;
-}
-
-async function createCopyrightStrike({ complaint, adminUser, notes = "" }) {
-  const existing = await supabase
-    .from("copyright_strikes")
-    .select("strike_number")
-    .eq("user_id", complaint.reported_user_id)
-    .order("strike_number", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (existing.error) throw existing.error;
-
-  const strikeNumber = Number(existing.data?.strike_number || 0) + 1;
-
-  const strike = await supabase
-    .from("copyright_strikes")
-    .insert({
-      user_id: complaint.reported_user_id,
-      complaint_id: complaint.id,
-      song_id: complaint.song_id,
-      strike_number: strikeNumber,
-      status: "active",
-      reason: complaint.reason,
-      admin_notes: copyrightClean(notes, 5000) || null,
-      issued_by: adminUser.id,
-    })
-    .select()
-    .single();
-
-  if (strike.error) throw strike.error;
-  return strike.data;
-}
-
-app.post("/api/copyright/complaints", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-    const body = req.body || {};
-
-    const songId = copyrightClean(body.song_id, 80);
-    if (!validUuid(songId)) {
-      return res.status(400).json({ error: "Invalid song id." });
-    }
-
-    const songResult = await supabase
-      .from("songs")
-      .select("id,title,artist_user_id,status,copyright_status")
-      .eq("id", songId)
-      .maybeSingle();
-
-    if (songResult.error || !songResult.data) {
-      return res.status(404).json({ error: "Song not found." });
-    }
-
-    const song = songResult.data;
-    const complainantName = copyrightClean(body.complainant_name, 160);
-    const complainantEmail = copyrightClean(body.complainant_email, 200);
-    const complainantPhone = copyrightClean(body.complainant_phone, 60);
-    const complainantAddress = copyrightClean(body.complainant_address, 500);
-    const rightsClaim = copyrightClean(body.rights_claim, 5000);
-    const materialDescription = copyrightClean(body.material_description, 5000);
-    const remedialAction = copyrightClean(body.remedial_action, 2000);
-    const signature = copyrightClean(body.signature, 160);
-    const evidenceUrl = copyrightClean(body.evidence_url, 2000);
-    const reason = copyrightClean(body.reason, 5000);
-    const claimantRole = copyrightClean(body.claimant_role || "copyright_owner", 40).toLowerCase();
-    const songUrl = copyrightClean(body.song_url, 2000);
-
-    if (!complainantName || !complainantEmail || !complainantAddress || !rightsClaim || !materialDescription || !remedialAction || !signature || !reason) {
-      return res.status(400).json({
-        error: "Name, email, address, rights claim, material description, requested action, signature and complaint reason are required."
-      });
-    }
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(complainantEmail)) {
-      return res.status(400).json({ error: "Invalid complainant email." });
-    }
-
-    if (evidenceUrl && !validHttpUrl(evidenceUrl)) {
-      return res.status(400).json({ error: "Evidence URL must be a valid HTTP/HTTPS URL." });
-    }
-
-    if (!songUrl || !validHttpUrl(songUrl)) {
-      return res.status(400).json({ error: "A valid PASONG song URL is required." });
-    }
-
-    const openComplaint = await supabase
-      .from("copyright_complaints")
-      .select("id,status")
-      .eq("song_id", songId)
-      .in("status", ["submitted", "reviewing", "takedown"])
-      .limit(1)
-      .maybeSingle();
-
-    if (openComplaint.error) throw openComplaint.error;
-    if (openComplaint.data) {
-      return res.status(409).json({
-        error: "This song already has an open copyright complaint.",
-        complaint_id: openComplaint.data.id,
-      });
-    }
-
-    const complaint = await supabase
-      .from("copyright_complaints")
-      .insert({
-        song_id: songId,
-        reported_user_id: song.artist_user_id || null,
-        complainant_user_id: user?.id || null,
-        complainant_name: complainantName,
-        complainant_email: complainantEmail,
-        complainant_phone: complainantPhone || null,
-        complainant_address: complainantAddress,
-        claimant_role: claimantRole,
-        song_url: songUrl,
-        rights_claim: rightsClaim,
-        material_description: materialDescription,
-        remedial_action: remedialAction,
-        signature,
-        good_faith_declaration: body.good_faith_declaration === true,
-        accuracy_declaration: body.accuracy_declaration === true,
-        evidence_url: evidenceUrl || null,
-        reason,
-        status: "submitted",
-      })
-      .select("id,song_id,status,created_at")
-      .single();
-
-    if (complaint.error || !complaint.data) {
-      console.error("Copyright complaint insert failed:", complaint.error);
-      return res.status(500).json({ error: "Unable to submit copyright complaint." });
-    }
-
-    // Put the song into review immediately. Public song APIs only expose clear/restored songs.
-    await supabase
-      .from("songs")
-      .update({ copyright_status: "review" })
-      .eq("id", songId);
-
-    return res.status(201).json({
-      success: true,
-      complaint: complaint.data,
-      message: "Copyright complaint submitted. The song has been placed under copyright review.",
-    });
-  } catch (error) {
-    console.error("Copyright complaint error:", error);
-    return res.status(500).json({ error: "Unable to submit copyright complaint." });
-  }
-});
-
-app.get("/api/copyright/complaints/mine", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ error: "Please sign in." });
-
-    const result = await supabase
-      .from("copyright_complaints")
-      .select("*")
-      .or(`complainant_user_id.eq.${user.id},reported_user_id.eq.${user.id}`)
-      .order("created_at", { ascending: false });
-
-    if (result.error) throw result.error;
-
-    const rows = result.data || [];
-    const songIds = [...new Set(rows.map(item => item.song_id).filter(validUuid))];
-    let songs = [];
-    if (songIds.length) {
-      const songResult = await supabase
-        .from("songs")
-        .select("id,title,status,copyright_status")
-        .in("id", songIds);
-      if (songResult.error) throw songResult.error;
-      songs = songResult.data || [];
-    }
-    const songMap = new Map(songs.map(song => [song.id, song]));
-
-    const complaints = rows.map(item => ({
-      ...item,
-      song: songMap.get(item.song_id) || null,
-      can_respond: item.reported_user_id === user.id && ["submitted", "reviewing", "takedown"].includes(item.status),
-    }));
-
-    res.json({ success: true, complaints });
-  } catch (error) {
-    console.error("Copyright mine error:", error);
-    res.status(500).json({ error: "Unable to load copyright complaints." });
-  }
-});
-
-app.post("/api/copyright/complaints/:id/respond", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ error: "Please sign in." });
-    if (!validUuid(req.params.id)) return res.status(400).json({ error: "Invalid complaint id." });
-
-    const complaint = await getCopyrightComplaintForAdmin(req.params.id);
-    if (!complaint) return res.status(404).json({ error: "Complaint not found." });
-    if (complaint.reported_user_id !== user.id) return res.status(403).json({ error: "Only the uploader can submit a counter-notice." });
-    if (!["submitted", "reviewing", "takedown"].includes(complaint.status)) {
-      return res.status(409).json({ error: "This complaint is no longer accepting a counter-notice." });
-    }
-
-    const responseText = copyrightClean(req.body?.uploader_response, 8000);
-    const evidenceUrl = copyrightClean(req.body?.response_evidence_url, 2000);
-    if (!responseText) return res.status(400).json({ error: "Your response is required." });
-    if (evidenceUrl && !validHttpUrl(evidenceUrl)) return res.status(400).json({ error: "Evidence URL must be valid HTTP/HTTPS." });
-
-    const result = await supabase
-      .from("copyright_complaints")
-      .update({
-        uploader_response: responseText,
-        response_evidence_url: evidenceUrl || null,
-        response_submitted_at: new Date().toISOString(),
-        status: "reviewing",
-      })
-      .eq("id", complaint.id)
-      .eq("reported_user_id", user.id)
-      .select("id,status,response_submitted_at")
-      .single();
-
-    if (result.error) throw result.error;
-    res.json({ success: true, complaint: result.data });
-  } catch (error) {
-    console.error("Copyright counter-notice error:", error);
-    res.status(500).json({ error: "Unable to submit counter-notice." });
-  }
-});
-
-app.get("/api/admin/copyright/complaints", async (req, res) => {
-  try {
-    const admin = await requireAdmin(req, res);
-    if (!admin) return;
-
-    const status = copyrightClean(req.query.status, 40).toLowerCase();
-    let query = supabase
-      .from("copyright_complaints")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (status && status !== "all") query = query.eq("status", status);
-
-    const result = await query;
-    if (result.error) throw result.error;
-
-    const rows = result.data || [];
-    const songIds = [...new Set(rows.map(r => r.song_id).filter(validUuid))];
-    let songs = [];
-    if (songIds.length) {
-      const sr = await supabase.from("songs").select("id,title,status,copyright_status,artist_user_id").in("id", songIds);
-      if (!sr.error) songs = sr.data || [];
-    }
-    const songMap = new Map(songs.map(s => [s.id, s]));
-
-    res.json({
-      success: true,
-      complaints: rows.map(r => ({ ...r, song: songMap.get(r.song_id) || null })),
-    });
-  } catch (error) {
-    console.error("Admin copyright list error:", error);
-    res.status(500).json({ error: "Unable to load copyright complaints." });
-  }
-});
-
-app.get("/api/admin/copyright/strikes", async (req, res) => {
-  try {
-    const admin = await requireAdmin(req, res);
-    if (!admin) return;
-
-    const result = await supabase
-      .from("copyright_strikes")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (result.error) throw result.error;
-    res.json({ success: true, strikes: result.data || [] });
-  } catch (error) {
-    console.error("Admin copyright strikes error:", error);
-    res.status(500).json({ error: "Unable to load copyright strikes." });
-  }
-});
-
-app.post("/api/admin/copyright/complaints/:id/action", async (req, res) => {
-  try {
-    const admin = await requireAdmin(req, res);
-    if (!admin) return;
-    if (!validUuid(req.params.id)) return res.status(400).json({ error: "Invalid complaint id." });
-
-    const complaint = await getCopyrightComplaintForAdmin(req.params.id);
-    if (!complaint) return res.status(404).json({ error: "Complaint not found." });
-
-    const action = copyrightClean(req.body?.action, 40).toLowerCase();
-    const notes = copyrightClean(req.body?.admin_notes, 5000);
-
-    if (!["review", "takedown", "restore", "reject", "resolve"].includes(action)) {
-      return res.status(400).json({ error: "Invalid copyright action." });
-    }
-
-    let strike = null;
-    let complaintStatus = complaint.status;
-    let songCopyrightStatus = "review";
-
-    if (action === "takedown") {
-      complaintStatus = "takedown";
-      songCopyrightStatus = "takedown";
-      if (complaint.reported_user_id) {
-        // Do not create duplicate strikes when an admin clicks Takedown twice.
-        const prior = await supabase
-          .from("copyright_strikes")
-          .select("id,strike_number")
-          .eq("complaint_id", complaint.id)
-          .maybeSingle();
-        if (prior.error) throw prior.error;
-        if (!prior.data) {
-          strike = await createCopyrightStrike({ complaint, adminUser: admin, notes });
-        } else {
-          strike = prior.data;
-        }
-      }
-    } else if (action === "restore") {
-      complaintStatus = "restored";
-      songCopyrightStatus = "clear";
-    } else if (action === "reject") {
-      complaintStatus = "rejected";
-      songCopyrightStatus = "clear";
-    } else if (action === "resolve") {
-      complaintStatus = "resolved";
-      songCopyrightStatus = "clear";
-    } else {
-      complaintStatus = "reviewing";
-      songCopyrightStatus = "review";
-    }
-
-    const complaintUpdate = await supabase
-      .from("copyright_complaints")
-      .update({
-        status: complaintStatus,
-        admin_notes: notes || complaint.admin_notes || null,
-        strike_number: strike?.strike_number || complaint.strike_number || null,
-        resolved_at: ["restore", "reject", "resolve"].includes(action) ? new Date().toISOString() : null,
-        resolved_by: ["restore", "reject", "resolve"].includes(action) ? admin.id : null,
-      })
-      .eq("id", complaint.id)
-      .select("*")
-      .single();
-
-    if (complaintUpdate.error) throw complaintUpdate.error;
-
-    const songUpdate = await supabase
-      .from("songs")
-      .update({ copyright_status: songCopyrightStatus })
-      .eq("id", complaint.song_id);
-
-    if (songUpdate.error) throw songUpdate.error;
-
-    res.json({
-      success: true,
-      complaint: complaintUpdate.data,
-      strike,
-      message:
-        action === "takedown"
-          ? "Song taken down and copyright strike recorded."
-          : action === "restore"
-            ? "Song restored to PASONG."
-            : action === "reject"
-              ? "Copyright complaint rejected and song restored."
-              : "Copyright review updated.",
-    });
-  } catch (error) {
-    console.error("Admin copyright action error:", error);
-    res.status(500).json({ error: "Unable to apply copyright action." });
-  }
-});
-
-app.get("/api/copyright/status/:songId", async (req, res) => {
-  try {
-    if (!validUuid(req.params.songId)) return res.status(400).json({ error: "Invalid song id." });
-    const result = await supabase
-      .from("songs")
-      .select("id,title,copyright_status")
-      .eq("id", req.params.songId)
-      .maybeSingle();
-    if (result.error || !result.data) return res.status(404).json({ error: "Song not found." });
-    res.json({ success: true, song: result.data });
-  } catch {
-    res.status(500).json({ error: "Unable to load copyright status." });
-  }
-});
-
 
 app.use(
   (error, req, res, next) => {
