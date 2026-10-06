@@ -419,6 +419,71 @@ app.get("/api/tip-split", (req, res) => {
 });
 
 app.post(
+  "/api/profile/photo",
+  coverUpload.single("file"),
+  async (req, res) => {
+    try {
+      const user = await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Authentication required."
+        });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({
+          error: "No profile photo was supplied."
+        });
+      }
+
+      const result = await new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+          {
+            folder: "pasong-profiles",
+            resource_type: "image",
+            transformation: [
+              {
+                width: 800,
+                height: 800,
+                crop: "fill",
+                gravity: "face"
+              }
+            ],
+            quality: "auto",
+            fetch_format: "auto"
+          },
+          (error, uploaded) => {
+            if (error) reject(error);
+            else resolve(uploaded);
+          }
+        );
+
+        uploadStream.end(req.file.buffer);
+      });
+
+      return res.json({
+        success: true,
+        secure_url: result.secure_url,
+        public_id: result.public_id,
+        width: result.width,
+        height: result.height,
+        profile_standard: "800x800_face_centered",
+        message: "Profile photo automatically cropped and optimized."
+      });
+    } catch (error) {
+      console.error("GLOBAL PROFILE PHOTO ERROR:", error);
+
+      return res.status(500).json({
+        error:
+          error?.message ||
+          "Profile photo processing failed."
+      });
+    }
+  }
+);
+
+app.post(
   "/api/upload/cover",
   coverUpload.single("file"),
   async (req, res) => {
@@ -492,7 +557,6 @@ function allowedCloudinaryFolder(
       "pasong-beats/audio",
       "pasong-beats/covers",
       "pasong-producers/profile",
-      "pasong-profiles",
     ].includes(value)
   ) {
     return true;
@@ -573,101 +637,6 @@ app.post(
       });
     }
   }
-);
-
-
-// ============================================================
-// PASONG GLOBAL PROFILE PHOTO AUTO-CROP
-// One authenticated endpoint for Artist / Producer / DJ profiles.
-// Creates a consistent 800x800 face-aware Cloudinary image.
-// ============================================================
-async function uploadPasongProfilePhoto(req) {
-  if (!req.file) {
-    const error = new Error("No profile photo was supplied");
-    error.statusCode = 400;
-    throw error;
-  }
-
-  const result = await new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      {
-        folder: "pasong-profiles",
-        resource_type: "image",
-        transformation: [
-          {
-            width: 800,
-            height: 800,
-            crop: "fill",
-            gravity: "face",
-          },
-        ],
-        quality: "auto",
-        fetch_format: "auto",
-      },
-      (error, uploaded) => {
-        if (error) return reject(error);
-        resolve(uploaded);
-      }
-    );
-
-    stream.end(req.file.buffer);
-  });
-
-  return result;
-}
-
-async function handlePasongProfilePhoto(req, res) {
-  try {
-    const user = await getAuthenticatedUser(req);
-
-    if (!user) {
-      return res.status(401).json({
-        error: "Auth",
-        message: "Please log in again before uploading a profile photo.",
-      });
-    }
-
-    if (!req.file) {
-      return res.status(400).json({
-        error: "No profile photo was supplied",
-      });
-    }
-
-    const result = await uploadPasongProfilePhoto(req);
-
-    return res.json({
-      success: true,
-      secure_url: result.secure_url,
-      public_id: result.public_id,
-      width: result.width,
-      height: result.height,
-      profile_standard: "800x800_face_centered",
-      message: "Profile photo uploaded, cropped and optimized successfully.",
-    });
-  } catch (error) {
-    console.error("PASONG profile photo upload error:", error);
-
-    return res.status(error?.statusCode || 500).json({
-      error: error?.message || "Profile photo upload failed.",
-      details: process.env.NODE_ENV === "production"
-        ? undefined
-        : String(error?.message || error),
-    });
-  }
-}
-
-// GLOBAL endpoint. Use this from every PASONG profile editor.
-app.post(
-  "/api/profile/photo",
-  coverUpload.single("file"),
-  handlePasongProfilePhoto
-);
-
-// Backward-compatible producer endpoint.
-app.post(
-  "/api/producer/profile-photo",
-  coverUpload.single("file"),
-  handlePasongProfilePhoto
 );
 
 app.get(
@@ -4835,10 +4804,6 @@ app.post(
       const requestedAmount =
         Number(amount);
 
-      // Producer withdrawals are currently recorded as pending only.
-      // No real MTN/Airtel money is sent by this endpoint.
-      const MIN_PRODUCER_WITHDRAWAL = 10000;
-
       if (
         !validPositiveNumber(
           requestedAmount
@@ -4847,20 +4812,6 @@ app.post(
         return res.status(400).json({
           error:
             "Invalid withdrawal amount",
-        });
-      }
-
-      if (requestedAmount < MIN_PRODUCER_WITHDRAWAL) {
-        return res.status(400).json({
-          error:
-            "Minimum producer withdrawal is UGX 10,000",
-        });
-      }
-
-      if (!Number.isInteger(requestedAmount)) {
-        return res.status(400).json({
-          error:
-            "Withdrawal amount must be a whole number of UGX",
         });
       }
 
@@ -4985,16 +4936,10 @@ app.post(
         });
       }
 
-      const remainingBalance =
-        await getProducerBalance(user.id);
-
       res.json({
         success: true,
-        message:
-          "Withdrawal request submitted successfully. It is pending PASONG processing.",
         withdrawal:
           withdrawal.data,
-        remaining_balance: remainingBalance,
       });
     } catch {
       res.status(500).json({
