@@ -116,53 +116,6 @@ const supabase = createClient(
   SUPABASE_SERVICE_ROLE_KEY
 );
 
-// ============================================================
-// PASONG USER NOTIFICATIONS
-// All notification creation happens server-side through the
-// service-role-only Supabase RPC. Frontend clients cannot call
-// create_notification directly.
-// ============================================================
-async function createUserNotification({
-  userId,
-  type,
-  title,
-  message,
-  link = null,
-  metadata = {},
-}) {
-  if (!userId) return false;
-
-  try {
-    const result = await supabase.rpc(
-      "create_notification",
-      {
-        p_user_id: userId,
-        p_type: type,
-        p_title: title,
-        p_message: message,
-        p_link: link,
-        p_metadata: metadata || {},
-      }
-    );
-
-    if (result.error) {
-      console.error(
-        "Notification creation failed:",
-        result.error
-      );
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error(
-      "Notification creation error:",
-      error
-    );
-    return false;
-  }
-}
-
 cloudinary.config({
   cloud_name: CLOUDINARY_CLOUD_NAME,
   api_key: CLOUDINARY_API_KEY,
@@ -519,19 +472,6 @@ app.post("/api/premium/complete", async (req, res) => {
         error: "Premium payment status update failed.",
       });
     }
-
-    await createUserNotification({
-      userId: payment.user_id,
-      type: "account",
-      title: "PASONG Premium activated",
-      message: `Your PASONG Premium ${payment.plan === "premium_yearly" ? "yearly" : "monthly"} plan is now active until ${new Date(expires).toLocaleDateString("en-UG")}.`,
-      link: "premium.html",
-      metadata: {
-        plan: payment.plan,
-        payment_reference: payment.payment_reference,
-        expires_at: expires,
-      },
-    });
 
     res.json({
       success: true,
@@ -3156,48 +3096,6 @@ app.post(
         });
       }
 
-      const songNotificationMessage =
-        tipAmount > 0
-          ? `Your purchase of ${song.title} was successful for ${paidTotal} ${storedCurrency}, including a ${tipAmount} ${storedCurrency} tip.`
-          : `Your purchase of ${song.title} was successful for ${storedAmount} ${storedCurrency}. Your download is ready.`;
-
-      await createUserNotification({
-        userId: buyer_id,
-        type: "music",
-        title: "Song purchase successful",
-        message: songNotificationMessage,
-        link: `song.html?id=${encodeURIComponent(song_id)}`,
-        metadata: {
-          song_id,
-          order_id: order.data.id,
-          amount: paidTotal,
-          currency: storedCurrency,
-          tip_amount: tipAmount,
-        },
-      });
-
-      const songRecipientIds = [
-        ...artistIds,
-        validUuid(song.producer_user_id) ? song.producer_user_id : null,
-        hasWriter && validUuid(song.writer_user_id) ? song.writer_user_id : null,
-      ].filter(validUuid);
-
-      for (const recipientId of [...new Set(songRecipientIds)]) {
-        await createUserNotification({
-          userId: recipientId,
-          type: "earnings",
-          title: "Song sale earnings",
-          message: `${song.title} was purchased for ${storedAmount} ${storedCurrency}. Your PASONG royalty has been recorded.`,
-          link: "account.html",
-          metadata: {
-            song_id,
-            order_id: order.data.id,
-            sale_amount: storedAmount,
-            currency: storedCurrency,
-          },
-        });
-      }
-
       res.json({
         success: true,
         order_id:
@@ -4236,6 +4134,117 @@ app.post(
 // Creates a Flutterwave Standard hosted checkout for a beat order.
 // The Flutterwave secret key never reaches the browser.
 // ============================================================
+
+
+// ============================================================
+// PASONG BEAT MOBILE MONEY CHECKOUT - FLUTTERWAVE
+// MTN + Airtel Uganda. Secret key stays server-side.
+// ============================================================
+app.post("/api/beats/:id/mobile-money-checkout", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Auth" });
+    if (!validUuid(req.params.id)) return res.status(400).json({ error: "Invalid beat id" });
+    if (!FLUTTERWAVE_SECRET_KEY) return res.status(503).json({ error: "Flutterwave payments are not configured on PASONG." });
+
+    const orderId = String(req.body?.order_id || "").trim();
+    const packageType = String(req.body?.package_type || "").trim();
+    const network = normalizeProvider(req.body?.network);
+    let phone = String(req.body?.phone || "").replace(/\s+/g, "").trim();
+
+    if (!validUuid(orderId)) return res.status(400).json({ error: "Invalid order id" });
+    if (!["mp3","wav","stems","exclusive"].includes(packageType)) return res.status(400).json({ error: "Invalid package" });
+    if (!["MTN","AIRTEL"].includes(network)) return res.status(400).json({ error: "Network must be MTN or AIRTEL" });
+    if (!/^(?:\+256|256|0)7[0-9]{8}$/.test(phone)) return res.status(400).json({ error: "Invalid Uganda mobile-money number" });
+    if (phone.startsWith("+256")) phone = "0" + phone.slice(4);
+    else if (phone.startsWith("256")) phone = "0" + phone.slice(3);
+
+    const orderResult = await supabase.from("beat_orders").select("*").eq("id", orderId).eq("buyer_id", user.id).eq("beat_id", req.params.id).maybeSingle();
+    if (orderResult.error || !orderResult.data) return res.status(404).json({ error: "Beat order not found" });
+    const order = orderResult.data;
+    if (String(order.status).toLowerCase() === "paid") return res.json({ success: true, paid: true, order_id: order.id });
+    if (String(order.provider || "").toUpperCase() !== network) return res.status(400).json({ error: "Payment network does not match this order" });
+    if (order.package_type !== packageType) return res.status(400).json({ error: "Package does not match the order" });
+
+    const beatResult = await supabase.from("beats").select("id,title,status,is_exclusive_sold").eq("id", req.params.id).maybeSingle();
+    if (beatResult.error || !beatResult.data) return res.status(404).json({ error: "Beat not found" });
+    if (beatResult.data.status !== "approved" || beatResult.data.is_exclusive_sold) return res.status(400).json({ error: "Beat is no longer available" });
+
+    const amount = Number(order.price);
+    if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: "Invalid order amount" });
+    const txRef = String(order.external_reference || "").trim();
+    const email = String(user.email || "").trim();
+    const name = String(user.user_metadata?.full_name || user.user_metadata?.name || email.split("@")[0] || "PASONG Customer").trim();
+    if (!email) return res.status(400).json({ error: "Your PASONG account has no email address" });
+
+    const fw = await fetch("https://api.flutterwave.com/v3/charges?type=mobile_money_uganda", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phone_number: phone,
+        network,
+        amount,
+        currency: "UGX",
+        email,
+        tx_ref: txRef,
+        order_id: order.id,
+        fullname: name,
+        meta: { pasong_order_id: order.id, beat_id: order.beat_id, package_type: packageType, buyer_id: user.id, network }
+      })
+    });
+    const raw = await fw.text();
+    let data = {}; try { data = raw ? JSON.parse(raw) : {}; } catch {}
+    if (!fw.ok || String(data?.status || "").toLowerCase() !== "success") {
+      console.error("Flutterwave mobile-money charge failed:", data);
+      return res.status(502).json({ error: data?.message || "Flutterwave could not start the mobile-money payment" });
+    }
+
+    const charge = data?.data || {};
+    const transactionId = String(charge.id || charge.flw_ref || charge.transaction_id || "").trim();
+    const authorizationUrl = charge?.meta?.authorization?.redirect || charge?.authorization?.redirect || charge?.payment_link || charge?.link || "";
+    await supabase.from("beat_orders").update({ transaction_id: transactionId || null }).eq("id", order.id).eq("buyer_id", user.id);
+
+    return res.json({ success: true, order_id: order.id, external_reference: txRef, transaction_id: transactionId, authorization_url: authorizationUrl, status: charge.status || "pending" });
+  } catch (error) {
+    console.error("Beat mobile-money checkout error:", error);
+    return res.status(500).json({ error: "Mobile-money checkout setup failed" });
+  }
+});
+
+app.get("/api/beats/mobile-money/status", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Auth" });
+    if (!FLUTTERWAVE_SECRET_KEY) return res.status(503).json({ error: "Flutterwave payments are not configured on PASONG." });
+    const orderId = String(req.query?.order_id || "").trim();
+    if (!validUuid(orderId)) return res.status(400).json({ error: "Invalid order id" });
+
+    const orderResult = await supabase.from("beat_orders").select("*").eq("id", orderId).eq("buyer_id", user.id).maybeSingle();
+    if (orderResult.error || !orderResult.data) return res.status(404).json({ error: "Beat order not found" });
+    const order = orderResult.data;
+    if (String(order.status).toLowerCase() === "paid") return res.json({ success: true, paid: true, status: "successful", order_id: order.id });
+    const transactionId = String(order.transaction_id || "").trim();
+    if (!transactionId) return res.json({ success: true, paid: false, status: "pending", order_id: order.id });
+
+    const verify = await fetch(`https://api.flutterwave.com/v3/transactions/${encodeURIComponent(transactionId)}/verify`, { method: "GET", headers: { Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`, "Content-Type": "application/json" } });
+    const raw = await verify.text(); let data = {}; try { data = raw ? JSON.parse(raw) : {}; } catch {}
+    const payment = data?.data || {};
+    const status = String(payment.status || "").toLowerCase();
+    const txRef = String(payment.tx_ref || "").trim();
+    const amount = Number(payment.amount);
+    const currency = String(payment.currency || "").toUpperCase();
+    if (!verify.ok || String(data.status || "").toLowerCase() !== "success") return res.json({ success: true, paid: false, status: status || "pending", order_id: order.id });
+    if (status !== "successful" || txRef !== String(order.external_reference || "") || amount !== Number(order.price) || currency !== String(order.currency || "UGX").toUpperCase()) return res.json({ success: true, paid: false, status, order_id: order.id });
+
+    const complete = await fetch(`http://127.0.0.1:${PORT}/api/beats/payments/complete`, { method: "POST", headers: { "Content-Type": "application/json", "x-pasong-payment-secret": PASONG_PAYMENT_SECRET }, body: JSON.stringify({ order_id: order.id, transaction_id: transactionId, external_reference: txRef, payment_status: "SUCCESSFUL", amount, currency }) });
+    const completeRaw = await complete.text(); let completeData = {}; try { completeData = completeRaw ? JSON.parse(completeRaw) : {}; } catch {}
+    if (!complete.ok) return res.status(502).json({ error: completeData.error || "Payment verified but order completion failed" });
+    return res.json({ success: true, paid: true, status: "successful", order_id: order.id, completion: completeData });
+  } catch (error) {
+    console.error("Beat mobile-money status error:", error);
+    return res.status(500).json({ error: "Unable to check mobile-money payment status" });
+  }
+});
 
 app.post(
   "/api/beats/:id/card-checkout",
@@ -5342,37 +5351,6 @@ app.post(
               order.id,
           });
 
-      await createUserNotification({
-        userId: producerUserId,
-        type: "earnings",
-        title: "Your beat was sold",
-        message: `Your beat ${beat.title} sold as a ${order.package_type} licence for ${storedAmount} ${storedCurrency}. Your 75% producer earning has been recorded.`,
-        link: "producer.html",
-        metadata: {
-          beat_id: beat.id,
-          order_id: order.id,
-          package_type: order.package_type,
-          sale_amount: storedAmount,
-          producer_earning: producerAmount,
-          currency: storedCurrency,
-        },
-      });
-
-      await createUserNotification({
-        userId: order.buyer_id,
-        type: "music",
-        title: "Beat purchase successful",
-        message: `Your ${order.package_type} licence for ${beat.title} was paid successfully for ${storedAmount} ${storedCurrency}.`,
-        link: "producer.html",
-        metadata: {
-          beat_id: beat.id,
-          order_id: order.id,
-          package_type: order.package_type,
-          amount: storedAmount,
-          currency: storedCurrency,
-        },
-      });
-
       res.json({
         success: true,
         producer_earning:
@@ -5978,22 +5956,6 @@ app.post(
       const remainingBalance = Number(
         (availableBalance - requestedAmount).toFixed(2)
       );
-
-      await createUserNotification({
-        userId: user.id,
-        type: "earnings",
-        title: "Withdrawal request submitted",
-        message: `Your UGX ${requestedAmount.toLocaleString("en-UG")} withdrawal request to ${normalizedProvider} ${mobile} is pending processing.`,
-        link: "producer.html",
-        metadata: {
-          withdrawal_id: withdrawal.data.id,
-          amount: requestedAmount,
-          currency: "UGX",
-          provider: normalizedProvider,
-          mobile_number: mobile,
-          status: "pending",
-        },
-      });
 
       return res.status(201).json({
         success: true,
