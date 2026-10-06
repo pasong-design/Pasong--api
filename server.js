@@ -22,21 +22,6 @@ const CLOUDINARY_API_SECRET =
   process.env.CLOUDINARY_API_SECRET;
 const PASONG_PAYMENT_SECRET =
   process.env.PASONG_PAYMENT_SECRET;
-
-// Flutterwave Card Payments
-// Keep the secret key ONLY in Render environment variables.
-const FLUTTERWAVE_SECRET_KEY =
-  process.env.FLUTTERWAVE_SECRET_KEY ||
-  "";
-
-const PASONG_FRONTEND_URL =
-  process.env.PASONG_FRONTEND_URL ||
-  "https://pasong-frontend.vercel.app";
-
-const PASONG_API_PUBLIC_URL =
-  process.env.PASONG_API_PUBLIC_URL ||
-  "https://pasong-api.onrender.com";
-
 const CORS_ORIGIN =
   process.env.CORS_ORIGIN || "";
 
@@ -154,383 +139,6 @@ app.get("/", (req, res) => {
     producer_marketplace: "READY",
     beats: "READY",
   });
-});
-
-
-
-// ============================================================
-// PASONG PREMIUM
-// Global Premium plan with localized currency display.
-// Payment activation is intentionally NOT granted by the client;
-// a verified payment webhook/admin completion must activate it.
-// ============================================================
-
-const PREMIUM_PLANS = {
-  monthly: {
-    id: "premium_monthly",
-    interval: "month",
-    days: 30,
-    prices: {
-      UG: { amount: 10000, currency: "UGX", label: "UGX 10,000" },
-      KE: { amount: 399, currency: "KES", label: "KES 399" },
-      TZ: { amount: 7500, currency: "TZS", label: "TZS 7,500" },
-      RW: { amount: 3500, currency: "RWF", label: "RWF 3,500" },
-      NG: { amount: 5000, currency: "NGN", label: "NGN 5,000" },
-      GH: { amount: 45, currency: "GHS", label: "GHS 45" },
-      ZA: { amount: 59, currency: "ZAR", label: "ZAR 59" },
-      GB: { amount: 2.49, currency: "GBP", label: "£2.49" },
-      EU: { amount: 2.99, currency: "EUR", label: "€2.99" },
-      US: { amount: 2.99, currency: "USD", label: "$2.99" },
-      CA: { amount: 4.09, currency: "CAD", label: "CA$4.09" },
-      AU: { amount: 4.49, currency: "AUD", label: "A$4.49" },
-      DEFAULT: { amount: 2.99, currency: "USD", label: "$2.99" },
-    },
-  },
-  yearly: {
-    id: "premium_yearly",
-    interval: "year",
-    days: 365,
-    prices: {
-      UG: { amount: 100000, currency: "UGX", label: "UGX 100,000" },
-      KE: { amount: 3990, currency: "KES", label: "KES 3,990" },
-      TZ: { amount: 75000, currency: "TZS", label: "TZS 75,000" },
-      RW: { amount: 35000, currency: "RWF", label: "RWF 35,000" },
-      NG: { amount: 50000, currency: "NGN", label: "NGN 50,000" },
-      GH: { amount: 450, currency: "GHS", label: "GHS 450" },
-      ZA: { amount: 590, currency: "ZAR", label: "ZAR 590" },
-      GB: { amount: 24.90, currency: "GBP", label: "£24.90" },
-      EU: { amount: 29.90, currency: "EUR", label: "€29.90" },
-      US: { amount: 29.90, currency: "USD", label: "$29.90" },
-      CA: { amount: 40.90, currency: "CAD", label: "CA$40.90" },
-      AU: { amount: 44.90, currency: "AUD", label: "A$44.90" },
-      DEFAULT: { amount: 29.90, currency: "USD", label: "$29.90" },
-    },
-  },
-};
-
-const PREMIUM_FEATURES = [
-  "Premium badge",
-  "Ad-free listening",
-  "Higher-quality audio",
-  "Offline listening for eligible content",
-  "Premium-exclusive releases",
-  "Early access to selected releases",
-  "Premium-only playlists",
-];
-
-function getPremiumCountry(req) {
-  return getCountry(req) || "US";
-}
-
-function getPremiumPrice(req, planKey = "monthly") {
-  const plan = PREMIUM_PLANS[planKey] || PREMIUM_PLANS.monthly;
-  const country = getPremiumCountry(req);
-  return {
-    plan: plan.id,
-    interval: plan.interval,
-    days: plan.days,
-    country,
-    ...(plan.prices[country] || plan.prices.DEFAULT),
-  };
-}
-
-app.get("/api/premium/pricing", (req, res) => {
-  const monthly = getPremiumPrice(req, "monthly");
-  const yearly = getPremiumPrice(req, "yearly");
-  res.json({
-    success: true,
-    country: monthly.country,
-    currency: monthly.currency,
-    monthly,
-    yearly,
-    features: PREMIUM_FEATURES,
-    pricing_note: "PASONG uses fixed regional price points. IP/country detection is for display; the payment provider must confirm the billing country before charging.",
-  });
-});
-
-app.get("/api/premium/status", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) {
-      return res.json({
-        success: true,
-        authenticated: false,
-        premium: false,
-        status: "free",
-      });
-    }
-
-    const result = await supabase
-      .from("premium_subscriptions")
-      .select("id,user_id,plan,status,started_at,expires_at,currency,amount,payment_reference")
-      .eq("user_id", user.id)
-      .order("expires_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (result.error) {
-      console.error("Premium status lookup failed:", result.error);
-      return res.status(500).json({ success: false, error: "Unable to load Premium status." });
-    }
-
-    const subscription = result.data || null;
-    const active = !!subscription &&
-      subscription.status === "active" &&
-      (!subscription.expires_at || new Date(subscription.expires_at).getTime() > Date.now());
-
-    res.json({
-      success: true,
-      authenticated: true,
-      premium: active,
-      status: active ? "active" : (subscription?.status || "free"),
-      subscription,
-    });
-  } catch (error) {
-    console.error("Premium status error:", error);
-    res.status(500).json({ success: false, error: "Unable to load Premium status." });
-  }
-});
-
-
-app.post("/api/premium/complete", async (req, res) => {
-  try {
-    // This endpoint is for the payment provider/webhook only.
-    // Never call it directly from premium.html with a public secret.
-    const secret = String(req.headers["x-pasong-payment-secret"] || "");
-
-    if (!PASONG_PAYMENT_SECRET || !safeSecretCompare(secret, PASONG_PAYMENT_SECRET)) {
-      return res.status(401).json({
-        success: false,
-        error: "Unauthorized payment completion.",
-      });
-    }
-
-    const { payment_reference, payment_status, provider_reference } = req.body || {};
-
-    if (!payment_reference || payment_status !== "paid") {
-      return res.status(400).json({
-        success: false,
-        error: "A paid Premium payment is required.",
-      });
-    }
-
-    const paymentResult = await supabase
-      .from("premium_payments")
-      .select("*")
-      .eq("payment_reference", String(payment_reference).trim())
-      .maybeSingle();
-
-    if (paymentResult.error) {
-      console.error("Premium payment lookup failed:", paymentResult.error);
-      return res.status(500).json({
-        success: false,
-        error: "Unable to verify Premium payment.",
-      });
-    }
-
-    if (!paymentResult.data) {
-      return res.status(404).json({
-        success: false,
-        error: "Premium payment not found.",
-      });
-    }
-
-    const payment = paymentResult.data;
-
-    // Idempotency: a webhook/provider may retry the same notification.
-    if (payment.status === "paid") {
-      const existing = await supabase
-        .from("premium_subscriptions")
-        .select("*")
-        .eq("payment_reference", payment.payment_reference)
-        .maybeSingle();
-
-      return res.json({
-        success: true,
-        already_completed: true,
-        premium: true,
-        subscription: existing.data || null,
-        payment,
-      });
-    }
-
-    if (payment.status !== "pending") {
-      return res.status(409).json({
-        success: false,
-        error: `Premium payment is already ${payment.status}.`,
-      });
-    }
-
-    const days = payment.plan === "premium_yearly" ? 365 : 30;
-    const now = new Date();
-
-    // If the user already has an active Premium subscription, extend it
-    // from the current expiry rather than creating overlapping subscriptions.
-    const activeResult = await supabase
-      .from("premium_subscriptions")
-      .select("*")
-      .eq("user_id", payment.user_id)
-      .eq("status", "active")
-      .gt("expires_at", now.toISOString())
-      .order("expires_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (activeResult.error) {
-      console.error("Active Premium lookup failed:", activeResult.error);
-      return res.status(500).json({
-        success: false,
-        error: "Unable to check existing Premium subscription.",
-      });
-    }
-
-    const currentExpiry = activeResult.data
-      ? new Date(activeResult.data.expires_at)
-      : now;
-
-    const start = activeResult.data
-      ? activeResult.data.started_at
-      : now.toISOString();
-
-    const expires = new Date(
-      Math.max(currentExpiry.getTime(), now.getTime()) + days * 86400000
-    ).toISOString();
-
-    let subscriptionData;
-
-    if (activeResult.data) {
-      const updatedSubscription = await supabase
-        .from("premium_subscriptions")
-        .update({
-          expires_at: expires,
-          plan: payment.plan,
-          currency: payment.currency,
-          amount: payment.amount,
-        })
-        .eq("id", activeResult.data.id)
-        .select()
-        .single();
-
-      if (updatedSubscription.error) {
-        console.error(
-          "Premium subscription extension failed:",
-          updatedSubscription.error
-        );
-        return res.status(500).json({
-          success: false,
-          error: "Premium activation failed.",
-        });
-      }
-
-      subscriptionData = updatedSubscription.data;
-    } else {
-      const insertedSubscription = await supabase
-        .from("premium_subscriptions")
-        .insert({
-          user_id: payment.user_id,
-          plan: payment.plan,
-          status: "active",
-          started_at: start,
-          expires_at: expires,
-          currency: payment.currency,
-          amount: payment.amount,
-          payment_reference: payment.payment_reference,
-        })
-        .select()
-        .single();
-
-      if (insertedSubscription.error) {
-        console.error(
-          "Premium subscription activation failed:",
-          insertedSubscription.error
-        );
-        return res.status(500).json({
-          success: false,
-          error: "Premium activation failed.",
-        });
-      }
-
-      subscriptionData = insertedSubscription.data;
-    }
-
-    const updatedPayment = await supabase
-      .from("premium_payments")
-      .update({
-        status: "paid",
-        provider_reference: provider_reference || null,
-        paid_at: now.toISOString(),
-      })
-      .eq("id", payment.id)
-      .eq("status", "pending")
-      .select()
-      .maybeSingle();
-
-    if (updatedPayment.error) {
-      console.error("Premium payment update failed:", updatedPayment.error);
-      return res.status(500).json({
-        success: false,
-        error: "Premium payment status update failed.",
-      });
-    }
-
-    res.json({
-      success: true,
-      premium: true,
-      subscription: subscriptionData,
-      payment: updatedPayment.data || payment,
-    });
-  } catch (error) {
-    console.error("Premium completion error:", error);
-    res.status(500).json({
-      success: false,
-      error: "Premium payment completion failed.",
-    });
-  }
-});
-
-app.post("/api/premium/checkout", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) {
-      return res.status(401).json({ success: false, error: "You must be logged in to subscribe to PASONG Premium." });
-    }
-
-    const planKey = req.body?.plan === "yearly" ? "yearly" : "monthly";
-    const pricing = getPremiumPrice(req, planKey);
-
-    // A checkout record is created, but Premium is NOT activated here.
-    // Your payment provider/webhook must verify the payment first.
-    const reference = "PREM-" + crypto.randomBytes(10).toString("hex").toUpperCase();
-
-    const result = await supabase
-      .from("premium_payments")
-      .insert({
-        user_id: user.id,
-        plan: pricing.plan,
-        amount: pricing.amount,
-        currency: pricing.currency,
-        country: pricing.country,
-        status: "pending",
-        payment_reference: reference,
-      })
-      .select()
-      .single();
-
-    if (result.error) {
-      console.error("Premium checkout creation failed:", result.error);
-      return res.status(500).json({ success: false, error: "Unable to start Premium checkout." });
-    }
-
-    res.status(201).json({
-      success: true,
-      payment: result.data,
-      pricing,
-      message: "Premium checkout created. Complete payment through the configured payment provider before Premium is activated.",
-    });
-  } catch (error) {
-    console.error("Premium checkout error:", error);
-    res.status(500).json({ success: false, error: "Unable to start Premium checkout." });
-  }
 });
 
 app.get("/health", (req, res) => {
@@ -884,8 +492,6 @@ function allowedCloudinaryFolder(
       "pasong-beats/audio",
       "pasong-beats/covers",
       "pasong-producers/profile",
-      "pasong/ads",
-      "pasong-ads",
     ].includes(value)
   ) {
     return true;
@@ -963,6 +569,150 @@ app.post(
     } catch {
       res.status(500).json({
         error: "Signature error",
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// PASONG GLOBAL PROFILE PHOTO PROCESSOR
+// Use this endpoint for Artist, Producer, DJ and any future
+// public profile uploader. It produces one consistent 800x800
+// face-aware square profile image.
+// ============================================================
+app.post(
+  "/api/profile/photo",
+  coverUpload.single("file"),
+  async (req, res) => {
+    try {
+      const user = await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Auth"
+        });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({
+          error: "No profile photo was supplied"
+        });
+      }
+
+      const result = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: "pasong-profiles",
+            resource_type: "image",
+
+            // One PASONG profile standard everywhere.
+            transformation: [
+              {
+                width: 800,
+                height: 800,
+                crop: "fill",
+                gravity: "face"
+              }
+            ],
+
+            quality: "auto",
+            fetch_format: "auto"
+          },
+          (error, uploaded) => {
+            if (error) reject(error);
+            else resolve(uploaded);
+          }
+        );
+
+        stream.end(req.file.buffer);
+      });
+
+      return res.json({
+        success: true,
+        secure_url: result.secure_url,
+        public_id: result.public_id,
+        width: result.width,
+        height: result.height,
+        profile_standard: "800x800_face_centered",
+        message: "PASONG profile photo processed successfully."
+      });
+
+    } catch (error) {
+      console.error(
+        "PASONG global profile photo error:",
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          error?.message ||
+          "Profile photo processing failed."
+      });
+    }
+  }
+);
+
+// Backward-compatible route for older Producer Dashboard versions.
+app.post(
+  "/api/producer/profile-photo",
+  coverUpload.single("file"),
+  async (req, res) => {
+    try {
+      const user = await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({ error: "Auth" });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({
+          error: "No profile photo was supplied"
+        });
+      }
+
+      const result = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: "pasong-profiles",
+            resource_type: "image",
+            transformation: [{
+              width: 800,
+              height: 800,
+              crop: "fill",
+              gravity: "face"
+            }],
+            quality: "auto",
+            fetch_format: "auto"
+          },
+          (error, uploaded) => {
+            if (error) reject(error);
+            else resolve(uploaded);
+          }
+        );
+
+        stream.end(req.file.buffer);
+      });
+
+      return res.json({
+        success: true,
+        secure_url: result.secure_url,
+        public_id: result.public_id,
+        width: result.width,
+        height: result.height,
+        profile_standard: "800x800_face_centered"
+      });
+
+    } catch (error) {
+      console.error(
+        "PASONG producer profile photo error:",
+        error
+      );
+
+      return res.status(500).json({
+        error:
+          error?.message ||
+          "Profile photo processing failed."
       });
     }
   }
@@ -1486,23 +1236,13 @@ function publicSong(song) {
     ...song,
   };
 
-  // PASONG supports free public streaming. Some older songs were
-  // uploaded before preview_url was stored. In that case, use the
-  // existing audio_url as the public streaming source.
-  const publicStreamUrl =
-    song.preview_url ||
-    song.audio_url ||
-    null;
-
-  // Never expose the original field separately.
   delete safeSong.audio_url;
 
-  // Keep both fields for compatibility with existing PASONG pages.
   safeSong.preview_url =
-    publicStreamUrl;
+    song.preview_url || null;
 
   safeSong.audio_url =
-    publicStreamUrl;
+    song.preview_url || null;
 
   return safeSong;
 }
@@ -4140,561 +3880,6 @@ app.post(
   }
 );
 
-
-// ============================================================
-// PASONG BEAT CARD CHECKOUT - FLUTTERWAVE
-// Creates a Flutterwave Standard hosted checkout for a beat order.
-// The Flutterwave secret key never reaches the browser.
-// ============================================================
-
-app.post(
-  "/api/beats/:id/card-checkout",
-  async (req, res) => {
-    try {
-      const user =
-        await getAuthenticatedUser(req);
-
-      if (!user) {
-        return res.status(401).json({
-          error: "Auth",
-        });
-      }
-
-      if (!validUuid(req.params.id)) {
-        return res.status(400).json({
-          error: "Invalid beat id",
-        });
-      }
-
-      if (!FLUTTERWAVE_SECRET_KEY) {
-        return res.status(503).json({
-          error:
-            "Card payment is not configured yet. Add FLUTTERWAVE_SECRET_KEY to the Render environment variables.",
-        });
-      }
-
-      const orderId =
-        String(req.body?.order_id || "").trim();
-
-      const packageType =
-        String(req.body?.package_type || "").trim();
-
-      if (!validUuid(orderId)) {
-        return res.status(400).json({
-          error: "Invalid order id",
-        });
-      }
-
-      if (
-        ![
-          "mp3",
-          "wav",
-          "stems",
-          "exclusive",
-        ].includes(packageType)
-      ) {
-        return res.status(400).json({
-          error: "Invalid package",
-        });
-      }
-
-      const orderResult =
-        await supabase
-          .from("beat_orders")
-          .select("*")
-          .eq("id", orderId)
-          .eq("buyer_id", user.id)
-          .eq("beat_id", req.params.id)
-          .maybeSingle();
-
-      if (
-        orderResult.error ||
-        !orderResult.data
-      ) {
-        return res.status(404).json({
-          error: "Beat order not found",
-        });
-      }
-
-      const order =
-        orderResult.data;
-
-      if (order.status === "paid") {
-        return res.status(400).json({
-          error: "This order has already been paid",
-        });
-      }
-
-      if (
-        String(order.provider || "")
-          .trim()
-          .toUpperCase() !== "FLUTTERWAVE"
-      ) {
-        return res.status(400).json({
-          error: "This order is not a card payment order",
-        });
-      }
-
-      if (order.package_type !== packageType) {
-        return res.status(400).json({
-          error: "Package does not match the order",
-        });
-      }
-
-      const beatResult =
-        await supabase
-          .from("beats")
-          .select(
-            "id,title,producer_id,status,is_exclusive_sold"
-          )
-          .eq("id", req.params.id)
-          .maybeSingle();
-
-      if (
-        beatResult.error ||
-        !beatResult.data
-      ) {
-        return res.status(404).json({
-          error: "Beat not found",
-        });
-      }
-
-      const beat = beatResult.data;
-
-      if (
-        beat.status !== "approved" ||
-        beat.is_exclusive_sold
-      ) {
-        return res.status(400).json({
-          error: "Beat is no longer available",
-        });
-      }
-
-      if (
-        packageType === "exclusive" &&
-        beat.is_exclusive_sold
-      ) {
-        return res.status(400).json({
-          error: "Exclusive already sold",
-        });
-      }
-
-      const amount = Number(order.price);
-
-      if (
-        !Number.isFinite(amount) ||
-        amount <= 0
-      ) {
-        return res.status(400).json({
-          error: "Invalid order amount",
-        });
-      }
-
-      const txRef =
-        String(
-          order.external_reference || ""
-        ).trim();
-
-      if (!txRef) {
-        return res.status(400).json({
-          error: "Order payment reference is missing",
-        });
-      }
-
-      const customerName =
-        String(
-          user.user_metadata?.full_name ||
-          user.user_metadata?.name ||
-          user.email?.split("@")[0] ||
-          "PASONG Customer"
-        ).trim();
-
-      const customerEmail =
-        String(user.email || "").trim();
-
-      if (!customerEmail) {
-        return res.status(400).json({
-          error: "Your PASONG account has no email address",
-        });
-      }
-
-      const redirectUrl =
-        `${PASONG_API_PUBLIC_URL}/api/beats/flutterwave/callback`;
-
-      const flutterwavePayload = {
-        tx_ref: txRef,
-        amount,
-        currency: "UGX",
-        redirect_url: redirectUrl,
-        payment_options: "card",
-        customer: {
-          email: customerEmail,
-          name: customerName,
-        },
-        customizations: {
-          title: "PASONG Beat Purchase",
-          description:
-            `${beat.title || "Beat"} - ${packageType} licence`,
-          logo:
-            "https://pasong-frontend.vercel.app/favicon.ico",
-        },
-        meta: {
-          pasong_order_id: order.id,
-          beat_id: beat.id,
-          package_type: packageType,
-          buyer_id: user.id,
-        },
-      };
-
-      const flutterwaveResponse =
-        await fetch(
-          "https://api.flutterwave.com/v3/payments",
-          {
-            method: "POST",
-            headers: {
-              Authorization:
-                `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify(
-              flutterwavePayload
-            ),
-          }
-        );
-
-      const flutterwaveText =
-        await flutterwaveResponse.text();
-
-      let flutterwaveData = {};
-
-      try {
-        flutterwaveData =
-          flutterwaveText
-            ? JSON.parse(flutterwaveText)
-            : {};
-      } catch {
-        flutterwaveData = {};
-      }
-
-      if (!flutterwaveResponse.ok) {
-        console.error(
-          "Flutterwave checkout creation failed:",
-          flutterwaveData
-        );
-
-        return res.status(502).json({
-          error:
-            "Flutterwave could not create the card checkout",
-          details:
-            flutterwaveData.message ||
-            flutterwaveData.error ||
-            null,
-        });
-      }
-
-      const checkoutUrl =
-        flutterwaveData?.data?.link ||
-        flutterwaveData?.link ||
-        "";
-
-      if (!checkoutUrl) {
-        console.error(
-          "Flutterwave checkout link missing:",
-          flutterwaveData
-        );
-
-        return res.status(502).json({
-          error:
-            "Flutterwave did not return a checkout link",
-        });
-      }
-
-      return res.json({
-        success: true,
-        provider: "FLUTTERWAVE",
-        order_id: order.id,
-        external_reference: txRef,
-        checkout_url: checkoutUrl,
-      });
-    } catch (error) {
-      console.error(
-        "Beat card checkout error:",
-        error
-      );
-
-      return res.status(500).json({
-        error:
-          "Card checkout setup failed",
-        details:
-          error && error.message
-            ? error.message
-            : null,
-      });
-    }
-  }
-);
-
-
-// ============================================================
-// PASONG BEAT CARD CALLBACK - FLUTTERWAVE
-// Flutterwave redirects here after the hosted card checkout.
-// The transaction is verified server-to-server before PASONG
-// marks the beat order paid.
-// ============================================================
-
-app.get(
-  "/api/beats/flutterwave/callback",
-  async (req, res) => {
-    const frontendUrl =
-      PASONG_FRONTEND_URL.replace(/\/$/, "");
-
-    try {
-      if (!FLUTTERWAVE_SECRET_KEY) {
-        return res.redirect(
-          `${frontendUrl}/beat-checkout.html?payment=error&message=${encodeURIComponent(
-            "Card payment is not configured on PASONG."
-          )}`
-        );
-      }
-
-      const status =
-        String(req.query.status || "")
-          .trim()
-          .toLowerCase();
-
-      const txRef =
-        String(
-          req.query.tx_ref || ""
-        ).trim();
-
-      const transactionId =
-        String(
-          req.query.transaction_id || ""
-        ).trim();
-
-      if (
-        status !== "successful" ||
-        !txRef ||
-        !transactionId
-      ) {
-        return res.redirect(
-          `${frontendUrl}/beat-checkout.html?payment=failed&tx_ref=${encodeURIComponent(
-            txRef
-          )}`
-        );
-      }
-
-      const verifyResponse =
-        await fetch(
-          `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(
-            transactionId
-          )}/verify`,
-          {
-            method: "GET",
-            headers: {
-              Authorization:
-                `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
-              "Content-Type":
-                "application/json",
-            },
-          }
-        );
-
-      const verifyText =
-        await verifyResponse.text();
-
-      let verifyData = {};
-
-      try {
-        verifyData =
-          verifyText
-            ? JSON.parse(verifyText)
-            : {};
-      } catch {
-        verifyData = {};
-      }
-
-      const payment =
-        verifyData?.data || {};
-
-      const verifiedStatus =
-        String(payment.status || "")
-          .trim()
-          .toLowerCase();
-
-      const verifiedTxRef =
-        String(payment.tx_ref || "").trim();
-
-      const verifiedAmount =
-        Number(payment.amount);
-
-      const verifiedCurrency =
-        String(payment.currency || "")
-          .trim()
-          .toUpperCase();
-
-      if (
-        !verifyResponse.ok ||
-        String(verifyData.status || "")
-          .toLowerCase() !== "success" ||
-        verifiedStatus !== "successful" ||
-        verifiedTxRef !== txRef ||
-        !Number.isFinite(verifiedAmount) ||
-        verifiedAmount <= 0 ||
-        verifiedCurrency !== "UGX"
-      ) {
-        console.error(
-          "Flutterwave verification failed:",
-          verifyData
-        );
-
-        return res.redirect(
-          `${frontendUrl}/beat-checkout.html?payment=failed&tx_ref=${encodeURIComponent(
-            txRef
-          )}`
-        );
-      }
-
-      const orderLookup =
-        await supabase
-          .from("beat_orders")
-          .select(
-            "id,beat_id,package_type,price,currency,buyer_id,external_reference,status"
-          )
-          .eq(
-            "external_reference",
-            txRef
-          )
-          .maybeSingle();
-
-      if (
-        orderLookup.error ||
-        !orderLookup.data
-      ) {
-        return res.redirect(
-          `${frontendUrl}/beat-checkout.html?payment=error&message=${encodeURIComponent(
-            "PASONG could not find this payment order."
-          )}`
-        );
-      }
-
-      const order =
-        orderLookup.data;
-
-      const expectedAmount =
-        Number(order.price);
-
-      const expectedCurrency =
-        String(order.currency || "")
-          .trim()
-          .toUpperCase();
-
-      if (
-        !isSameAmount(
-          verifiedAmount,
-          expectedAmount
-        ) ||
-        verifiedCurrency !== expectedCurrency
-      ) {
-        console.error(
-          "Flutterwave amount/currency mismatch:",
-          {
-            verifiedAmount,
-            expectedAmount,
-            verifiedCurrency,
-            expectedCurrency,
-          }
-        );
-
-        return res.redirect(
-          `${frontendUrl}/beat-checkout.html?payment=failed&tx_ref=${encodeURIComponent(
-            txRef
-          )}`
-        );
-      }
-
-      const completeResponse =
-        await fetch(
-          `http://127.0.0.1:${PORT}/api/beats/payments/complete`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-              "x-pasong-payment-secret":
-                PASONG_PAYMENT_SECRET,
-            },
-            body: JSON.stringify({
-              order_id: order.id,
-              transaction_id:
-                transactionId,
-              external_reference:
-                txRef,
-              payment_status:
-                "SUCCESSFUL",
-              amount:
-                verifiedAmount,
-              currency:
-                verifiedCurrency,
-            }),
-          }
-        );
-
-      const completeText =
-        await completeResponse.text();
-
-      let completeData = {};
-
-      try {
-        completeData =
-          completeText
-            ? JSON.parse(completeText)
-            : {};
-      } catch {
-        completeData = {};
-      }
-
-      if (!completeResponse.ok) {
-        console.error(
-          "PASONG beat payment completion failed:",
-          completeData
-        );
-
-        return res.redirect(
-          `${frontendUrl}/beat-checkout.html?payment=error&order_id=${encodeURIComponent(
-            order.id
-          )}&message=${encodeURIComponent(
-            completeData.error ||
-              "Payment was verified but PASONG could not finish the order."
-          )}`
-        );
-      }
-
-      return res.redirect(
-        `${frontendUrl}/beat-checkout.html?id=${encodeURIComponent(
-          order.beat_id
-        )}&package=${encodeURIComponent(
-          order.package_type
-        )}&payment=success&order_id=${encodeURIComponent(
-          order.id
-        )}`
-      );
-    } catch (error) {
-      console.error(
-        "Flutterwave callback error:",
-        error
-      );
-
-      return res.redirect(
-        `${frontendUrl}/beat-checkout.html?payment=error&message=${encodeURIComponent(
-          "Unable to verify the card payment."
-        )}`
-      );
-    }
-  }
-);
-
 app.post(
   "/api/beats/payments/complete",
   async (req, res) => {
@@ -5680,43 +4865,12 @@ app.post(
   "/api/producer/withdraw",
   async (req, res) => {
     try {
-      // 1. Verify the Supabase user from the dashboard's access token.
-      const user = await getAuthenticatedUser(req);
+      const user =
+        await getAuthenticatedUser(req);
 
       if (!user) {
         return res.status(401).json({
-          success: false,
-          error: "You must be logged in to request a withdrawal.",
-        });
-      }
-
-      // 2. Verify that this authenticated user actually has a producer
-      //    profile. The Producer Dashboard uses artist_profiles for the
-      //    producer account, so we verify ownership by user_id here.
-      const profileResult = await supabase
-        .from("artist_profiles")
-        .select("id,user_id")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (profileResult.error) {
-        console.error(
-          "Producer profile lookup failed:",
-          profileResult.error
-        );
-
-        return res.status(500).json({
-          success: false,
-          error: "Unable to verify your producer account.",
-        });
-      }
-
-      if (!profileResult.data || profileResult.data.user_id !== user.id) {
-        return res.status(403).json({
-          success: false,
-          error: "Producer profile not found for this account.",
+          error: "Auth",
         });
       }
 
@@ -5726,153 +4880,174 @@ app.post(
         mobile_number,
       } = req.body || {};
 
-      // 3. Validate withdrawal amount.
-      const requestedAmount = Number(
-        String(amount ?? "")
-          .replace(/,/g, "")
-          .trim()
-      );
+      const requestedAmount =
+        Number(amount);
 
-      if (!validPositiveNumber(requestedAmount)) {
+      // Producer withdrawals are currently recorded as pending only.
+      // No real MTN/Airtel money is sent by this endpoint.
+      const MIN_PRODUCER_WITHDRAWAL = 10000;
+
+      if (
+        !validPositiveNumber(
+          requestedAmount
+        )
+      ) {
         return res.status(400).json({
-          success: false,
-          error: "Invalid withdrawal amount.",
-        });
-      }
-
-      // Producer withdrawals must be at least UGX 10,000.
-      if (requestedAmount < 10000) {
-        return res.status(400).json({
-          success: false,
-          error: "Minimum withdrawal amount is UGX 10,000.",
-        });
-      }
-
-      // Only the two mobile-money providers supported by the Producer UI.
-      const normalizedProvider = normalizeProvider(provider);
-
-      if (!["MTN", "AIRTEL"].includes(normalizedProvider)) {
-        return res.status(400).json({
-          success: false,
-          error: "Mobile Money provider must be MTN or AIRTEL.",
-        });
-      }
-
-      // 4. Validate and normalize the Uganda mobile number.
-      let mobile = String(mobile_number || "")
-        .trim()
-        .replace(/\s+/g, "");
-
-      if (!/^(?:\+256|256|0)7[0-9]{8}$/.test(mobile)) {
-        return res.status(400).json({
-          success: false,
-          error: "Invalid Uganda mobile number.",
-        });
-      }
-
-      // Store one consistent local format: 07XXXXXXXX.
-      if (mobile.startsWith("+256")) {
-        mobile = "0" + mobile.substring(4);
-      } else if (mobile.startsWith("256")) {
-        mobile = "0" + mobile.substring(3);
-      }
-
-      // 5. Calculate the producer's currently available balance.
-      //    This includes existing credits and subtracts every debit,
-      //    including pending withdrawal debits, so the same money cannot
-      //    be withdrawn twice.
-      const availableBalance = await getProducerBalance(user.id);
-
-      if (requestedAmount > availableBalance) {
-        return res.status(400).json({
-          success: false,
           error:
-            "Insufficient producer balance. Available balance is UGX " +
-            Number(availableBalance).toLocaleString("en-UG") + ".",
-          available_balance: availableBalance,
+            "Invalid withdrawal amount",
         });
       }
 
-      // 6. Create the withdrawal request first as PENDING.
-      //    Payment processing can later move it to processing/paid/failed.
-      const withdrawal = await supabase
-        .from("producer_withdrawals")
-        .insert({
-          producer_user_id: user.id,
-          amount: requestedAmount,
-          currency: "UGX",
-          provider: normalizedProvider,
-          mobile_number: mobile,
-          status: "pending",
-        })
-        .select()
-        .single();
+      if (requestedAmount < MIN_PRODUCER_WITHDRAWAL) {
+        return res.status(400).json({
+          error:
+            "Minimum producer withdrawal is UGX 10,000",
+        });
+      }
 
-      if (withdrawal.error) {
-        console.error(
-          "Producer withdrawal insert failed:",
-          withdrawal.error
+      if (!Number.isInteger(requestedAmount)) {
+        return res.status(400).json({
+          error:
+            "Withdrawal amount must be a whole number of UGX",
+        });
+      }
+
+      const normalizedProvider =
+        normalizeProvider(
+          provider
         );
 
-        return res.status(500).json({
-          success: false,
-          error: "Withdrawal request could not be created.",
+      if (
+        !["MTN", "AIRTEL"].includes(
+          normalizedProvider
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid payment provider",
         });
       }
 
-      // 7. Reserve the requested amount in the producer ledger.
-      //    The debit is tied to the withdrawal ID so the payout can be
-      //    traced and reconciled later.
-      const debit = await supabase
-        .from("royalty_ledger")
-        .insert({
-          recipient_user_id: user.id,
-          recipient_type: "beat_producer",
-          amount: requestedAmount,
-          percentage: 100,
-          entry_type: "debit",
-          status: "pending_withdrawal",
-          withdrawal_id: withdrawal.data.id,
+      const mobile =
+        String(
+          mobile_number || ""
+        )
+          .trim()
+          .replace(
+            /\s+/g,
+            ""
+          );
+
+      if (
+        !/^(?:\+256|256|0)7[0-9]{8}$/.test(
+          mobile
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid Uganda mobile number",
         });
+      }
+
+      const availableBalance =
+        await getProducerBalance(
+          user.id
+        );
+
+      if (
+        requestedAmount >
+        availableBalance
+      ) {
+        return res.status(400).json({
+          error:
+            "Insufficient balance",
+        });
+      }
+
+      const withdrawal =
+        await supabase
+          .from(
+            "producer_withdrawals"
+          )
+          .insert({
+            producer_user_id:
+              user.id,
+            amount:
+              requestedAmount,
+            currency:
+              "UGX",
+            provider:
+              normalizedProvider,
+            mobile_number:
+              mobile,
+            status:
+              "pending",
+          })
+          .select()
+          .single();
+
+      if (
+        withdrawal.error
+      ) {
+        return res.status(500).json({
+          error:
+            "Withdrawal request failed",
+        });
+      }
+
+      const debit =
+        await supabase
+          .from(
+            "royalty_ledger"
+          )
+          .insert({
+            recipient_user_id:
+              user.id,
+            recipient_type:
+              "beat_producer",
+            amount:
+              requestedAmount,
+            percentage: 100,
+            entry_type:
+              "debit",
+            status:
+              "pending_withdrawal",
+            withdrawal_id:
+              withdrawal.data.id,
+          });
 
       if (debit.error) {
-        console.error(
-          "Producer withdrawal ledger debit failed:",
-          debit.error
-        );
-
-        // Do not leave an orphaned withdrawal request if the balance
-        // reservation could not be created.
         await supabase
-          .from("producer_withdrawals")
+          .from(
+            "producer_withdrawals"
+          )
           .delete()
-          .eq("id", withdrawal.data.id);
+          .eq(
+            "id",
+            withdrawal.data.id
+          );
 
         return res.status(500).json({
-          success: false,
-          error: "Withdrawal balance reservation failed.",
+          error:
+            "Withdrawal balance update failed",
         });
       }
 
-      const remainingBalance = Number(
-        (availableBalance - requestedAmount).toFixed(2)
-      );
+      const remainingBalance =
+        await getProducerBalance(user.id);
 
-      return res.status(201).json({
+      res.json({
         success: true,
-        message: "Withdrawal request submitted successfully.",
-        withdrawal: withdrawal.data,
-        available_balance: remainingBalance,
+        message:
+          "Withdrawal request submitted successfully. It is pending PASONG processing.",
+        withdrawal:
+          withdrawal.data,
+        remaining_balance: remainingBalance,
       });
-    } catch (error) {
-      console.error(
-        "Producer withdrawal error:",
-        error
-      );
-
-      return res.status(500).json({
-        success: false,
-        error: "Withdrawal failed. Please try again.",
+    } catch {
+      res.status(500).json({
+        error:
+          "Withdrawal failed",
       });
     }
   }
@@ -6342,422 +5517,6 @@ app.post(
     }
   }
 );
-
-
-
-// ============================================================
-// PASONG ADVERTISING
-// Public package list + authenticated campaign checkout.
-// Prices are controlled by the backend, never by the browser.
-// ============================================================
-
-const PASONG_AD_PACKAGES = {
-  home_image: {
-    amount: Number(process.env.PASONG_AD_HOME_IMAGE_UGX || 25000),
-    days: 7,
-    name: "Homepage Image",
-  },
-  home_video: {
-    amount: Number(process.env.PASONG_AD_HOME_VIDEO_UGX || 40000),
-    days: 7,
-    name: "Homepage Video",
-  },
-  sitewide: {
-    amount: Number(process.env.PASONG_AD_SITEWIDE_UGX || 60000),
-    days: 7,
-    name: "PASONG Sitewide",
-  },
-};
-
-function cleanAdText(value, max = 5000) {
-  return String(value == null ? "" : value).trim().slice(0, max);
-}
-
-function validHttpUrl(value) {
-  if (!value) return true;
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function normalizeAdMediaType(value) {
-  return String(value || "").trim().toLowerCase() === "video"
-    ? "video"
-    : "image";
-}
-
-app.get("/api/advertising/packages", (req, res) => {
-  res.json({
-    success: true,
-    currency: "UGX",
-    packages: Object.entries(PASONG_AD_PACKAGES).map(([key, pkg]) => ({
-      key,
-      name: pkg.name,
-      amount: pkg.amount,
-      currency: "UGX",
-      days: pkg.days,
-    })),
-  });
-});
-
-app.post("/api/advertising/checkout", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-
-    if (!user) {
-      return res.status(401).json({
-        error: "Please sign in to advertise on PASONG.",
-      });
-    }
-
-    if (!FLUTTERWAVE_SECRET_KEY) {
-      return res.status(503).json({
-        error:
-          "Advertising payment is not configured. Add FLUTTERWAVE_SECRET_KEY to Render.",
-      });
-    }
-
-    const body = req.body || {};
-    const packageKey = cleanAdText(body.package_key, 40);
-    const pkg = PASONG_AD_PACKAGES[packageKey];
-
-    if (!pkg || !Number.isFinite(pkg.amount) || pkg.amount <= 0) {
-      return res.status(400).json({
-        error: "Invalid advertising package.",
-      });
-    }
-
-    const advertiserName = cleanAdText(body.advertiser_name, 160);
-    const advertiserEmail = cleanAdText(body.advertiser_email || user.email, 200);
-    const advertiserPhone = cleanAdText(body.advertiser_phone, 60);
-    const title = cleanAdText(body.title, 200);
-    const description = cleanAdText(body.description, 5000);
-    const targetUrl = cleanAdText(body.target_url, 1000);
-    const requestedPlacement = cleanAdText(body.placement, 60).toLowerCase();
-    const mediaUrl = cleanAdText(body.media_url, 2000);
-    const mediaType = normalizeAdMediaType(body.media_type);
-
-    if (!advertiserName || !advertiserEmail || !title || !description || !mediaUrl) {
-      return res.status(400).json({
-        error:
-          "Advertiser name, email, title, description and advert media are required.",
-      });
-    }
-
-    if (!validHttpUrl(mediaUrl) || !validHttpUrl(targetUrl)) {
-      return res.status(400).json({
-        error: "Invalid media or destination URL.",
-      });
-    }
-
-    if (packageKey === "home_image" && mediaType !== "image") {
-      return res.status(400).json({
-        error: "Homepage Image requires an image advert.",
-      });
-    }
-
-    if (packageKey === "home_video" && mediaType !== "video") {
-      return res.status(400).json({
-        error: "Homepage Video requires a video advert.",
-      });
-    }
-
-    // Keep placement values compatible with the existing PASONG
-    // Advertisement Manager shown in the admin dashboard.
-    const placement =
-      packageKey === "home_image" || packageKey === "home_video"
-        ? "home"
-        : packageKey === "sitewide"
-          ? "all"
-          : requestedPlacement || "home";
-
-    const txRef =
-      `PASONG-AD-${Date.now()}-${crypto.randomBytes(8).toString("hex")}`;
-
-    const campaignResult = await supabase
-      .from("advertising_campaigns")
-      .insert({
-        user_id: user.id,
-        package_key: packageKey,
-        amount: pkg.amount,
-        currency: "UGX",
-        days: pkg.days,
-        advertiser_name: advertiserName,
-        advertiser_email: advertiserEmail,
-        advertiser_phone: advertiserPhone || null,
-        title,
-        description,
-        target_url: targetUrl || null,
-        placement,
-        media_url: mediaUrl,
-        media_type: mediaType,
-        tx_ref: txRef,
-        payment_status: "pending",
-        status: "pending",
-      })
-      .select()
-      .single();
-
-    if (campaignResult.error || !campaignResult.data) {
-      console.error("Advertising campaign insert failed:", campaignResult.error);
-      return res.status(500).json({
-        error: "Unable to create advertising campaign.",
-        details: campaignResult.error?.message || null,
-      });
-    }
-
-    const customerName =
-      advertiserName ||
-      user.email?.split("@")[0] ||
-      "PASONG Advertiser";
-
-    const redirectUrl =
-      `${PASONG_API_PUBLIC_URL}/api/advertising/flutterwave/callback`;
-
-    const flutterwavePayload = {
-      tx_ref: txRef,
-      amount: pkg.amount,
-      currency: "UGX",
-      redirect_url: redirectUrl,
-      // Uganda customers can pay by card or MTN/Airtel Mobile Money.
-      // Flutterwave accepts payment_options as a comma + space separated list.
-      payment_options: "card, mobilemoneyuganda",
-      customer: {
-        email: advertiserEmail,
-        name: customerName,
-        ...(advertiserPhone ? { phonenumber: advertiserPhone } : {}),
-      },
-      customizations: {
-        title: "PASONG Advertising",
-        description: `${pkg.name} - ${pkg.days} days`,
-        logo: "https://pasong-frontend.vercel.app/favicon.ico",
-      },
-      meta: {
-        pasong_ad_campaign_id: campaignResult.data.id,
-        package_key: packageKey,
-        user_id: user.id,
-      },
-    };
-
-    const fwResponse = await fetch("https://api.flutterwave.com/v3/payments", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(flutterwavePayload),
-    });
-
-    const fwText = await fwResponse.text();
-    let fwData = {};
-
-    try {
-      fwData = fwText ? JSON.parse(fwText) : {};
-    } catch {
-      fwData = {};
-    }
-
-    if (!fwResponse.ok) {
-      console.error("Advertising Flutterwave checkout failed:", fwData);
-
-      await supabase
-        .from("advertising_campaigns")
-        .update({ status: "payment_failed" })
-        .eq("id", campaignResult.data.id);
-
-      return res.status(502).json({
-        error: "Flutterwave could not create the advertising checkout.",
-        details: fwData.message || fwData.error || null,
-      });
-    }
-
-    const checkoutUrl = fwData?.data?.link || fwData?.link || "";
-
-    if (!checkoutUrl) {
-      await supabase
-        .from("advertising_campaigns")
-        .update({ status: "payment_failed" })
-        .eq("id", campaignResult.data.id);
-
-      return res.status(502).json({
-        error: "Flutterwave did not return a checkout link.",
-      });
-    }
-
-    return res.json({
-      success: true,
-      provider: "FLUTTERWAVE",
-      campaign_id: campaignResult.data.id,
-      external_reference: txRef,
-      checkout_url: checkoutUrl,
-      amount: pkg.amount,
-      currency: "UGX",
-      days: pkg.days,
-    });
-  } catch (error) {
-    console.error("Advertising checkout error:", error);
-
-    return res.status(500).json({
-      error: "Advertising checkout setup failed.",
-      details: error?.message || null,
-    });
-  }
-});
-
-app.get("/api/advertising/flutterwave/callback", async (req, res) => {
-  const frontendUrl = PASONG_FRONTEND_URL.replace(/\/$/, "");
-
-  try {
-    const txRef = cleanAdText(req.query.tx_ref, 200);
-    const transactionId = cleanAdText(req.query.transaction_id, 100);
-    const status = cleanAdText(req.query.status, 40).toLowerCase();
-
-    if (!FLUTTERWAVE_SECRET_KEY || status !== "successful" || !txRef || !transactionId) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`
-      );
-    }
-
-    const verifyResponse = await fetch(
-      `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(transactionId)}/verify`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    const verifyText = await verifyResponse.text();
-    let verifyData = {};
-
-    try {
-      verifyData = verifyText ? JSON.parse(verifyText) : {};
-    } catch {
-      verifyData = {};
-    }
-
-    const payment = verifyData?.data || {};
-    const verifiedStatus = String(payment.status || "").trim().toLowerCase();
-    const verifiedTxRef = String(payment.tx_ref || "").trim();
-    const verifiedAmount = Number(payment.amount);
-    const verifiedCurrency = String(payment.currency || "").trim().toUpperCase();
-
-    if (
-      !verifyResponse.ok ||
-      String(verifyData.status || "").toLowerCase() !== "success" ||
-      verifiedStatus !== "successful" ||
-      verifiedTxRef !== txRef ||
-      !Number.isFinite(verifiedAmount) ||
-      verifiedCurrency !== "UGX"
-    ) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`
-      );
-    }
-
-    const campaignResult = await supabase
-      .from("advertising_campaigns")
-      .select("*")
-      .eq("tx_ref", txRef)
-      .maybeSingle();
-
-    if (campaignResult.error || !campaignResult.data) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
-          "Advertising campaign was not found."
-        )}`
-      );
-    }
-
-    const campaign = campaignResult.data;
-    const expectedAmount = Number(campaign.amount);
-
-    if (!Number.isFinite(expectedAmount) || verifiedAmount !== expectedAmount) {
-      await supabase
-        .from("advertising_campaigns")
-        .update({ status: "payment_failed" })
-        .eq("id", campaign.id);
-
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`
-      );
-    }
-
-    // Protect against duplicate callback processing.
-    if (campaign.payment_status === "paid" && campaign.advertisement_id) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=success&campaign_id=${encodeURIComponent(
-          campaign.id
-        )}`
-      );
-    }
-
-    const startAt = new Date();
-    const endAt = new Date(
-      startAt.getTime() + Number(campaign.days || 7) * 24 * 60 * 60 * 1000
-    );
-
-    const adResult = await supabase
-      .from("advertisements")
-      .insert({
-        title: campaign.title,
-        description: campaign.description,
-        image_url: campaign.media_url,
-        target_url: campaign.target_url,
-        placement: campaign.placement,
-        start_at: startAt.toISOString(),
-        end_at: endAt.toISOString(),
-        status: "pending",
-        clicks: 0,
-        impressions: 0,
-        created_by: campaign.user_id,
-        media_type: campaign.media_type,
-      })
-      .select()
-      .single();
-
-    if (adResult.error || !adResult.data) {
-      console.error("Advertising ad creation failed:", adResult.error);
-
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
-          "Payment was verified but PASONG could not create the campaign."
-        )}`
-      );
-    }
-
-    await supabase
-      .from("advertising_campaigns")
-      .update({
-        payment_status: "paid",
-        status: "pending",
-        transaction_id: transactionId,
-        advertisement_id: adResult.data.id,
-        start_at: startAt.toISOString(),
-        end_at: endAt.toISOString(),
-      })
-      .eq("id", campaign.id);
-
-    return res.redirect(
-      `${frontendUrl}/advertise.html?payment=success&campaign_id=${encodeURIComponent(
-        campaign.id
-      )}`
-    );
-  } catch (error) {
-    console.error("Advertising callback error:", error);
-
-    return res.redirect(
-      `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
-        "Unable to verify the advertising payment."
-      )}`
-    );
-  }
-});
 
 app.use(
   (error, req, res, next) => {
