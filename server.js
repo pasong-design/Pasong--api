@@ -22,21 +22,6 @@ const CLOUDINARY_API_SECRET =
   process.env.CLOUDINARY_API_SECRET;
 const PASONG_PAYMENT_SECRET =
   process.env.PASONG_PAYMENT_SECRET;
-
-// Flutterwave Card Payments
-// Keep the secret key ONLY in Render environment variables.
-const FLUTTERWAVE_SECRET_KEY =
-  process.env.FLUTTERWAVE_SECRET_KEY ||
-  "";
-
-const PASONG_FRONTEND_URL =
-  process.env.PASONG_FRONTEND_URL ||
-  "https://pasong-frontend.vercel.app";
-
-const PASONG_API_PUBLIC_URL =
-  process.env.PASONG_API_PUBLIC_URL ||
-  "https://pasong-api.vercel.app";
-
 const CORS_ORIGIN =
   process.env.CORS_ORIGIN || "";
 
@@ -294,163 +279,54 @@ app.get("/api/premium/status", async (req, res) => {
 
 app.post("/api/premium/complete", async (req, res) => {
   try {
-    // This endpoint is for the payment provider/webhook only.
-    // Never call it directly from premium.html with a public secret.
     const secret = String(req.headers["x-pasong-payment-secret"] || "");
-
-    if (!PASONG_PAYMENT_SECRET || !safeSecretCompare(secret, PASONG_PAYMENT_SECRET)) {
-      return res.status(401).json({
-        success: false,
-        error: "Unauthorized payment completion.",
-      });
+    if (!PASONG_PAYMENT_SECRET || secret !== PASONG_PAYMENT_SECRET) {
+      return res.status(401).json({ success: false, error: "Unauthorized payment completion." });
     }
 
     const { payment_reference, payment_status, provider_reference } = req.body || {};
-
     if (!payment_reference || payment_status !== "paid") {
-      return res.status(400).json({
-        success: false,
-        error: "A paid Premium payment is required.",
-      });
+      return res.status(400).json({ success: false, error: "A paid Premium payment is required." });
     }
 
     const paymentResult = await supabase
       .from("premium_payments")
       .select("*")
-      .eq("payment_reference", String(payment_reference).trim())
+      .eq("payment_reference", String(payment_reference))
       .maybeSingle();
 
-    if (paymentResult.error) {
-      console.error("Premium payment lookup failed:", paymentResult.error);
-      return res.status(500).json({
-        success: false,
-        error: "Unable to verify Premium payment.",
-      });
-    }
-
-    if (!paymentResult.data) {
-      return res.status(404).json({
-        success: false,
-        error: "Premium payment not found.",
-      });
+    if (paymentResult.error || !paymentResult.data) {
+      return res.status(404).json({ success: false, error: "Premium payment not found." });
     }
 
     const payment = paymentResult.data;
-
-    // Idempotency: a webhook/provider may retry the same notification.
     if (payment.status === "paid") {
-      const existing = await supabase
-        .from("premium_subscriptions")
-        .select("*")
-        .eq("payment_reference", payment.payment_reference)
-        .maybeSingle();
-
-      return res.json({
-        success: true,
-        already_completed: true,
-        premium: true,
-        subscription: existing.data || null,
-        payment,
-      });
-    }
-
-    if (payment.status !== "pending") {
-      return res.status(409).json({
-        success: false,
-        error: `Premium payment is already ${payment.status}.`,
-      });
+      return res.json({ success: true, already_completed: true, payment });
     }
 
     const days = payment.plan === "premium_yearly" ? 365 : 30;
     const now = new Date();
+    const start = now.toISOString();
+    const expires = new Date(now.getTime() + days * 86400000).toISOString();
 
-    // If the user already has an active Premium subscription, extend it
-    // from the current expiry rather than creating overlapping subscriptions.
-    const activeResult = await supabase
+    const subscription = await supabase
       .from("premium_subscriptions")
-      .select("*")
-      .eq("user_id", payment.user_id)
-      .eq("status", "active")
-      .gt("expires_at", now.toISOString())
-      .order("expires_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .insert({
+        user_id: payment.user_id,
+        plan: payment.plan,
+        status: "active",
+        started_at: start,
+        expires_at: expires,
+        currency: payment.currency,
+        amount: payment.amount,
+        payment_reference: payment.payment_reference,
+      })
+      .select()
+      .single();
 
-    if (activeResult.error) {
-      console.error("Active Premium lookup failed:", activeResult.error);
-      return res.status(500).json({
-        success: false,
-        error: "Unable to check existing Premium subscription.",
-      });
-    }
-
-    const currentExpiry = activeResult.data
-      ? new Date(activeResult.data.expires_at)
-      : now;
-
-    const start = activeResult.data
-      ? activeResult.data.started_at
-      : now.toISOString();
-
-    const expires = new Date(
-      Math.max(currentExpiry.getTime(), now.getTime()) + days * 86400000
-    ).toISOString();
-
-    let subscriptionData;
-
-    if (activeResult.data) {
-      const updatedSubscription = await supabase
-        .from("premium_subscriptions")
-        .update({
-          expires_at: expires,
-          plan: payment.plan,
-          currency: payment.currency,
-          amount: payment.amount,
-        })
-        .eq("id", activeResult.data.id)
-        .select()
-        .single();
-
-      if (updatedSubscription.error) {
-        console.error(
-          "Premium subscription extension failed:",
-          updatedSubscription.error
-        );
-        return res.status(500).json({
-          success: false,
-          error: "Premium activation failed.",
-        });
-      }
-
-      subscriptionData = updatedSubscription.data;
-    } else {
-      const insertedSubscription = await supabase
-        .from("premium_subscriptions")
-        .insert({
-          user_id: payment.user_id,
-          plan: payment.plan,
-          status: "active",
-          started_at: start,
-          expires_at: expires,
-          currency: payment.currency,
-          amount: payment.amount,
-          payment_reference: payment.payment_reference,
-        })
-        .select()
-        .single();
-
-      if (insertedSubscription.error) {
-        console.error(
-          "Premium subscription activation failed:",
-          insertedSubscription.error
-        );
-        return res.status(500).json({
-          success: false,
-          error: "Premium activation failed.",
-        });
-      }
-
-      subscriptionData = insertedSubscription.data;
+    if (subscription.error) {
+      console.error("Premium subscription activation failed:", subscription.error);
+      return res.status(500).json({ success: false, error: "Premium activation failed." });
     }
 
     const updatedPayment = await supabase
@@ -458,33 +334,26 @@ app.post("/api/premium/complete", async (req, res) => {
       .update({
         status: "paid",
         provider_reference: provider_reference || null,
-        paid_at: now.toISOString(),
+        paid_at: start,
       })
       .eq("id", payment.id)
-      .eq("status", "pending")
       .select()
-      .maybeSingle();
+      .single();
 
     if (updatedPayment.error) {
       console.error("Premium payment update failed:", updatedPayment.error);
-      return res.status(500).json({
-        success: false,
-        error: "Premium payment status update failed.",
-      });
+      return res.status(500).json({ success: false, error: "Premium payment status update failed." });
     }
 
     res.json({
       success: true,
       premium: true,
-      subscription: subscriptionData,
-      payment: updatedPayment.data || payment,
+      subscription: subscription.data,
+      payment: updatedPayment.data,
     });
   } catch (error) {
     console.error("Premium completion error:", error);
-    res.status(500).json({
-      success: false,
-      error: "Premium payment completion failed.",
-    });
+    res.status(500).json({ success: false, error: "Premium payment completion failed." });
   }
 });
 
@@ -884,8 +753,6 @@ function allowedCloudinaryFolder(
       "pasong-beats/audio",
       "pasong-beats/covers",
       "pasong-producers/profile",
-      "pasong/ads",
-      "pasong-ads",
     ].includes(value)
   ) {
     return true;
@@ -1486,23 +1353,13 @@ function publicSong(song) {
     ...song,
   };
 
-  // PASONG supports free public streaming. Some older songs were
-  // uploaded before preview_url was stored. In that case, use the
-  // existing audio_url as the public streaming source.
-  const publicStreamUrl =
-    song.preview_url ||
-    song.audio_url ||
-    null;
-
-  // Never expose the original field separately.
   delete safeSong.audio_url;
 
-  // Keep both fields for compatibility with existing PASONG pages.
   safeSong.preview_url =
-    publicStreamUrl;
+    song.preview_url || null;
 
   safeSong.audio_url =
-    publicStreamUrl;
+    song.preview_url || null;
 
   return safeSong;
 }
@@ -4140,561 +3997,6 @@ app.post(
   }
 );
 
-
-// ============================================================
-// PASONG BEAT CARD CHECKOUT - FLUTTERWAVE
-// Creates a Flutterwave Standard hosted checkout for a beat order.
-// The Flutterwave secret key never reaches the browser.
-// ============================================================
-
-app.post(
-  "/api/beats/:id/card-checkout",
-  async (req, res) => {
-    try {
-      const user =
-        await getAuthenticatedUser(req);
-
-      if (!user) {
-        return res.status(401).json({
-          error: "Auth",
-        });
-      }
-
-      if (!validUuid(req.params.id)) {
-        return res.status(400).json({
-          error: "Invalid beat id",
-        });
-      }
-
-      if (!FLUTTERWAVE_SECRET_KEY) {
-        return res.status(503).json({
-          error:
-            "Card payment is not configured yet. Add FLUTTERWAVE_SECRET_KEY to the Render environment variables.",
-        });
-      }
-
-      const orderId =
-        String(req.body?.order_id || "").trim();
-
-      const packageType =
-        String(req.body?.package_type || "").trim();
-
-      if (!validUuid(orderId)) {
-        return res.status(400).json({
-          error: "Invalid order id",
-        });
-      }
-
-      if (
-        ![
-          "mp3",
-          "wav",
-          "stems",
-          "exclusive",
-        ].includes(packageType)
-      ) {
-        return res.status(400).json({
-          error: "Invalid package",
-        });
-      }
-
-      const orderResult =
-        await supabase
-          .from("beat_orders")
-          .select("*")
-          .eq("id", orderId)
-          .eq("buyer_id", user.id)
-          .eq("beat_id", req.params.id)
-          .maybeSingle();
-
-      if (
-        orderResult.error ||
-        !orderResult.data
-      ) {
-        return res.status(404).json({
-          error: "Beat order not found",
-        });
-      }
-
-      const order =
-        orderResult.data;
-
-      if (order.status === "paid") {
-        return res.status(400).json({
-          error: "This order has already been paid",
-        });
-      }
-
-      if (
-        String(order.provider || "")
-          .trim()
-          .toUpperCase() !== "FLUTTERWAVE"
-      ) {
-        return res.status(400).json({
-          error: "This order is not a card payment order",
-        });
-      }
-
-      if (order.package_type !== packageType) {
-        return res.status(400).json({
-          error: "Package does not match the order",
-        });
-      }
-
-      const beatResult =
-        await supabase
-          .from("beats")
-          .select(
-            "id,title,producer_id,status,is_exclusive_sold"
-          )
-          .eq("id", req.params.id)
-          .maybeSingle();
-
-      if (
-        beatResult.error ||
-        !beatResult.data
-      ) {
-        return res.status(404).json({
-          error: "Beat not found",
-        });
-      }
-
-      const beat = beatResult.data;
-
-      if (
-        beat.status !== "approved" ||
-        beat.is_exclusive_sold
-      ) {
-        return res.status(400).json({
-          error: "Beat is no longer available",
-        });
-      }
-
-      if (
-        packageType === "exclusive" &&
-        beat.is_exclusive_sold
-      ) {
-        return res.status(400).json({
-          error: "Exclusive already sold",
-        });
-      }
-
-      const amount = Number(order.price);
-
-      if (
-        !Number.isFinite(amount) ||
-        amount <= 0
-      ) {
-        return res.status(400).json({
-          error: "Invalid order amount",
-        });
-      }
-
-      const txRef =
-        String(
-          order.external_reference || ""
-        ).trim();
-
-      if (!txRef) {
-        return res.status(400).json({
-          error: "Order payment reference is missing",
-        });
-      }
-
-      const customerName =
-        String(
-          user.user_metadata?.full_name ||
-          user.user_metadata?.name ||
-          user.email?.split("@")[0] ||
-          "PASONG Customer"
-        ).trim();
-
-      const customerEmail =
-        String(user.email || "").trim();
-
-      if (!customerEmail) {
-        return res.status(400).json({
-          error: "Your PASONG account has no email address",
-        });
-      }
-
-      const redirectUrl =
-        `${PASONG_API_PUBLIC_URL}/api/beats/flutterwave/callback`;
-
-      const flutterwavePayload = {
-        tx_ref: txRef,
-        amount,
-        currency: "UGX",
-        redirect_url: redirectUrl,
-        payment_options: "card",
-        customer: {
-          email: customerEmail,
-          name: customerName,
-        },
-        customizations: {
-          title: "PASONG Beat Purchase",
-          description:
-            `${beat.title || "Beat"} - ${packageType} licence`,
-          logo:
-            "https://pasong-frontend.vercel.app/favicon.ico",
-        },
-        meta: {
-          pasong_order_id: order.id,
-          beat_id: beat.id,
-          package_type: packageType,
-          buyer_id: user.id,
-        },
-      };
-
-      const flutterwaveResponse =
-        await fetch(
-          "https://api.flutterwave.com/v3/payments",
-          {
-            method: "POST",
-            headers: {
-              Authorization:
-                `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify(
-              flutterwavePayload
-            ),
-          }
-        );
-
-      const flutterwaveText =
-        await flutterwaveResponse.text();
-
-      let flutterwaveData = {};
-
-      try {
-        flutterwaveData =
-          flutterwaveText
-            ? JSON.parse(flutterwaveText)
-            : {};
-      } catch {
-        flutterwaveData = {};
-      }
-
-      if (!flutterwaveResponse.ok) {
-        console.error(
-          "Flutterwave checkout creation failed:",
-          flutterwaveData
-        );
-
-        return res.status(502).json({
-          error:
-            "Flutterwave could not create the card checkout",
-          details:
-            flutterwaveData.message ||
-            flutterwaveData.error ||
-            null,
-        });
-      }
-
-      const checkoutUrl =
-        flutterwaveData?.data?.link ||
-        flutterwaveData?.link ||
-        "";
-
-      if (!checkoutUrl) {
-        console.error(
-          "Flutterwave checkout link missing:",
-          flutterwaveData
-        );
-
-        return res.status(502).json({
-          error:
-            "Flutterwave did not return a checkout link",
-        });
-      }
-
-      return res.json({
-        success: true,
-        provider: "FLUTTERWAVE",
-        order_id: order.id,
-        external_reference: txRef,
-        checkout_url: checkoutUrl,
-      });
-    } catch (error) {
-      console.error(
-        "Beat card checkout error:",
-        error
-      );
-
-      return res.status(500).json({
-        error:
-          "Card checkout setup failed",
-        details:
-          error && error.message
-            ? error.message
-            : null,
-      });
-    }
-  }
-);
-
-
-// ============================================================
-// PASONG BEAT CARD CALLBACK - FLUTTERWAVE
-// Flutterwave redirects here after the hosted card checkout.
-// The transaction is verified server-to-server before PASONG
-// marks the beat order paid.
-// ============================================================
-
-app.get(
-  "/api/beats/flutterwave/callback",
-  async (req, res) => {
-    const frontendUrl =
-      PASONG_FRONTEND_URL.replace(/\/$/, "");
-
-    try {
-      if (!FLUTTERWAVE_SECRET_KEY) {
-        return res.redirect(
-          `${frontendUrl}/beat-checkout.html?payment=error&message=${encodeURIComponent(
-            "Card payment is not configured on PASONG."
-          )}`
-        );
-      }
-
-      const status =
-        String(req.query.status || "")
-          .trim()
-          .toLowerCase();
-
-      const txRef =
-        String(
-          req.query.tx_ref || ""
-        ).trim();
-
-      const transactionId =
-        String(
-          req.query.transaction_id || ""
-        ).trim();
-
-      if (
-        status !== "successful" ||
-        !txRef ||
-        !transactionId
-      ) {
-        return res.redirect(
-          `${frontendUrl}/beat-checkout.html?payment=failed&tx_ref=${encodeURIComponent(
-            txRef
-          )}`
-        );
-      }
-
-      const verifyResponse =
-        await fetch(
-          `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(
-            transactionId
-          )}/verify`,
-          {
-            method: "GET",
-            headers: {
-              Authorization:
-                `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
-              "Content-Type":
-                "application/json",
-            },
-          }
-        );
-
-      const verifyText =
-        await verifyResponse.text();
-
-      let verifyData = {};
-
-      try {
-        verifyData =
-          verifyText
-            ? JSON.parse(verifyText)
-            : {};
-      } catch {
-        verifyData = {};
-      }
-
-      const payment =
-        verifyData?.data || {};
-
-      const verifiedStatus =
-        String(payment.status || "")
-          .trim()
-          .toLowerCase();
-
-      const verifiedTxRef =
-        String(payment.tx_ref || "").trim();
-
-      const verifiedAmount =
-        Number(payment.amount);
-
-      const verifiedCurrency =
-        String(payment.currency || "")
-          .trim()
-          .toUpperCase();
-
-      if (
-        !verifyResponse.ok ||
-        String(verifyData.status || "")
-          .toLowerCase() !== "success" ||
-        verifiedStatus !== "successful" ||
-        verifiedTxRef !== txRef ||
-        !Number.isFinite(verifiedAmount) ||
-        verifiedAmount <= 0 ||
-        verifiedCurrency !== "UGX"
-      ) {
-        console.error(
-          "Flutterwave verification failed:",
-          verifyData
-        );
-
-        return res.redirect(
-          `${frontendUrl}/beat-checkout.html?payment=failed&tx_ref=${encodeURIComponent(
-            txRef
-          )}`
-        );
-      }
-
-      const orderLookup =
-        await supabase
-          .from("beat_orders")
-          .select(
-            "id,beat_id,package_type,price,currency,buyer_id,external_reference,status"
-          )
-          .eq(
-            "external_reference",
-            txRef
-          )
-          .maybeSingle();
-
-      if (
-        orderLookup.error ||
-        !orderLookup.data
-      ) {
-        return res.redirect(
-          `${frontendUrl}/beat-checkout.html?payment=error&message=${encodeURIComponent(
-            "PASONG could not find this payment order."
-          )}`
-        );
-      }
-
-      const order =
-        orderLookup.data;
-
-      const expectedAmount =
-        Number(order.price);
-
-      const expectedCurrency =
-        String(order.currency || "")
-          .trim()
-          .toUpperCase();
-
-      if (
-        !isSameAmount(
-          verifiedAmount,
-          expectedAmount
-        ) ||
-        verifiedCurrency !== expectedCurrency
-      ) {
-        console.error(
-          "Flutterwave amount/currency mismatch:",
-          {
-            verifiedAmount,
-            expectedAmount,
-            verifiedCurrency,
-            expectedCurrency,
-          }
-        );
-
-        return res.redirect(
-          `${frontendUrl}/beat-checkout.html?payment=failed&tx_ref=${encodeURIComponent(
-            txRef
-          )}`
-        );
-      }
-
-      const completeResponse =
-        await fetch(
-          `http://127.0.0.1:${PORT}/api/beats/payments/complete`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-              "x-pasong-payment-secret":
-                PASONG_PAYMENT_SECRET,
-            },
-            body: JSON.stringify({
-              order_id: order.id,
-              transaction_id:
-                transactionId,
-              external_reference:
-                txRef,
-              payment_status:
-                "SUCCESSFUL",
-              amount:
-                verifiedAmount,
-              currency:
-                verifiedCurrency,
-            }),
-          }
-        );
-
-      const completeText =
-        await completeResponse.text();
-
-      let completeData = {};
-
-      try {
-        completeData =
-          completeText
-            ? JSON.parse(completeText)
-            : {};
-      } catch {
-        completeData = {};
-      }
-
-      if (!completeResponse.ok) {
-        console.error(
-          "PASONG beat payment completion failed:",
-          completeData
-        );
-
-        return res.redirect(
-          `${frontendUrl}/beat-checkout.html?payment=error&order_id=${encodeURIComponent(
-            order.id
-          )}&message=${encodeURIComponent(
-            completeData.error ||
-              "Payment was verified but PASONG could not finish the order."
-          )}`
-        );
-      }
-
-      return res.redirect(
-        `${frontendUrl}/beat-checkout.html?id=${encodeURIComponent(
-          order.beat_id
-        )}&package=${encodeURIComponent(
-          order.package_type
-        )}&payment=success&order_id=${encodeURIComponent(
-          order.id
-        )}`
-      );
-    } catch (error) {
-      console.error(
-        "Flutterwave callback error:",
-        error
-      );
-
-      return res.redirect(
-        `${frontendUrl}/beat-checkout.html?payment=error&message=${encodeURIComponent(
-          "Unable to verify the card payment."
-        )}`
-      );
-    }
-  }
-);
-
 app.post(
   "/api/beats/payments/complete",
   async (req, res) => {
@@ -6343,422 +5645,6 @@ app.post(
   }
 );
 
-
-
-// ============================================================
-// PASONG ADVERTISING
-// Public package list + authenticated campaign checkout.
-// Prices are controlled by the backend, never by the browser.
-// ============================================================
-
-const PASONG_AD_PACKAGES = {
-  home_image: {
-    amount: Number(process.env.PASONG_AD_HOME_IMAGE_UGX || 25000),
-    days: 7,
-    name: "Homepage Image",
-  },
-  home_video: {
-    amount: Number(process.env.PASONG_AD_HOME_VIDEO_UGX || 40000),
-    days: 7,
-    name: "Homepage Video",
-  },
-  sitewide: {
-    amount: Number(process.env.PASONG_AD_SITEWIDE_UGX || 60000),
-    days: 7,
-    name: "PASONG Sitewide",
-  },
-};
-
-function cleanAdText(value, max = 5000) {
-  return String(value == null ? "" : value).trim().slice(0, max);
-}
-
-function validHttpUrl(value) {
-  if (!value) return true;
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function normalizeAdMediaType(value) {
-  return String(value || "").trim().toLowerCase() === "video"
-    ? "video"
-    : "image";
-}
-
-app.get("/api/advertising/packages", (req, res) => {
-  res.json({
-    success: true,
-    currency: "UGX",
-    packages: Object.entries(PASONG_AD_PACKAGES).map(([key, pkg]) => ({
-      key,
-      name: pkg.name,
-      amount: pkg.amount,
-      currency: "UGX",
-      days: pkg.days,
-    })),
-  });
-});
-
-app.post("/api/advertising/checkout", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-
-    if (!user) {
-      return res.status(401).json({
-        error: "Please sign in to advertise on PASONG.",
-      });
-    }
-
-    if (!FLUTTERWAVE_SECRET_KEY) {
-      return res.status(503).json({
-        error:
-          "Advertising payment is not configured. Add FLUTTERWAVE_SECRET_KEY to Render.",
-      });
-    }
-
-    const body = req.body || {};
-    const packageKey = cleanAdText(body.package_key, 40);
-    const pkg = PASONG_AD_PACKAGES[packageKey];
-
-    if (!pkg || !Number.isFinite(pkg.amount) || pkg.amount <= 0) {
-      return res.status(400).json({
-        error: "Invalid advertising package.",
-      });
-    }
-
-    const advertiserName = cleanAdText(body.advertiser_name, 160);
-    const advertiserEmail = cleanAdText(body.advertiser_email || user.email, 200);
-    const advertiserPhone = cleanAdText(body.advertiser_phone, 60);
-    const title = cleanAdText(body.title, 200);
-    const description = cleanAdText(body.description, 5000);
-    const targetUrl = cleanAdText(body.target_url, 1000);
-    const requestedPlacement = cleanAdText(body.placement, 60).toLowerCase();
-    const mediaUrl = cleanAdText(body.media_url, 2000);
-    const mediaType = normalizeAdMediaType(body.media_type);
-
-    if (!advertiserName || !advertiserEmail || !title || !description || !mediaUrl) {
-      return res.status(400).json({
-        error:
-          "Advertiser name, email, title, description and advert media are required.",
-      });
-    }
-
-    if (!validHttpUrl(mediaUrl) || !validHttpUrl(targetUrl)) {
-      return res.status(400).json({
-        error: "Invalid media or destination URL.",
-      });
-    }
-
-    if (packageKey === "home_image" && mediaType !== "image") {
-      return res.status(400).json({
-        error: "Homepage Image requires an image advert.",
-      });
-    }
-
-    if (packageKey === "home_video" && mediaType !== "video") {
-      return res.status(400).json({
-        error: "Homepage Video requires a video advert.",
-      });
-    }
-
-    // Keep placement values compatible with the existing PASONG
-    // Advertisement Manager shown in the admin dashboard.
-    const placement =
-      packageKey === "home_image" || packageKey === "home_video"
-        ? "home"
-        : packageKey === "sitewide"
-          ? "all"
-          : requestedPlacement || "home";
-
-    const txRef =
-      `PASONG-AD-${Date.now()}-${crypto.randomBytes(8).toString("hex")}`;
-
-    const campaignResult = await supabase
-      .from("advertising_campaigns")
-      .insert({
-        user_id: user.id,
-        package_key: packageKey,
-        amount: pkg.amount,
-        currency: "UGX",
-        days: pkg.days,
-        advertiser_name: advertiserName,
-        advertiser_email: advertiserEmail,
-        advertiser_phone: advertiserPhone || null,
-        title,
-        description,
-        target_url: targetUrl || null,
-        placement,
-        media_url: mediaUrl,
-        media_type: mediaType,
-        tx_ref: txRef,
-        payment_status: "pending",
-        status: "pending",
-      })
-      .select()
-      .single();
-
-    if (campaignResult.error || !campaignResult.data) {
-      console.error("Advertising campaign insert failed:", campaignResult.error);
-      return res.status(500).json({
-        error: "Unable to create advertising campaign.",
-        details: campaignResult.error?.message || null,
-      });
-    }
-
-    const customerName =
-      advertiserName ||
-      user.email?.split("@")[0] ||
-      "PASONG Advertiser";
-
-    const redirectUrl =
-      `${PASONG_API_PUBLIC_URL}/api/advertising/flutterwave/callback`;
-
-    const flutterwavePayload = {
-      tx_ref: txRef,
-      amount: pkg.amount,
-      currency: "UGX",
-      redirect_url: redirectUrl,
-      // Uganda customers can pay by card or MTN/Airtel Mobile Money.
-      // Flutterwave accepts payment_options as a comma + space separated list.
-      payment_options: "card, mobilemoneyuganda",
-      customer: {
-        email: advertiserEmail,
-        name: customerName,
-        ...(advertiserPhone ? { phonenumber: advertiserPhone } : {}),
-      },
-      customizations: {
-        title: "PASONG Advertising",
-        description: `${pkg.name} - ${pkg.days} days`,
-        logo: "https://pasong-frontend.vercel.app/favicon.ico",
-      },
-      meta: {
-        pasong_ad_campaign_id: campaignResult.data.id,
-        package_key: packageKey,
-        user_id: user.id,
-      },
-    };
-
-    const fwResponse = await fetch("https://api.flutterwave.com/v3/payments", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(flutterwavePayload),
-    });
-
-    const fwText = await fwResponse.text();
-    let fwData = {};
-
-    try {
-      fwData = fwText ? JSON.parse(fwText) : {};
-    } catch {
-      fwData = {};
-    }
-
-    if (!fwResponse.ok) {
-      console.error("Advertising Flutterwave checkout failed:", fwData);
-
-      await supabase
-        .from("advertising_campaigns")
-        .update({ status: "payment_failed" })
-        .eq("id", campaignResult.data.id);
-
-      return res.status(502).json({
-        error: "Flutterwave could not create the advertising checkout.",
-        details: fwData.message || fwData.error || null,
-      });
-    }
-
-    const checkoutUrl = fwData?.data?.link || fwData?.link || "";
-
-    if (!checkoutUrl) {
-      await supabase
-        .from("advertising_campaigns")
-        .update({ status: "payment_failed" })
-        .eq("id", campaignResult.data.id);
-
-      return res.status(502).json({
-        error: "Flutterwave did not return a checkout link.",
-      });
-    }
-
-    return res.json({
-      success: true,
-      provider: "FLUTTERWAVE",
-      campaign_id: campaignResult.data.id,
-      external_reference: txRef,
-      checkout_url: checkoutUrl,
-      amount: pkg.amount,
-      currency: "UGX",
-      days: pkg.days,
-    });
-  } catch (error) {
-    console.error("Advertising checkout error:", error);
-
-    return res.status(500).json({
-      error: "Advertising checkout setup failed.",
-      details: error?.message || null,
-    });
-  }
-});
-
-app.get("/api/advertising/flutterwave/callback", async (req, res) => {
-  const frontendUrl = PASONG_FRONTEND_URL.replace(/\/$/, "");
-
-  try {
-    const txRef = cleanAdText(req.query.tx_ref, 200);
-    const transactionId = cleanAdText(req.query.transaction_id, 100);
-    const status = cleanAdText(req.query.status, 40).toLowerCase();
-
-    if (!FLUTTERWAVE_SECRET_KEY || status !== "successful" || !txRef || !transactionId) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`
-      );
-    }
-
-    const verifyResponse = await fetch(
-      `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(transactionId)}/verify`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    const verifyText = await verifyResponse.text();
-    let verifyData = {};
-
-    try {
-      verifyData = verifyText ? JSON.parse(verifyText) : {};
-    } catch {
-      verifyData = {};
-    }
-
-    const payment = verifyData?.data || {};
-    const verifiedStatus = String(payment.status || "").trim().toLowerCase();
-    const verifiedTxRef = String(payment.tx_ref || "").trim();
-    const verifiedAmount = Number(payment.amount);
-    const verifiedCurrency = String(payment.currency || "").trim().toUpperCase();
-
-    if (
-      !verifyResponse.ok ||
-      String(verifyData.status || "").toLowerCase() !== "success" ||
-      verifiedStatus !== "successful" ||
-      verifiedTxRef !== txRef ||
-      !Number.isFinite(verifiedAmount) ||
-      verifiedCurrency !== "UGX"
-    ) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`
-      );
-    }
-
-    const campaignResult = await supabase
-      .from("advertising_campaigns")
-      .select("*")
-      .eq("tx_ref", txRef)
-      .maybeSingle();
-
-    if (campaignResult.error || !campaignResult.data) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
-          "Advertising campaign was not found."
-        )}`
-      );
-    }
-
-    const campaign = campaignResult.data;
-    const expectedAmount = Number(campaign.amount);
-
-    if (!Number.isFinite(expectedAmount) || verifiedAmount !== expectedAmount) {
-      await supabase
-        .from("advertising_campaigns")
-        .update({ status: "payment_failed" })
-        .eq("id", campaign.id);
-
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`
-      );
-    }
-
-    // Protect against duplicate callback processing.
-    if (campaign.payment_status === "paid" && campaign.advertisement_id) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=success&campaign_id=${encodeURIComponent(
-          campaign.id
-        )}`
-      );
-    }
-
-    const startAt = new Date();
-    const endAt = new Date(
-      startAt.getTime() + Number(campaign.days || 7) * 24 * 60 * 60 * 1000
-    );
-
-    const adResult = await supabase
-      .from("advertisements")
-      .insert({
-        title: campaign.title,
-        description: campaign.description,
-        image_url: campaign.media_url,
-        target_url: campaign.target_url,
-        placement: campaign.placement,
-        start_at: startAt.toISOString(),
-        end_at: endAt.toISOString(),
-        status: "pending",
-        clicks: 0,
-        impressions: 0,
-        created_by: campaign.user_id,
-        media_type: campaign.media_type,
-      })
-      .select()
-      .single();
-
-    if (adResult.error || !adResult.data) {
-      console.error("Advertising ad creation failed:", adResult.error);
-
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
-          "Payment was verified but PASONG could not create the campaign."
-        )}`
-      );
-    }
-
-    await supabase
-      .from("advertising_campaigns")
-      .update({
-        payment_status: "paid",
-        status: "pending",
-        transaction_id: transactionId,
-        advertisement_id: adResult.data.id,
-        start_at: startAt.toISOString(),
-        end_at: endAt.toISOString(),
-      })
-      .eq("id", campaign.id);
-
-    return res.redirect(
-      `${frontendUrl}/advertise.html?payment=success&campaign_id=${encodeURIComponent(
-        campaign.id
-      )}`
-    );
-  } catch (error) {
-    console.error("Advertising callback error:", error);
-
-    return res.redirect(
-      `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
-        "Unable to verify the advertising payment."
-      )}`
-    );
-  }
-});
-
 app.use(
   (error, req, res, next) => {
     if (
@@ -6793,6 +5679,68 @@ app.use(
   }
 );
 
+// PASONG ADVERTISING ONLY: MTN MoMo request-to-pay + verification.
+// Existing song/beat/producer/payment routes above are intentionally untouched.
+const PASONG_AD_PACKAGES = {
+  home_image: { amount: 25000, days: 7, name: "Homepage Image" },
+  home_video: { amount: 40000, days: 7, name: "Homepage Video" },
+  sitewide: { amount: 60000, days: 7, name: "PASONG Sitewide" },
+};
+const MTN_MOMO_BASE_URL = (process.env.MTN_MOMO_BASE_URL || "https://sandbox.momodeveloper.mtn.com").replace(/\/$/, "");
+const MTN_MOMO_TARGET_ENVIRONMENT = process.env.MTN_MOMO_TARGET_ENVIRONMENT || "sandbox";
+const MTN_MOMO_SUBSCRIPTION_KEY = process.env.MTN_MOMO_SUBSCRIPTION_KEY || process.env.MTN_SUBSCRIPTION_KEY || "";
+const MTN_MOMO_API_USER = process.env.MTN_MOMO_API_USER || process.env.MTN_API_USER || "";
+const MTN_MOMO_API_KEY = process.env.MTN_MOMO_API_KEY || process.env.MTN_API_KEY || "";
+function adText(v, n=5000) { return String(v == null ? "" : v).trim().slice(0,n); }
+function adPhone(v) { let p=String(v||"").replace(/[\s()+-]/g,""); if(p.startsWith("0"))p="256"+p.slice(1); if(p.startsWith("256"))return p; return p; }
+async function mtnAdToken() {
+  if (!MTN_MOMO_SUBSCRIPTION_KEY || !MTN_MOMO_API_USER || !MTN_MOMO_API_KEY) throw new Error("MTN MoMo Sandbox is not configured. Check MTN_MOMO_SUBSCRIPTION_KEY, MTN_MOMO_API_USER and MTN_MOMO_API_KEY in your backend environment.");
+  const r=await fetch(MTN_MOMO_BASE_URL+"/collection/token/",{method:"POST",headers:{"Authorization":"Basic "+Buffer.from(MTN_MOMO_API_USER+":"+MTN_MOMO_API_KEY).toString("base64"),"Ocp-Apim-Subscription-Key":MTN_MOMO_SUBSCRIPTION_KEY,"X-Target-Environment":MTN_MOMO_TARGET_ENVIRONMENT}});
+  const t=await r.text(); let d={}; try{d=t?JSON.parse(t):{}}catch{}
+  if(!r.ok||!d.access_token)throw new Error("MTN MoMo could not issue an access token (HTTP "+r.status+"). Check the Sandbox credentials and subscription key.");
+  return d.access_token;
+}
+app.get("/api/advertising/packages",(req,res)=>res.json({success:true,currency:"UGX",packages:Object.entries(PASONG_AD_PACKAGES).map(([key,p])=>({key,name:p.name,amount:p.amount,currency:"UGX",days:p.days}))}));
+app.post("/api/advertising/checkout",async(req,res)=>{
+ try {
+  const user=await getAuthenticatedUser(req); if(!user)return res.status(401).json({error:"Please sign in to advertise on PASONG."});
+  const b=req.body||{}, key=adText(b.package_key,40), pkg=PASONG_AD_PACKAGES[key];
+  if(!pkg)return res.status(400).json({error:"Choose a valid advertising package."});
+  const name=adText(b.advertiser_name,160), email=adText(b.advertiser_email||user.email,200), phone=adPhone(b.advertiser_phone), title=adText(b.title,200), desc=adText(b.description,5000), media=adText(b.media_url,2000), target=adText(b.target_url,1000), type=String(b.media_type||"image").toLowerCase()==="video"?"video":"image";
+  if(!name||!email||!title||!desc||!media)return res.status(400).json({error:"Advertiser name, email, title, description and advert media are required."});
+  if(!/^256\d{9}$/.test(phone))return res.status(400).json({error:"Enter a valid Uganda MTN mobile-money number, e.g. 0771234567."});
+  if(key==="home_image"&&type!=="image")return res.status(400).json({error:"Homepage Image requires image media."});
+  if(key==="home_video"&&type!=="video")return res.status(400).json({error:"Homepage Video requires video media."});
+  const ref=crypto.randomUUID(); const txRef="PASONG-AD-"+Date.now()+"-"+crypto.randomBytes(5).toString("hex");
+  const placement=key==="sitewide"?"all":"home";
+  const inserted=await supabase.from("advertising_campaigns").insert({user_id:user.id,package_key:key,amount:pkg.amount,currency:"UGX",days:pkg.days,advertiser_name:name,advertiser_email:email,advertiser_phone:phone,title,description:desc,target_url:target||null,placement,media_url:media,media_type:type,tx_ref:txRef,payment_status:"pending",status:"pending"}).select("id,amount,currency,tx_ref").single();
+  if(inserted.error||!inserted.data){console.error("PASONG ad campaign insert failed",inserted.error);return res.status(500).json({error:"Could not save advertising campaign. Check the advertising_campaigns table schema."});}
+  try {
+   const token=await mtnAdToken();
+   const reqBody={amount:String(pkg.amount),currency:"UGX",externalId:String(inserted.data.id),payer:{partyIdType:"MSISDN",partyId:phone},payerMessage:"PASONG advertising payment",payeeNote:pkg.name+" - "+pkg.days+" days"};
+   const pay=await fetch(MTN_MOMO_BASE_URL+"/collection/v1_0/requesttopay",{method:"POST",headers:{"Authorization":"Bearer "+token,"X-Reference-Id":ref,"X-Target-Environment":MTN_MOMO_TARGET_ENVIRONMENT,"Ocp-Apim-Subscription-Key":MTN_MOMO_SUBSCRIPTION_KEY,"Content-Type":"application/json","X-Callback-Url":process.env.MTN_MOMO_CALLBACK_URL||"https://pasong-api.vercel.app/api/advertising/mtn/callback"},body:JSON.stringify(reqBody)});
+   const pt=await pay.text(); if(!pay.ok){console.error("MTN advertising request failed",pay.status,pt);await supabase.from("advertising_campaigns").update({payment_status:"failed",status:"payment_failed"}).eq("id",inserted.data.id);return res.status(502).json({error:"MTN MoMo Sandbox rejected the advertising payment request. Your UGX package price has not been changed. Check the backend logs for the provider response."});}
+   return res.status(200).json({success:true,provider:"MTN_MOMO_SANDBOX",campaign_id:inserted.data.id,transaction_id:ref,tx_ref:txRef,amount:pkg.amount,currency:"UGX",message:"Payment request sent. Approve the request on your test phone, then keep this page open."});
+  } catch(e){console.error("MTN advertising checkout setup failed",e);return res.status(503).json({error:e.message||"MTN MoMo advertising checkout could not start."});}
+ }catch(e){console.error("PASONG advertising checkout error",e);return res.status(500).json({error:"Unable to start advertising checkout."});}
+});
+app.get("/api/advertising/payment/status",async(req,res)=>{
+ try{
+  const user=await getAuthenticatedUser(req);if(!user)return res.status(401).json({error:"Please sign in."});
+  const campaignId=adText(req.query.campaign_id,100), ref=adText(req.query.transaction_id,100);if(!campaignId||!ref)return res.status(400).json({error:"campaign_id and transaction_id are required."});
+  const found=await supabase.from("advertising_campaigns").select("id,user_id,tx_ref,payment_status,status,amount,currency").eq("id",campaignId).eq("user_id",user.id).maybeSingle();if(found.error||!found.data)return res.status(404).json({error:"Advertising campaign not found."});
+  if(found.data.payment_status==="paid")return res.json({success:true,paid:true,status:"SUCCESSFUL"});
+  const token=await mtnAdToken();const check=await fetch(MTN_MOMO_BASE_URL+"/collection/v1_0/requesttopay/"+encodeURIComponent(ref),{headers:{"Authorization":"Bearer "+token,"X-Target-Environment":MTN_MOMO_TARGET_ENVIRONMENT,"Ocp-Apim-Subscription-Key":MTN_MOMO_SUBSCRIPTION_KEY}});const txt=await check.text();let data={};try{data=txt?JSON.parse(txt):{}}catch{}
+  if(!check.ok)return res.status(502).json({error:"Unable to verify MTN Sandbox payment status."});
+  const status=String(data.status||"PENDING").toUpperCase();
+  if(status==="SUCCESSFUL") {const upd=await supabase.from("advertising_campaigns").update({payment_status:"paid",status:"pending"}).eq("id",campaignId).eq("user_id",user.id);if(upd.error)console.error("Ad paid update failed",upd.error);return res.json({success:true,paid:!upd.error,status:"SUCCESSFUL",message:"Payment confirmed. Your advert is awaiting PASONG Admin review."});}
+  if(status==="FAILED")await supabase.from("advertising_campaigns").update({payment_status:"failed",status:"payment_failed"}).eq("id",campaignId).eq("user_id",user.id);
+  return res.json({success:true,paid:false,status,message:status==="FAILED"?"MTN reports that this payment failed.":"Payment is still pending. Approve the request on your test phone."});
+ }catch(e){console.error("Ad payment status error",e);return res.status(500).json({error:"Could not check advertising payment status."});}
+});
+app.post("/api/advertising/mtn/callback",(req,res)=>res.status(200).json({received:true}));
+
+
 app.use(
   (req, res) => {
     res.status(404).json({
@@ -6811,3 +5759,4 @@ app.listen(
     );
   }
 );
+t
