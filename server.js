@@ -23,7 +23,8 @@ const CLOUDINARY_API_SECRET =
 const PASONG_PAYMENT_SECRET =
   process.env.PASONG_PAYMENT_SECRET;
 const CORS_ORIGIN =
-  process.env.CORS_ORIGIN || "";
+  process.env.CORS_ORIGIN ||
+  "https://pasong-frontend.vercel.app";
 
 if (
   !SUPABASE_URL ||
@@ -49,13 +50,6 @@ if (
 if (!PASONG_PAYMENT_SECRET) {
   console.error(
     "Missing PASONG_PAYMENT_SECRET"
-  );
-  process.exit(1);
-}
-
-if (!CORS_ORIGIN.trim()) {
-  console.error(
-    "Missing CORS_ORIGIN"
   );
   process.exit(1);
 }
@@ -417,71 +411,6 @@ app.get("/api/tip-split", (req, res) => {
     pasong_percent: 30,
   });
 });
-
-app.post(
-  "/api/profile/photo",
-  coverUpload.single("file"),
-  async (req, res) => {
-    try {
-      const user = await getAuthenticatedUser(req);
-
-      if (!user) {
-        return res.status(401).json({
-          error: "Authentication required."
-        });
-      }
-
-      if (!req.file) {
-        return res.status(400).json({
-          error: "No profile photo was supplied."
-        });
-      }
-
-      const result = await new Promise((resolve, reject) => {
-        const uploadStream = cloudinary.uploader.upload_stream(
-          {
-            folder: "pasong-profiles",
-            resource_type: "image",
-            transformation: [
-              {
-                width: 800,
-                height: 800,
-                crop: "fill",
-                gravity: "face"
-              }
-            ],
-            quality: "auto",
-            fetch_format: "auto"
-          },
-          (error, uploaded) => {
-            if (error) reject(error);
-            else resolve(uploaded);
-          }
-        );
-
-        uploadStream.end(req.file.buffer);
-      });
-
-      return res.json({
-        success: true,
-        secure_url: result.secure_url,
-        public_id: result.public_id,
-        width: result.width,
-        height: result.height,
-        profile_standard: "800x800_face_centered",
-        message: "Profile photo automatically cropped and optimized."
-      });
-    } catch (error) {
-      console.error("GLOBAL PROFILE PHOTO ERROR:", error);
-
-      return res.status(500).json({
-        error:
-          error?.message ||
-          "Profile photo processing failed."
-      });
-    }
-  }
-);
 
 app.post(
   "/api/upload/cover",
