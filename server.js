@@ -5728,32 +5728,96 @@ app.post('/api/licensing/requests', async (req,res)=>{
 });
 
 
-// Licensing checkout currently requires a configured payment-provider integration.
-// Never mark a licence paid from a browser redirect or client-supplied status.
-app.post("/api/licensing/checkout", async (req, res) => {
+// PASONG licensing checkout: MTN MoMo RequestToPay. Payment is recorded before
+// contacting MTN so an accepted request is never lost if the database write fails.
+// Secrets are read only from Render environment variables; no client can mark paid.
+const licensingEnv = (...names) => {
+  for (const name of names) if (process.env[name] && String(process.env[name]).trim()) return String(process.env[name]).trim();
+  return '';
+};
+const mtnConfig = () => ({
+  base: (licensingEnv('MTN_MOMO_BASE_URL','MTN_BASE_URL') || 'https://momodeveloper.mtn.com').replace(/\/$/, ''),
+  subscription: licensingEnv('MTN_MOMO_SUBSCRIPTION_KEY','MTN_COLLECTION_SUBSCRIPTION_KEY','MTN_SUBSCRIPTION_KEY'),
+  apiUser: licensingEnv('MTN_MOMO_API_USER','MTN_API_USER'),
+  apiKey: licensingEnv('MTN_MOMO_API_KEY','MTN_API_KEY'),
+  target: licensingEnv('MTN_MOMO_TARGET_ENVIRONMENT','MTN_TARGET_ENVIRONMENT') || 'production'
+});
+function licensingPhone(v) {
+  let p=String(v||'').replace(/[\s()-]/g,'');
+  if (/^0[37]\d{8}$/.test(p)) p='256'+p.slice(1);
+  else if (/^\+[37]\d+$/.test(p)) p=p.slice(1);
+  else if (p.startsWith('+')) p=p.slice(1);
+  return /^256[37]\d{8}$/.test(p) ? p : '';
+}
+async function mtnToken(cfg) {
+  const basic=Buffer.from(cfg.apiUser+':'+cfg.apiKey).toString('base64');
+  const r=await fetch(cfg.base+'/collection/token/',{method:'POST',headers:{'Authorization':'Basic '+basic,'Ocp-Apim-Subscription-Key':cfg.subscription}});
+  const txt=await r.text(); let data={}; try{data=JSON.parse(txt)}catch{}
+  if(!r.ok||!data.access_token) throw new Error('MTN authentication failed ('+r.status+'). Check the Collection API credentials and environment on Render.');
+  return data.access_token;
+}
+app.post('/api/licensing/checkout', async (req,res) => {
+  let paymentId=null;
   try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) {
-      return res.status(401).json({ success: false, error: "Please sign in first." });
-    }
-    const type = String(req.body?.licence_type || "").toLowerCase();
-    const amount = type === "dj" ? 35000 : type === "seller" ? 50000 : 0;
-    if (!amount) {
-      return res.status(400).json({ success: false, error: "Invalid licence type." });
-    }
-    return res.status(503).json({
-      success: false,
-      code: "LICENSING_PAYMENT_PROVIDER_NOT_CONFIGURED",
-      error: "Licensing applications can be submitted, but checkout is not enabled yet. Configure and deploy the payment-provider integration first.",
-      licence_type: type,
-      amount,
-      currency: "UGX"
-    });
-  } catch (error) {
-    console.error("Licensing checkout error:", error);
-    return res.status(500).json({ success: false, error: "Unable to start licensing checkout." });
+    const user=await getAuthenticatedUser(req);
+    if(!user) return res.status(401).json({success:false,error:'Please sign in first.'});
+    const type=String(req.body?.licence_type||'').toLowerCase();
+    const amount=type==='dj'?35000:type==='seller'?50000:0;
+    if(!amount) return res.status(400).json({success:false,error:'Invalid licence type.'});
+    const method=String(req.body?.payment_method||'MTN_MOMO').toUpperCase();
+    if(!['MTN_MOMO','MTN','MTN MOMO'].includes(method)) return res.status(400).json({success:false,error:'MTN Mobile Money is the only licensing payment method currently connected.'});
+    const phone=licensingPhone(req.body?.phone_number);
+    if(!phone) return res.status(400).json({success:false,error:'Enter a valid mobile money number with country code, for example +2567XXXXXXXX.'});
+    const cfg=mtnConfig();
+    if(!cfg.subscription||!cfg.apiUser||!cfg.apiKey) return res.status(503).json({success:false,code:'LICENSING_MTN_NOT_CONFIGURED',error:'The licensing checkout is not connected to MTN yet. The required MTN Collection credentials are not available to the server. No payment was requested.'});
+    // This table is supplied in PASONG_Licensing_Payments.sql. Insert BEFORE any MTN request.
+    const ref='PASONG-LIC-'+crypto.randomUUID();
+    const saved=await supabase.from('pasong_licence_payments').insert({user_id:user.id,licence_type:type,amount,currency:'UGX',provider:'MTN_MOMO',external_reference:ref,phone_number:phone,status:'initiating'}).select('id').single();
+    if(saved.error){console.error('Licensing payment record creation failed:',saved.error);return res.status(500).json({success:false,error:'Could not create the licensing payment record. No payment request was sent.'});}
+    paymentId=saved.data.id;
+    const token=await mtnToken(cfg);
+    const uuid=crypto.randomUUID();
+    const payload={amount:String(amount),currency:'UGX',externalId:ref,payer:{partyIdType:'MSISDN',partyId:phone},payerMessage:type==='dj'?'PASONG DJ licence':'PASONG Music Seller licence',payeeNote:ref};
+    const headers={'Authorization':'Bearer '+token,'X-Reference-Id':uuid,'X-Target-Environment':cfg.target,'Ocp-Apim-Subscription-Key':cfg.subscription,'Content-Type':'application/json','X-Callback-Url':licensingEnv('MTN_MOMO_CALLBACK_URL','MTN_CALLBACK_URL')};
+    if(!headers['X-Callback-Url']) delete headers['X-Callback-Url'];
+    const request=await fetch(cfg.base+'/collection/v1_0/requesttopay',{method:'POST',headers,body:JSON.stringify(payload)});
+    if(request.status!==202){const msg=await request.text();await supabase.from('pasong_licence_payments').update({status:'failed',provider_message:msg.slice(0,500)}).eq('id',paymentId);return res.status(502).json({success:false,error:'MTN did not accept the payment request ('+request.status+'). No licence has been activated.'});}
+    await supabase.from('pasong_licence_payments').update({status:'pending',provider_transaction_id:uuid}).eq('id',paymentId);
+    return res.status(202).json({success:true,payment_id:paymentId,external_reference:ref,message:'Payment request sent to '+phone+'. Approve the MTN Mobile Money prompt on your phone. PASONG will verify the payment before activating the licence.'});
+  } catch(e) {
+    console.error('Licensing checkout error:',e);
+    if(paymentId) await supabase.from('pasong_licence_payments').update({status:'failed',provider_message:String(e.message||e).slice(0,500)}).eq('id',paymentId);
+    return res.status(502).json({success:false,error:e.message||'Unable to start licensing payment. No licence has been activated.'});
   }
 });
+
+// Server-side payment status check. A browser redirect or client status is never trusted.
+app.get('/api/licensing/payment-status/:id', async (req,res)=>{
+  try {
+    const user=await getAuthenticatedUser(req); if(!user)return res.status(401).json({success:false,error:'Please sign in first.'});
+    const row=await supabase.from('pasong_licence_payments').select('*').eq('id',req.params.id).eq('user_id',user.id).maybeSingle();
+    if(row.error||!row.data)return res.status(404).json({success:false,error:'Licensing payment not found.'});
+    const p=row.data; if(p.status==='successful'||p.status==='failed')return res.json({success:true,status:p.status,licence_type:p.licence_type});
+    if(!p.provider_transaction_id)return res.json({success:true,status:p.status,licence_type:p.licence_type});
+    const cfg=mtnConfig(); if(!cfg.subscription||!cfg.apiUser||!cfg.apiKey)return res.json({success:true,status:p.status,licence_type:p.licence_type});
+    const token=await mtnToken(cfg);
+    const r=await fetch(cfg.base+'/collection/v1_0/requesttopay/'+encodeURIComponent(p.provider_transaction_id),{headers:{'Authorization':'Bearer '+token,'X-Target-Environment':cfg.target,'Ocp-Apim-Subscription-Key':cfg.subscription}});
+    const data=await r.json().catch(()=>({}));
+    if(!r.ok)return res.json({success:true,status:p.status,licence_type:p.licence_type});
+    const providerStatus=String(data.status||'').toUpperCase();
+    if(providerStatus==='SUCCESSFUL'){
+      await supabase.from('pasong_licence_payments').update({status:'successful',paid_at:new Date().toISOString(),provider_message:'MTN status verified'}).eq('id',p.id);
+      // Profile approval remains a separate PASONG admin action.
+      return res.json({success:true,status:'successful',licence_type:p.licence_type,message:'Payment verified. Your licence application still requires PASONG review.'});
+    }
+    if(['FAILED','REJECTED','TIMEOUT','EXPIRED'].includes(providerStatus)){
+      await supabase.from('pasong_licence_payments').update({status:'failed',provider_message:providerStatus}).eq('id',p.id);
+      return res.json({success:true,status:'failed',licence_type:p.licence_type});
+    }
+    return res.json({success:true,status:'pending',licence_type:p.licence_type});
+  }catch(e){console.error('Licensing payment status error:',e);return res.status(500).json({success:false,error:'Unable to check payment status.'});}
+});
+
 
 app.get('/api/licensing/my-requests',async(req,res)=>{
   try{const user=await getAuthenticatedUser(req);if(!user)return res.status(401).json({error:'Please sign in first.'});
@@ -5816,3 +5880,4 @@ app.listen(
     );
   }
 );
+t
