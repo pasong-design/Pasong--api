@@ -35,28 +35,35 @@ if (
   process.exit(1);
 }
 
-// Optional integrations must not crash the whole API when not configured.
-// Upload/payment routes should report a clear configuration error when used.
-const CLOUDINARY_READY = Boolean(
-  CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET
-);
-const PAYMENT_READY = Boolean(PASONG_PAYMENT_SECRET);
+if (
+  !CLOUDINARY_CLOUD_NAME ||
+  !CLOUDINARY_API_KEY ||
+  !CLOUDINARY_API_SECRET
+) {
+  console.error(
+    "Missing Cloudinary environment variables"
+  );
+  process.exit(1);
+}
 
-if (!CLOUDINARY_READY) {
-  console.warn("Cloudinary is not configured; upload endpoints may be unavailable.");
+if (!PASONG_PAYMENT_SECRET) {
+  console.error(
+    "Missing PASONG_PAYMENT_SECRET"
+  );
+  process.exit(1);
 }
-if (!PAYMENT_READY) {
-  console.warn("PASONG_PAYMENT_SECRET is not configured; payment endpoints may be unavailable.");
-}
+
 if (!CORS_ORIGIN.trim()) {
-  console.warn("CORS_ORIGIN is empty; using safe PASONG frontend defaults.");
+  console.error(
+    "Missing CORS_ORIGIN"
+  );
+  process.exit(1);
 }
 
-const allowedOrigins = [
-  ...CORS_ORIGIN.split(",").map((v) => v.trim()).filter(Boolean),
-  "https://pasong-frontend.vercel.app",
-  "https://pasong.vercel.app",
-].filter((v, i, a) => v && a.indexOf(v) === i);
+const allowedOrigins = CORS_ORIGIN
+  .split(",")
+  .map((v) => v.trim())
+  .filter(Boolean);
 
 app.use(
   cors({
@@ -94,13 +101,11 @@ const supabase = createClient(
   SUPABASE_SERVICE_ROLE_KEY
 );
 
-if (CLOUDINARY_READY) {
-  cloudinary.config({
-    cloud_name: CLOUDINARY_CLOUD_NAME,
-    api_key: CLOUDINARY_API_KEY,
-    api_secret: CLOUDINARY_API_SECRET,
-  });
-}
+cloudinary.config({
+  cloud_name: CLOUDINARY_CLOUD_NAME,
+  api_key: CLOUDINARY_API_KEY,
+  api_secret: CLOUDINARY_API_SECRET,
+});
 
 const coverUpload = multer({
   storage: multer.memoryStorage(),
@@ -5641,6 +5646,70 @@ app.post(
 );
 
 // ============================================================
+// PASONG LICENSING CHECKOUT — separate from existing song/beat checkout.
+// Requires FLW_SECRET_KEY on the backend. Never expose it to frontend.
+app.post('/api/licensing/checkout', async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ success:false, error:'Please sign in first.' });
+    const type = req.body?.licence_type === 'seller' ? 'seller' : (req.body?.licence_type === 'dj' ? 'dj' : null);
+    if (!type) return res.status(400).json({success:false,error:'Invalid licence type.'});
+    const method = String(req.body?.payment_method || '').toUpperCase();
+    if (!['MTN_MOMO','AIRTEL_MONEY','CARD'].includes(method)) return res.status(400).json({success:false,error:'Choose MTN Mobile Money, Airtel Money, or Visa/Mastercard.'});
+    const amount = type === 'dj' ? 35000 : 50000;
+    const table = type === 'dj' ? 'dj_license_profiles' : 'music_sellers';
+    const profile = await supabase.from(table).select('id,email,contact_phone,status').eq('user_id',user.id).maybeSingle();
+    if (profile.error || !profile.data) return res.status(400).json({success:false,error:'Submit your licence application before payment.'});
+    const flwSecret = process.env.FLW_SECRET_KEY;
+    if (!flwSecret) return res.status(503).json({success:false,error:'Secure checkout is not configured yet. PASONG must add FLW_SECRET_KEY to the backend environment before payments can be accepted.'});
+    const apiBase = String(process.env.PASONG_API_PUBLIC_URL || '').replace(/\/$/,'');
+    const frontend = String(process.env.PASONG_FRONTEND_URL || '').replace(/\/$/,'');
+    if (!apiBase || !frontend) return res.status(503).json({success:false,error:'Set PASONG_API_PUBLIC_URL and PASONG_FRONTEND_URL in backend environment.'});
+    const txRef = 'PASONG-LIC-' + type.toUpperCase() + '-' + crypto.randomUUID();
+    const callbackUrl = apiBase + '/api/licensing/verify-callback';
+    const payload = {
+      tx_ref: txRef, amount, currency:'UGX', redirect_url:callbackUrl,
+      payment_options: method === 'CARD' ? 'card' : 'mobilemoneyuganda',
+      customer:{email:user.email || profile.data.email || 'customer@pasong.com', phonenumber:profile.data.contact_phone || '', name:type === 'dj' ? 'PASONG DJ Licence Applicant' : 'PASONG Music Seller Applicant'},
+      customizations:{title:'PASONG Licensing',description:type === 'dj' ? 'DJ Licence — UGX 35,000' : 'Music Seller Licence — UGX 50,000/year',logo:frontend+'/favicon.ico'},
+      meta:{user_id:user.id,licence_type:type,payment_method:method}
+    };
+    const response = await fetch('https://api.flutterwave.com/v3/payments',{method:'POST',headers:{Authorization:'Bearer '+flwSecret,'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const data = await response.json().catch(()=>({}));
+    if (!response.ok || data.status !== 'success' || !data.data?.link) {
+      console.error('Licensing Flutterwave checkout failed:', data);
+      return res.status(502).json({success:false,error:'Payment provider could not start checkout. No payment was taken.'});
+    }
+    const saved = await supabase.from('licensing_payments').insert({user_id:user.id,licence_type:type,profile_id:profile.data.id,amount,currency:'UGX',payment_method:method,tx_ref:txRef,status:'pending',provider:'flutterwave'});
+    if (saved.error) { console.error('Licensing payment record failed:',saved.error); return res.status(500).json({success:false,error:'Could not save payment reference. Contact PASONG before paying.'}); }
+    return res.json({success:true,checkout_url:data.data.link,tx_ref:txRef});
+  } catch(e) { console.error('Licensing checkout error:',e); return res.status(500).json({success:false,error:'Unable to start licensing checkout.'}); }
+});
+
+// Flutterwave redirects here after checkout. We verify the transaction server-side;
+// a paid fee does not automatically approve the application.
+app.get('/api/licensing/verify-callback', async (req,res) => {
+  try {
+    const txId = String(req.query.transaction_id || '').trim();
+    const txRef = String(req.query.tx_ref || '').trim();
+    const status = String(req.query.status || '').toLowerCase();
+    const frontend = String(process.env.PASONG_FRONTEND_URL || '').replace(/\/$/,'');
+    if (!frontend) return res.status(503).send('PASONG_FRONTEND_URL is not configured.');
+    if (!txId || status !== 'successful' || !process.env.FLW_SECRET_KEY) return res.redirect(frontend + '/licensing.html?payment=not_verified');
+    const vr = await fetch('https://api.flutterwave.com/v3/transactions/'+encodeURIComponent(txId)+'/verify',{headers:{Authorization:'Bearer '+process.env.FLW_SECRET_KEY}});
+    const vd = await vr.json().catch(()=>({}));
+    const tx = vd.data || {};
+    const saved = await supabase.from('licensing_payments').select('*').eq('tx_ref',txRef).maybeSingle();
+    if (!vr.ok || vd.status !== 'success' || !saved.data || tx.status !== 'successful' || tx.tx_ref !== txRef || Number(tx.amount) < Number(saved.data.amount) || tx.currency !== 'UGX') {
+      if (saved.data) await supabase.from('licensing_payments').update({status:'failed',provider_transaction_id:String(txId)}).eq('tx_ref',txRef);
+      return res.redirect(frontend + '/licensing.html?payment=not_verified');
+    }
+    const upd = await supabase.from('licensing_payments').update({status:'paid',provider_transaction_id:String(txId),paid_at:new Date().toISOString()}).eq('tx_ref',txRef).eq('status','pending');
+    if (upd.error) console.error('Licensing payment verification save failed:',upd.error);
+    return res.redirect(frontend + '/licensing.html?payment=verified');
+  } catch(e) { console.error('Licensing verification error:',e); const f=String(process.env.PASONG_FRONTEND_URL||'').replace(/\/$/,''); return f ? res.redirect(f+'/licensing.html?payment=not_verified') : res.status(500).send('Unable to verify payment.'); }
+});
+
 // PASONG LICENSING CENTRE API — additive routes
 // These routes use the existing Supabase service-role client and
 // existing getAuthenticatedUser(req) helper. Keep before the 404 handler.
@@ -5725,34 +5794,6 @@ app.post('/api/licensing/requests', async (req,res)=>{
     if(r.error){console.error('Licence request:',r.error);return res.status(500).json({error:'Could not create licence request.'});}
     return res.status(201).json({success:true,message:'Licence request submitted. It is not a licence until payment is verified and the request is activated.',request:r.data});
   }catch(e){console.error('Licence request error:',e);return res.status(500).json({error:'Unable to create licence request.'});}
-});
-
-
-// Licensing checkout currently requires a configured payment-provider integration.
-// Never mark a licence paid from a browser redirect or client-supplied status.
-app.post("/api/licensing/checkout", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) {
-      return res.status(401).json({ success: false, error: "Please sign in first." });
-    }
-    const type = String(req.body?.licence_type || "").toLowerCase();
-    const amount = type === "dj" ? 35000 : type === "seller" ? 50000 : 0;
-    if (!amount) {
-      return res.status(400).json({ success: false, error: "Invalid licence type." });
-    }
-    return res.status(503).json({
-      success: false,
-      code: "LICENSING_PAYMENT_PROVIDER_NOT_CONFIGURED",
-      error: "Licensing applications can be submitted, but checkout is not enabled yet. Configure and deploy the payment-provider integration first.",
-      licence_type: type,
-      amount,
-      currency: "UGX"
-    });
-  } catch (error) {
-    console.error("Licensing checkout error:", error);
-    return res.status(500).json({ success: false, error: "Unable to start licensing checkout." });
-  }
 });
 
 app.get('/api/licensing/my-requests',async(req,res)=>{
