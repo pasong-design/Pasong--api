@@ -72,13 +72,13 @@ app.use(
         return callback(null, true);
       }
 
-      if (allowedOrigins.includes(origin)) {
+      const isKnownPasongOrigin = /^https:\/\/(?:[a-z0-9-]+\.)?pasong(?:-frontend)?\.(?:vercel\.app|com)$/i.test(origin);
+      const isVercelPreviewOrigin = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin);
+      if (allowedOrigins.includes("*") || allowedOrigins.includes(origin) || isKnownPasongOrigin || isVercelPreviewOrigin) {
         return callback(null, true);
       }
 
-      return callback(
-        new Error("CORS not allowed")
-      );
+      return callback(new Error("CORS not allowed"));
     },
   })
 );
@@ -5645,204 +5645,185 @@ app.post(
   }
 );
 
-app.use(
-  (error, req, res, next) => {
-    if (
-      error instanceof
-      multer.MulterError
-    ) {
-      return res.status(400).json({
-        error:
-          "File upload error",
-      });
-    }
-
-    if (error) {
-      if (
-        error.message ===
-        "CORS not allowed"
-      ) {
-        return res.status(403).json({
-          error:
-            "Request origin not allowed",
-        });
-      }
-
-      return res.status(400).json({
-        error:
-          error.message ||
-          "Request error",
-      });
-    }
-
-    next();
-  }
-);
-
-
-
 // ============================================================
-// PASONG MUSIC SELLER PROGRAM
-// Registration + rights-cleared catalogue + admin review.
-// This does NOT treat an ordinary stream/purchase as resale rights.
-// Only catalog entries explicitly marked distribution_rights_confirmed
-// and active are eligible to appear in the seller catalogue.
+// PASONG LICENSING ADMIN API
+// Supports the existing Licensing Admin screen; all actions require
+// an authenticated admin. Set PASONG_MUSIC_SELLER_ADMIN_EMAILS to a
+// comma-separated list of administrator email addresses.
 // ============================================================
-
-function isMusicSellerAdmin(user) {
-  const allowed = String(process.env.PASONG_MUSIC_SELLER_ADMIN_EMAILS || "")
-    .split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
-  return !!(user && user.email && allowed.includes(user.email.toLowerCase()));
+async function isPasongLicensingAdmin(user) {
+  if (!user) return false;
+  const roles = [user.app_metadata && user.app_metadata.role, user.user_metadata && user.user_metadata.role,
+    user.app_metadata && user.app_metadata.user_role, user.user_metadata && user.user_metadata.user_role]
+    .filter(Boolean).map(v => String(v).toLowerCase());
+  if (roles.some(v => ['admin', 'super_admin', 'owner'].includes(v))) return true;
+  const emails = String(process.env.PASONG_MUSIC_SELLER_ADMIN_EMAILS || '')
+    .split(',').map(v => v.trim().toLowerCase()).filter(Boolean);
+  return !!(user.email && emails.includes(String(user.email).toLowerCase()));
+}
+async function getLicensingAdmin(req, res) {
+  const user = await getAuthenticatedUser(req);
+  if (!user) { res.status(401).json({ success:false, error:'Sign in to your PASONG admin account first.' }); return null; }
+  if (!(await isPasongLicensingAdmin(user))) { res.status(403).json({ success:false, error:'Admin access required. Configure PASONG_MUSIC_SELLER_ADMIN_EMAILS with your admin email.' }); return null; }
+  return user;
 }
 
-app.get("/api/music-sellers/me", async (req, res) => {
+app.get('/api/admin/licensing/dj-applications', async (req,res) => {
   try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ error: "Please sign in to continue." });
-    const { data, error } = await supabase
-      .from("music_sellers")
-      .select("id,user_id,seller_type,legal_name,business_name,contact_phone,country,district,city,registration_number,status,review_note,created_at,updated_at")
-      .eq("user_id", user.id).maybeSingle();
-    if (error) throw error;
-    return res.json({ seller: data || null });
-  } catch (error) {
-    console.error("Music seller profile error:", error);
-    return res.status(500).json({ error: "Could not load your Music Seller profile." });
-  }
+    if (!await getLicensingAdmin(req,res)) return;
+    const r = await supabase.from('dj_license_profiles').select('*').order('created_at',{ascending:false}).limit(300);
+    if (r.error) { console.error('Admin DJ applications:',r.error); return res.status(500).json({success:false,error:'Could not load DJ applications. Check the PASONG licensing SQL tables.'}); }
+    return res.json({success:true,applications:r.data||[]});
+  } catch(e) { console.error(e); return res.status(500).json({success:false,error:'Unable to load DJ applications.'}); }
 });
 
-app.post("/api/music-sellers/register", async (req, res) => {
+app.get('/api/admin/music-sellers/pending', async (req,res) => {
   try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ error: "Please sign in to apply." });
-
-    const body = req.body || {};
-    const sellerType = String(body.seller_type || "").trim();
-    const legalName = String(body.legal_name || "").trim();
-    const businessName = String(body.business_name || "").trim();
-    const phone = String(body.contact_phone || "").trim();
-    const country = String(body.country || "Uganda").trim();
-    const district = String(body.district || "").trim();
-    const city = String(body.city || "").trim();
-    const registrationNumber = String(body.registration_number || "").trim();
-    const acceptedTerms = body.accepted_terms === true;
-
-    if (!["individual", "shop"].includes(sellerType)) {
-      return res.status(400).json({ error: "Choose individual seller or music shop." });
-    }
-    if (!legalName || !phone || !country || !district) {
-      return res.status(400).json({ error: "Complete your legal name, phone, country and district." });
-    }
-    if (sellerType === "shop" && !businessName) {
-      return res.status(400).json({ error: "Enter your music shop or business name." });
-    }
-    if (!acceptedTerms) {
-      return res.status(400).json({ error: "Please accept the seller programme terms." });
-    }
-
-    const { data: existing, error: lookupError } = await supabase
-      .from("music_sellers").select("id,status").eq("user_id", user.id).maybeSingle();
-    if (lookupError) throw lookupError;
-    if (existing && ["pending", "approved", "suspended"].includes(existing.status)) {
-      return res.status(409).json({ error: "You already have a Music Seller application.", seller_status: existing.status });
-    }
-
-    const payload = {
-      user_id: user.id,
-      email: user.email || null,
-      seller_type: sellerType,
-      legal_name: legalName,
-      business_name: sellerType === "shop" ? businessName : null,
-      contact_phone: phone,
-      country,
-      district,
-      city: city || null,
-      registration_number: registrationNumber || null,
-      status: "pending",
-      accepted_terms: true,
-      accepted_terms_at: new Date().toISOString(),
-      review_note: null,
-      updated_at: new Date().toISOString()
-    };
-    const { data, error } = await supabase
-      .from("music_sellers").upsert(payload, { onConflict: "user_id" })
-      .select("id,user_id,seller_type,legal_name,business_name,contact_phone,country,district,city,registration_number,status,created_at,updated_at")
-      .single();
-    if (error) throw error;
-    return res.status(201).json({
-      message: "Application submitted. PASONG Admin must review it before you can access the authorized catalogue.",
-      seller: data
-    });
-  } catch (error) {
-    console.error("Music seller registration error:", error);
-    return res.status(500).json({ error: "Could not submit your application. Check that music_sellers.sql has been run in Supabase." });
-  }
+    if (!await getLicensingAdmin(req,res)) return;
+    const r = await supabase.from('music_sellers').select('*').order('created_at',{ascending:false}).limit(300);
+    if (r.error) { console.error('Admin Music Sellers:',r.error); return res.status(500).json({success:false,error:'Could not load Music Seller applications. Check the Music Seller SQL table.'}); }
+    return res.json({success:true,applications:r.data||[]});
+  } catch(e) { console.error(e); return res.status(500).json({success:false,error:'Unable to load Music Seller applications.'}); }
 });
 
-app.get("/api/music-sellers/catalog", async (req, res) => {
+app.get('/api/admin/licensing/requests', async (req,res) => {
   try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ error: "Please sign in to continue." });
-    const { data: seller, error: sellerError } = await supabase
-      .from("music_sellers").select("id,status").eq("user_id", user.id).maybeSingle();
-    if (sellerError) throw sellerError;
-    if (!seller || seller.status !== "approved") {
-      return res.status(403).json({ error: "Your Music Seller account must be approved before viewing the authorized catalogue." });
-    }
-    const now = new Date().toISOString();
-    const { data, error } = await supabase
-      .from("music_seller_catalog")
-      .select("id,title,artist_name,genre,format_options,license_summary,license_fee,currency,license_start,license_end")
-      .eq("is_active", true)
-      .eq("distribution_rights_confirmed", true)
-      .lte("license_start", now)
-      .gte("license_end", now)
-      .order("title", { ascending: true });
-    if (error) throw error;
-    return res.json({ catalog: data || [], note: "Only catalogue entries with confirmed active distribution rights are listed. Follow the license scope and expiry for every title." });
-  } catch (error) {
-    console.error("Music seller catalogue error:", error);
-    return res.status(500).json({ error: "Could not load the authorized catalogue." });
-  }
+    if (!await getLicensingAdmin(req,res)) return;
+    const r = await supabase.from('pasong_licence_requests').select('*').order('created_at',{ascending:false}).limit(300);
+    if (r.error) { console.error('Admin licence requests:',r.error); return res.status(500).json({success:false,error:'Could not load licence requests. Check the PASONG licensing SQL table.'}); }
+    return res.json({success:true,requests:r.data||[]});
+  } catch(e) { console.error(e); return res.status(500).json({success:false,error:'Unable to load licence requests.'}); }
 });
 
-app.get("/api/admin/music-sellers/pending", async (req, res) => {
+app.patch('/api/admin/licensing/dj-applications/:id/review', async (req,res) => {
   try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ error: "Please sign in." });
-    if (!isMusicSellerAdmin(user)) return res.status(403).json({ error: "Admin access required." });
-    const { data, error } = await supabase.from("music_sellers")
-      .select("id,user_id,email,seller_type,legal_name,business_name,contact_phone,country,district,city,registration_number,status,created_at")
-      .eq("status", "pending").order("created_at", { ascending: true });
-    if (error) throw error;
-    return res.json({ applications: data || [] });
-  } catch (error) {
-    console.error("Music seller admin list error:", error);
-    return res.status(500).json({ error: "Could not load applications." });
-  }
+    const admin = await getLicensingAdmin(req,res); if (!admin) return;
+    const status = String((req.body||{}).status||'');
+    if (!['approved','rejected','suspended'].includes(status)) return res.status(400).json({success:false,error:'Invalid DJ application status.'});
+    const r = await supabase.from('dj_license_profiles').update({status,review_note:String(req.body.review_note||'').slice(0,2000)||null,reviewed_by:admin.id,reviewed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',req.params.id).select().maybeSingle();
+    if (r.error) { console.error('Review DJ application:',r.error); return res.status(500).json({success:false,error:'Could not update DJ application.'}); }
+    if (!r.data) return res.status(404).json({success:false,error:'DJ application not found.'});
+    return res.json({success:true,application:r.data,message:status==='approved'?'Application approved. Payment must still be verified before any paid licence is active.':'DJ application updated.'});
+  } catch(e) { console.error(e); return res.status(500).json({success:false,error:'Unable to review DJ application.'}); }
 });
 
-app.patch("/api/admin/music-sellers/:id/review", async (req, res) => {
+app.patch('/api/admin/music-sellers/:id/review', async (req,res) => {
+  try {
+    const admin = await getLicensingAdmin(req,res); if (!admin) return;
+    const status = String((req.body||{}).status||'');
+    if (!['approved','rejected','suspended'].includes(status)) return res.status(400).json({success:false,error:'Invalid Music Seller status.'});
+    const r = await supabase.from('music_sellers').update({status,review_note:String(req.body.review_note||'').slice(0,2000)||null,reviewed_by:admin.id,reviewed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',req.params.id).select().maybeSingle();
+    if (r.error) { console.error('Review Music Seller:',r.error); return res.status(500).json({success:false,error:'Could not update Music Seller application.'}); }
+    if (!r.data) return res.status(404).json({success:false,error:'Music Seller application not found.'});
+    return res.json({success:true,application:r.data,message:status==='approved'?'Application approved. Payment must still be verified before any paid licence is active.':'Music Seller application updated.'});
+  } catch(e) { console.error(e); return res.status(500).json({success:false,error:'Unable to review Music Seller application.'}); }
+});
+
+app.patch('/api/admin/licensing/requests/:id/review', async (req,res) => {
+  try {
+    const admin = await getLicensingAdmin(req,res); if (!admin) return;
+    const status = String((req.body||{}).status||'');
+    if (!['approved_awaiting_payment','rejected','revoked'].includes(status)) return res.status(400).json({success:false,error:'Invalid licence request status.'});
+    const r = await supabase.from('pasong_licence_requests').update({status,admin_note:String(req.body.admin_note||'').slice(0,2000)||null,reviewed_by:admin.id,reviewed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',req.params.id).select().maybeSingle();
+    if (r.error) { console.error('Review licence request:',r.error); return res.status(500).json({success:false,error:'Could not update licence request.'}); }
+    if (!r.data) return res.status(404).json({success:false,error:'Licence request not found.'});
+    return res.json({success:true,request:r.data,message:'Request status updated. This does not mark payment as paid or activate a licence.'});
+  } catch(e) { console.error(e); return res.status(500).json({success:false,error:'Unable to review licence request.'}); }
+});
+
+// ============================================================
+// PASONG LICENSING CENTRE API — additive routes
+// These routes use the existing Supabase service-role client and
+// existing getAuthenticatedUser(req) helper. Keep before the 404 handler.
+// ============================================================
+function licensingText(v, max = 200) { return String(v || '').trim().slice(0, max); }
+function licensingScopes(v) { return Array.isArray(v) ? v.map(x => licensingText(x, 60)).filter(Boolean).slice(0, 10) : []; }
+
+app.post('/api/dj-licenses/register', async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ error: "Please sign in." });
-    if (!isMusicSellerAdmin(user)) return res.status(403).json({ error: "Admin access required." });
-    const status = String((req.body || {}).status || "").trim();
-    const reviewNote = String((req.body || {}).review_note || "").trim();
-    if (!["approved", "rejected", "suspended"].includes(status)) {
-      return res.status(400).json({ error: "Status must be approved, rejected, or suspended." });
-    }
-    const { data, error } = await supabase.from("music_sellers")
-      .update({ status, review_note: reviewNote || null, reviewed_by: user.id, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq("id", req.params.id).eq("status", "pending")
-      .select("id,user_id,status,review_note,reviewed_at").maybeSingle();
-    if (error) throw error;
-    if (!data) return res.status(404).json({ error: "Pending application not found." });
-    return res.json({ message: "Application reviewed.", seller: data });
-  } catch (error) {
-    console.error("Music seller review error:", error);
-    return res.status(500).json({ error: "Could not review this application." });
-  }
+    if (!user) return res.status(401).json({ error: 'Please sign in to your PASONG account first.' });
+    const b = req.body || {};
+    const dj_name = licensingText(b.dj_name, 120), legal_name = licensingText(b.legal_name, 120);
+    const contact_phone = licensingText(b.contact_phone, 40), country = licensingText(b.country, 100);
+    const district = licensingText(b.district, 120), requested_scopes = licensingScopes(b.requested_scopes);
+    if (!dj_name || !legal_name || !contact_phone || !country || !district || !b.accepted_terms || !requested_scopes.length)
+      return res.status(400).json({ error: 'Complete all required fields, select at least one DJ activity, and accept the terms.' });
+    const payload = { user_id:user.id, email:user.email || null, dj_name, legal_name, contact_phone, country, district, city:licensingText(b.city,120)||null, requested_scopes, accepted_terms:true, accepted_terms_at:new Date().toISOString(), updated_at:new Date().toISOString() };
+    const result = await supabase.from('dj_license_profiles').upsert(payload, { onConflict:'user_id' }).select().single();
+    if (result.error) { console.error('DJ licence registration:', result.error); return res.status(500).json({ error: 'DJ application could not be saved. Check that PASONG Licensing SQL has been run in Supabase.' }); }
+    return res.status(201).json({ success:true, message:'DJ licence application submitted. It is not active until approved and payment is verified.', profile:result.data });
+  } catch (e) { console.error('DJ licence registration error:', e); return res.status(500).json({ error:'Unable to submit DJ licence application.' }); }
+});
+
+app.get('/api/dj-licenses/me', async (req, res) => {
+  try { const user=await getAuthenticatedUser(req); if(!user) return res.status(401).json({error:'Please sign in first.'});
+    const r=await supabase.from('dj_license_profiles').select('*').eq('user_id',user.id).maybeSingle();
+    if(r.error) { console.error('DJ profile:',r.error); return res.status(500).json({error:'Unable to load DJ application. Check licensing database setup.'}); }
+    return res.json({success:true,profile:r.data});
+  } catch(e) { return res.status(500).json({error:'Unable to load DJ application.'}); }
+});
+
+app.post('/api/music-sellers/register', async (req, res) => {
+  try {
+    const user=await getAuthenticatedUser(req); if(!user) return res.status(401).json({error:'Please sign in to your PASONG account first.'});
+    const b=req.body||{}; const seller_type=b.seller_type==='shop'?'shop':'individual';
+    const legal_name=licensingText(b.legal_name,120), contact_phone=licensingText(b.contact_phone,40), country=licensingText(b.country,100), district=licensingText(b.district,120), business_name=licensingText(b.business_name,150);
+    if(!legal_name||!contact_phone||!country||!district||!b.accepted_terms||(seller_type==='shop'&&!business_name)) return res.status(400).json({error:'Complete all required fields and accept the terms.'});
+    const payload={user_id:user.id,email:user.email||null,seller_type,legal_name,business_name:business_name||null,contact_phone,country,district,city:licensingText(b.city,120)||null,registration_number:licensingText(b.registration_number,120)||null,accepted_terms:true,accepted_terms_at:new Date().toISOString(),updated_at:new Date().toISOString()};
+    const r=await supabase.from('music_sellers').upsert(payload,{onConflict:'user_id'}).select().single();
+    if(r.error){console.error('Music seller registration:',r.error);return res.status(500).json({error:'Music Seller application could not be saved. Check that the Music Seller SQL has been run in Supabase.'});}
+    return res.status(201).json({success:true,message:'Music Seller application submitted. It is not active until approved and payment is verified.',seller:r.data});
+  } catch(e){console.error('Music seller registration error:',e);return res.status(500).json({error:'Unable to submit Music Seller application.'});}
+});
+
+app.get('/api/music-sellers/me', async (req,res)=>{
+  try{const user=await getAuthenticatedUser(req);if(!user)return res.status(401).json({error:'Please sign in first.'});
+    const r=await supabase.from('music_sellers').select('*').eq('user_id',user.id).maybeSingle();
+    if(r.error){console.error('Music seller profile:',r.error);return res.status(500).json({error:'Unable to load Music Seller application. Check database setup.'});}
+    return res.json({success:true,seller:r.data});
+  }catch(e){return res.status(500).json({error:'Unable to load Music Seller application.'});}
+});
+
+app.get('/api/licensing/catalog', async (req,res)=>{
+  try{const user=await getAuthenticatedUser(req);if(!user)return res.status(401).json({error:'Please sign in first.'});
+    const type=req.query.type==='seller'?'seller':'dj';
+    const table='pasong_licensing_catalog';
+    let q=supabase.from(table).select('*').eq('is_active',true).eq('rights_confirmed',true).lte('rights_valid_from',new Date().toISOString()).gte('rights_valid_until',new Date().toISOString()).order('title');
+    const r=await q;
+    if(r.error){console.error('Licensing catalogue:',r.error);return res.status(500).json({error:'Unable to load licensing catalogue. Check PASONG Licensing SQL setup.'});}
+    let catalog=(r.data||[]).map(t=>({...t,licence_summary:t.licence_summary||'',dj_performance_rights:!!t.dj_performance_rights,dj_mix_recording_rights:!!t.dj_mix_recording_rights,dj_online_distribution_rights:!!t.dj_online_distribution_rights,digital_distribution_rights:!!t.digital_distribution_rights,physical_distribution_rights:!!t.physical_distribution_rights}));
+    if(type==='seller') catalog=catalog.filter(t=>t.digital_distribution_rights||t.physical_distribution_rights);
+    else catalog=catalog.filter(t=>t.dj_performance_rights||t.dj_mix_recording_rights||t.dj_online_distribution_rights);
+    return res.json({success:true,type,note:'Only titles with confirmed, current rights are shown.',catalog});
+  }catch(e){console.error('Licensing catalogue error:',e);return res.status(500).json({error:'Unable to load licensing catalogue.'});}
+});
+
+app.post('/api/licensing/requests', async (req,res)=>{
+  try{const user=await getAuthenticatedUser(req);if(!user)return res.status(401).json({error:'Please sign in first.'});
+    const b=req.body||{},type=b.licence_type==='seller'?'seller':'dj',scope=licensingText(b.scope,80),catalog_id=licensingText(b.catalog_id,80);
+    if(!catalog_id||!scope||b.accepted_terms!==true)return res.status(400).json({error:'Confirm the licence terms and choose a valid licence scope.'});
+    const profileTable=type==='dj'?'dj_license_profiles':'music_sellers';
+    const profile=await supabase.from(profileTable).select('id,status').eq('user_id',user.id).maybeSingle();
+    if(profile.error)return res.status(500).json({error:'Unable to verify your application.'});
+    if(!profile.data||profile.data.status!=='approved')return res.status(403).json({error:'Your relevant application must be approved before requesting catalogue licences.'});
+    const c=await supabase.from('pasong_licensing_catalog').select('*').eq('id',catalog_id).eq('is_active',true).eq('rights_confirmed',true).maybeSingle();
+    if(c.error||!c.data)return res.status(404).json({error:'This title is not currently available for licensing.'});
+    const t=c.data; const allowed=type==='dj'?({public_performance:t.dj_performance_rights,dj_mix_recording:t.dj_mix_recording_rights,online_mix_distribution:t.dj_online_distribution_rights}[scope]):({digital_distribution:t.digital_distribution_rights,physical_distribution:t.physical_distribution_rights}[scope]);
+    if(!allowed)return res.status(403).json({error:'The rights holder has not authorised that use for this title.'});
+    const feeKey={public_performance:'dj_performance_fee',dj_mix_recording:'dj_mix_recording_fee',online_mix_distribution:'dj_online_distribution_fee',digital_distribution:'digital_distribution_fee',physical_distribution:'physical_distribution_fee'}[scope];
+    const r=await supabase.from('pasong_licence_requests').insert({user_id:user.id,licence_type:type,profile_id:profile.data.id,catalog_id:t.id,track_title:t.title,artist_name:t.artist_name,requested_scope:scope,fee:Number(t[feeKey]||0),currency:t.currency||'UGX',status:'pending_review',accepted_terms:true,accepted_terms_at:new Date().toISOString()}).select().single();
+    if(r.error){console.error('Licence request:',r.error);return res.status(500).json({error:'Could not create licence request.'});}
+    return res.status(201).json({success:true,message:'Licence request submitted. It is not a licence until payment is verified and the request is activated.',request:r.data});
+  }catch(e){console.error('Licence request error:',e);return res.status(500).json({error:'Unable to create licence request.'});}
+});
+
+app.get('/api/licensing/my-requests',async(req,res)=>{
+  try{const user=await getAuthenticatedUser(req);if(!user)return res.status(401).json({error:'Please sign in first.'});
+    const r=await supabase.from('pasong_licence_requests').select('*').eq('user_id',user.id).order('created_at',{ascending:false});
+    if(r.error){console.error('My licence requests:',r.error);return res.status(500).json({error:'Unable to load your licence requests.'});}
+    return res.json({success:true,requests:r.data||[]});
+  }catch(e){return res.status(500).json({error:'Unable to load licence requests.'});}
 });
 
 
@@ -5879,20 +5860,6 @@ app.use(
     next();
   }
 );
-
-
-// PASONG LICENSING CENTRE: DJ + Music Seller applications and licence requests.
-// Requests are not active licences; payment verification/certificates are future integration stages.
-app.get('/api/dj-licenses/me', async (req,res)=>{try{const user=await getAuthenticatedUser(req);if(!user)return res.status(401).json({error:'Please sign in.'});const {data,error}=await supabase.from('dj_license_profiles').select('id,dj_name,legal_name,contact_phone,country,district,city,requested_scopes,status,review_note,created_at').eq('user_id',user.id).maybeSingle();if(error)throw error;res.json({profile:data||null});}catch(e){console.error(e);res.status(500).json({error:'Could not load DJ profile. Run licensing-centre.sql.'});}});
-app.post('/api/dj-licenses/register',async(req,res)=>{try{const user=await getAuthenticatedUser(req);if(!user)return res.status(401).json({error:'Please sign in to apply.'});const b=req.body||{},scopes=Array.isArray(b.requested_scopes)?b.requested_scopes.filter(x=>['public_performance','dj_mix_recording','online_mix_distribution'].includes(x)):[];const dj=String(b.dj_name||'').trim(),legal=String(b.legal_name||'').trim(),phone=String(b.contact_phone||'').trim(),country=String(b.country||'Uganda').trim(),district=String(b.district||'').trim();if(!dj||!legal||!phone||!country||!district||!scopes.length)return res.status(400).json({error:'Complete required fields and select at least one DJ activity.'});if(b.accepted_terms!==true)return res.status(400).json({error:'Please accept the DJ licence terms.'});const {data:old,error:oe}=await supabase.from('dj_license_profiles').select('id,status').eq('user_id',user.id).maybeSingle();if(oe)throw oe;if(old&&['pending','approved','suspended'].includes(old.status))return res.status(409).json({error:'You already have a DJ application.',status:old.status});const {data,error}=await supabase.from('dj_license_profiles').upsert({user_id:user.id,email:user.email||null,dj_name:dj,legal_name:legal,contact_phone:phone,country,district,city:String(b.city||'').trim()||null,requested_scopes:scopes,accepted_terms:true,accepted_terms_at:new Date().toISOString(),status:'pending',updated_at:new Date().toISOString()},{onConflict:'user_id'}).select('id,dj_name,status,requested_scopes').single();if(error)throw error;res.status(201).json({message:'DJ application submitted for PASONG Admin review.',profile:data});}catch(e){console.error(e);res.status(500).json({error:'Could not submit DJ application. Run licensing-centre.sql first.'});}});
-app.get('/api/licensing/catalog',async(req,res)=>{try{const user=await getAuthenticatedUser(req);if(!user)return res.status(401).json({error:'Please sign in.'});const type=String(req.query.type||'dj');if(!['dj','seller'].includes(type))return res.status(400).json({error:'Invalid catalogue type.'});const table=type==='dj'?'dj_license_profiles':'music_sellers';const {data:p,error:pe}=await supabase.from(table).select('status').eq('user_id',user.id).maybeSingle();if(pe)throw pe;if(!p||p.status!=='approved')return res.status(403).json({error:`Your ${type==='dj'?'DJ':'Music Seller'} application must be approved first.`});const now=new Date().toISOString();let q=supabase.from('pasong_licensing_catalog').select('id,title,artist_name,genre,licence_summary,currency,dj_performance_fee,dj_mix_recording_fee,dj_online_distribution_fee,digital_distribution_fee,physical_distribution_fee,rights_valid_until,dj_performance_rights,dj_mix_recording_rights,dj_online_distribution_rights,digital_distribution_rights,physical_distribution_rights').eq('is_active',true).eq('rights_confirmed',true).lte('rights_valid_from',now).gte('rights_valid_until',now).order('title');q=type==='dj'?q.or('dj_performance_rights.eq.true,dj_mix_recording_rights.eq.true,dj_online_distribution_rights.eq.true'):q.or('digital_distribution_rights.eq.true,physical_distribution_rights.eq.true');const {data,error}=await q;if(error)throw error;res.json({catalog:data||[],note:'Only titles with active confirmed permissions for the displayed use are listed.'});}catch(e){console.error(e);res.status(500).json({error:'Could not load catalogue. Run licensing-centre.sql and add rights-cleared titles.'});}});
-app.post('/api/licensing/requests',async(req,res)=>{try{const user=await getAuthenticatedUser(req);if(!user)return res.status(401).json({error:'Please sign in.'});const b=req.body||{},type=String(b.licence_type||''),scope=String(b.scope||''),id=String(b.catalog_id||'');const valid={dj:['public_performance','dj_mix_recording','online_mix_distribution'],seller:['digital_distribution','physical_distribution']};if(!valid[type]||!valid[type].includes(scope)||!id)return res.status(400).json({error:'Select a valid track and licence scope.'});if(b.accepted_terms!==true)return res.status(400).json({error:'Accept the licence terms first.'});const profileTable=type==='dj'?'dj_license_profiles':'music_sellers';const {data:p,error:pe}=await supabase.from(profileTable).select('id,status').eq('user_id',user.id).maybeSingle();if(pe)throw pe;if(!p||p.status!=='approved')return res.status(403).json({error:'An approved profile is required.'});const now=new Date().toISOString();const {data:t,error:te}=await supabase.from('pasong_licensing_catalog').select('*').eq('id',id).eq('is_active',true).eq('rights_confirmed',true).lte('rights_valid_from',now).gte('rights_valid_until',now).maybeSingle();if(te)throw te;if(!t)return res.status(404).json({error:'This title is not currently cleared for licensing.'});const rights={public_performance:'dj_performance_rights',dj_mix_recording:'dj_mix_recording_rights',online_mix_distribution:'dj_online_distribution_rights',digital_distribution:'digital_distribution_rights',physical_distribution:'physical_distribution_rights'},fees={public_performance:'dj_performance_fee',dj_mix_recording:'dj_mix_recording_fee',online_mix_distribution:'dj_online_distribution_fee',digital_distribution:'digital_distribution_fee',physical_distribution:'physical_distribution_fee'};if(!t[rights[scope]])return res.status(403).json({error:'The rights holder has not authorised this use for this title.'});const {data,error}=await supabase.from('pasong_licence_requests').insert({user_id:user.id,licence_type:type,profile_id:p.id,catalog_id:t.id,track_title:t.title,artist_name:t.artist_name,requested_scope:scope,fee:Number(t[fees[scope]]||0),currency:t.currency||'UGX',status:'pending_review',accepted_terms:true,accepted_terms_at:now}).select('id,licence_type,track_title,artist_name,requested_scope,fee,currency,status,created_at').single();if(error)throw error;res.status(201).json({message:'Request sent to PASONG Admin. It is not an active licence and no payment has been taken.',request:data});}catch(e){console.error(e);res.status(500).json({error:'Could not submit request. Run licensing-centre.sql first.'});}});
-app.get('/api/licensing/my-requests',async(req,res)=>{try{const user=await getAuthenticatedUser(req);if(!user)return res.status(401).json({error:'Please sign in.'});const {data,error}=await supabase.from('pasong_licence_requests').select('id,licence_type,track_title,artist_name,requested_scope,fee,currency,status,admin_note,created_at').eq('user_id',user.id).order('created_at',{ascending:false}).limit(100);if(error)throw error;res.json({requests:data||[]});}catch(e){console.error(e);res.status(500).json({error:'Could not load licence requests.'});}});
-app.get('/api/admin/licensing/dj-applications',async(req,res)=>{try{const u=await getAuthenticatedUser(req);if(!u)return res.status(401).json({error:'Please sign in.'});if(!isMusicSellerAdmin(u))return res.status(403).json({error:'Admin access required.'});const {data,error}=await supabase.from('dj_license_profiles').select('*').eq('status','pending').order('created_at');if(error)throw error;res.json({applications:data||[]});}catch(e){console.error(e);res.status(500).json({error:'Could not load DJ applications.'});}});
-app.patch('/api/admin/licensing/dj-applications/:id/review',async(req,res)=>{try{const u=await getAuthenticatedUser(req);if(!u)return res.status(401).json({error:'Please sign in.'});if(!isMusicSellerAdmin(u))return res.status(403).json({error:'Admin access required.'});const status=String((req.body||{}).status||'');if(!['approved','rejected','suspended'].includes(status))return res.status(400).json({error:'Invalid status.'});const {data,error}=await supabase.from('dj_license_profiles').update({status,review_note:String(req.body.review_note||'').trim()||null,reviewed_by:u.id,reviewed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',req.params.id).eq('status','pending').select('id,dj_name,status,review_note').maybeSingle();if(error)throw error;if(!data)return res.status(404).json({error:'Pending DJ application not found.'});res.json({profile:data});}catch(e){console.error(e);res.status(500).json({error:'Could not review DJ application.'});}});
-app.get('/api/admin/licensing/requests',async(req,res)=>{try{const u=await getAuthenticatedUser(req);if(!u)return res.status(401).json({error:'Please sign in.'});if(!isMusicSellerAdmin(u))return res.status(403).json({error:'Admin access required.'});const {data,error}=await supabase.from('pasong_licence_requests').select('*').in('status',['pending_review','approved_awaiting_payment']).order('created_at');if(error)throw error;res.json({requests:data||[]});}catch(e){console.error(e);res.status(500).json({error:'Could not load licence requests.'});}});
-app.patch('/api/admin/licensing/requests/:id/review',async(req,res)=>{try{const u=await getAuthenticatedUser(req);if(!u)return res.status(401).json({error:'Please sign in.'});if(!isMusicSellerAdmin(u))return res.status(403).json({error:'Admin access required.'});const status=String((req.body||{}).status||'');if(!['approved_awaiting_payment','rejected'].includes(status))return res.status(400).json({error:'Invalid review status.'});const {data,error}=await supabase.from('pasong_licence_requests').update({status,admin_note:String(req.body.admin_note||'').trim()||null,reviewed_by:u.id,reviewed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',req.params.id).eq('status','pending_review').select('id,track_title,requested_scope,status,admin_note').maybeSingle();if(error)throw error;if(!data)return res.status(404).json({error:'Pending request not found.'});res.json({message:status==='rejected'?'Request rejected.':'Approved pending payment integration; not an active licence.',request:data});}catch(e){console.error(e);res.status(500).json({error:'Could not review request.'});}});
-
 
 app.use(
   (req, res) => {
