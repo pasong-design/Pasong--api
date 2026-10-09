@@ -72,13 +72,13 @@ app.use(
         return callback(null, true);
       }
 
-      const isKnownPasongOrigin = /^https:\/\/(?:[a-z0-9-]+\.)?pasong(?:-frontend)?\.(?:vercel\.app|com)$/i.test(origin);
-      const isVercelPreviewOrigin = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin);
-      if (allowedOrigins.includes("*") || allowedOrigins.includes(origin) || isKnownPasongOrigin || isVercelPreviewOrigin) {
+      if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
 
-      return callback(new Error("CORS not allowed"));
+      return callback(
+        new Error("CORS not allowed")
+      );
     },
   })
 );
@@ -5646,92 +5646,70 @@ app.post(
 );
 
 // ============================================================
-// PASONG LICENSING ADMIN API
-// Supports the existing Licensing Admin screen; all actions require
-// an authenticated admin. Set PASONG_MUSIC_SELLER_ADMIN_EMAILS to a
-// comma-separated list of administrator email addresses.
-// ============================================================
-async function isPasongLicensingAdmin(user) {
-  if (!user) return false;
-  const roles = [user.app_metadata && user.app_metadata.role, user.user_metadata && user.user_metadata.role,
-    user.app_metadata && user.app_metadata.user_role, user.user_metadata && user.user_metadata.user_role]
-    .filter(Boolean).map(v => String(v).toLowerCase());
-  if (roles.some(v => ['admin', 'super_admin', 'owner'].includes(v))) return true;
-  const emails = String(process.env.PASONG_MUSIC_SELLER_ADMIN_EMAILS || '')
-    .split(',').map(v => v.trim().toLowerCase()).filter(Boolean);
-  return !!(user.email && emails.includes(String(user.email).toLowerCase()));
-}
-async function getLicensingAdmin(req, res) {
-  const user = await getAuthenticatedUser(req);
-  if (!user) { res.status(401).json({ success:false, error:'Sign in to your PASONG admin account first.' }); return null; }
-  if (!(await isPasongLicensingAdmin(user))) { res.status(403).json({ success:false, error:'Admin access required. Configure PASONG_MUSIC_SELLER_ADMIN_EMAILS with your admin email.' }); return null; }
-  return user;
-}
-
-app.get('/api/admin/licensing/dj-applications', async (req,res) => {
+// PASONG LICENSING CHECKOUT — separate from existing song/beat checkout.
+// Requires FLW_SECRET_KEY on the backend. Never expose it to frontend.
+app.post('/api/licensing/checkout', async (req, res) => {
   try {
-    if (!await getLicensingAdmin(req,res)) return;
-    const r = await supabase.from('dj_license_profiles').select('*').order('created_at',{ascending:false}).limit(300);
-    if (r.error) { console.error('Admin DJ applications:',r.error); return res.status(500).json({success:false,error:'Could not load DJ applications. Check the PASONG licensing SQL tables.'}); }
-    return res.json({success:true,applications:r.data||[]});
-  } catch(e) { console.error(e); return res.status(500).json({success:false,error:'Unable to load DJ applications.'}); }
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ success:false, error:'Please sign in first.' });
+    const type = req.body?.licence_type === 'seller' ? 'seller' : (req.body?.licence_type === 'dj' ? 'dj' : null);
+    if (!type) return res.status(400).json({success:false,error:'Invalid licence type.'});
+    const method = String(req.body?.payment_method || '').toUpperCase();
+    if (!['MTN_MOMO','AIRTEL_MONEY','CARD'].includes(method)) return res.status(400).json({success:false,error:'Choose MTN Mobile Money, Airtel Money, or Visa/Mastercard.'});
+    const amount = type === 'dj' ? 35000 : 50000;
+    const table = type === 'dj' ? 'dj_license_profiles' : 'music_sellers';
+    const profile = await supabase.from(table).select('id,email,contact_phone,status').eq('user_id',user.id).maybeSingle();
+    if (profile.error || !profile.data) return res.status(400).json({success:false,error:'Submit your licence application before payment.'});
+    const flwSecret = process.env.FLW_SECRET_KEY;
+    if (!flwSecret) return res.status(503).json({success:false,error:'Secure checkout is not configured yet. PASONG must add FLW_SECRET_KEY to the backend environment before payments can be accepted.'});
+    const apiBase = String(process.env.PASONG_API_PUBLIC_URL || '').replace(/\/$/,'');
+    const frontend = String(process.env.PASONG_FRONTEND_URL || '').replace(/\/$/,'');
+    if (!apiBase || !frontend) return res.status(503).json({success:false,error:'Set PASONG_API_PUBLIC_URL and PASONG_FRONTEND_URL in backend environment.'});
+    const txRef = 'PASONG-LIC-' + type.toUpperCase() + '-' + crypto.randomUUID();
+    const callbackUrl = apiBase + '/api/licensing/verify-callback';
+    const payload = {
+      tx_ref: txRef, amount, currency:'UGX', redirect_url:callbackUrl,
+      payment_options: method === 'CARD' ? 'card' : 'mobilemoneyuganda',
+      customer:{email:user.email || profile.data.email || 'customer@pasong.com', phonenumber:profile.data.contact_phone || '', name:type === 'dj' ? 'PASONG DJ Licence Applicant' : 'PASONG Music Seller Applicant'},
+      customizations:{title:'PASONG Licensing',description:type === 'dj' ? 'DJ Licence — UGX 35,000' : 'Music Seller Licence — UGX 50,000/year',logo:frontend+'/favicon.ico'},
+      meta:{user_id:user.id,licence_type:type,payment_method:method}
+    };
+    const response = await fetch('https://api.flutterwave.com/v3/payments',{method:'POST',headers:{Authorization:'Bearer '+flwSecret,'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const data = await response.json().catch(()=>({}));
+    if (!response.ok || data.status !== 'success' || !data.data?.link) {
+      console.error('Licensing Flutterwave checkout failed:', data);
+      return res.status(502).json({success:false,error:'Payment provider could not start checkout. No payment was taken.'});
+    }
+    const saved = await supabase.from('licensing_payments').insert({user_id:user.id,licence_type:type,profile_id:profile.data.id,amount,currency:'UGX',payment_method:method,tx_ref:txRef,status:'pending',provider:'flutterwave'});
+    if (saved.error) { console.error('Licensing payment record failed:',saved.error); return res.status(500).json({success:false,error:'Could not save payment reference. Contact PASONG before paying.'}); }
+    return res.json({success:true,checkout_url:data.data.link,tx_ref:txRef});
+  } catch(e) { console.error('Licensing checkout error:',e); return res.status(500).json({success:false,error:'Unable to start licensing checkout.'}); }
 });
 
-app.get('/api/admin/music-sellers/pending', async (req,res) => {
+// Flutterwave redirects here after checkout. We verify the transaction server-side;
+// a paid fee does not automatically approve the application.
+app.get('/api/licensing/verify-callback', async (req,res) => {
   try {
-    if (!await getLicensingAdmin(req,res)) return;
-    const r = await supabase.from('music_sellers').select('*').order('created_at',{ascending:false}).limit(300);
-    if (r.error) { console.error('Admin Music Sellers:',r.error); return res.status(500).json({success:false,error:'Could not load Music Seller applications. Check the Music Seller SQL table.'}); }
-    return res.json({success:true,applications:r.data||[]});
-  } catch(e) { console.error(e); return res.status(500).json({success:false,error:'Unable to load Music Seller applications.'}); }
+    const txId = String(req.query.transaction_id || '').trim();
+    const txRef = String(req.query.tx_ref || '').trim();
+    const status = String(req.query.status || '').toLowerCase();
+    const frontend = String(process.env.PASONG_FRONTEND_URL || '').replace(/\/$/,'');
+    if (!frontend) return res.status(503).send('PASONG_FRONTEND_URL is not configured.');
+    if (!txId || status !== 'successful' || !process.env.FLW_SECRET_KEY) return res.redirect(frontend + '/licensing.html?payment=not_verified');
+    const vr = await fetch('https://api.flutterwave.com/v3/transactions/'+encodeURIComponent(txId)+'/verify',{headers:{Authorization:'Bearer '+process.env.FLW_SECRET_KEY}});
+    const vd = await vr.json().catch(()=>({}));
+    const tx = vd.data || {};
+    const saved = await supabase.from('licensing_payments').select('*').eq('tx_ref',txRef).maybeSingle();
+    if (!vr.ok || vd.status !== 'success' || !saved.data || tx.status !== 'successful' || tx.tx_ref !== txRef || Number(tx.amount) < Number(saved.data.amount) || tx.currency !== 'UGX') {
+      if (saved.data) await supabase.from('licensing_payments').update({status:'failed',provider_transaction_id:String(txId)}).eq('tx_ref',txRef);
+      return res.redirect(frontend + '/licensing.html?payment=not_verified');
+    }
+    const upd = await supabase.from('licensing_payments').update({status:'paid',provider_transaction_id:String(txId),paid_at:new Date().toISOString()}).eq('tx_ref',txRef).eq('status','pending');
+    if (upd.error) console.error('Licensing payment verification save failed:',upd.error);
+    return res.redirect(frontend + '/licensing.html?payment=verified');
+  } catch(e) { console.error('Licensing verification error:',e); const f=String(process.env.PASONG_FRONTEND_URL||'').replace(/\/$/,''); return f ? res.redirect(f+'/licensing.html?payment=not_verified') : res.status(500).send('Unable to verify payment.'); }
 });
 
-app.get('/api/admin/licensing/requests', async (req,res) => {
-  try {
-    if (!await getLicensingAdmin(req,res)) return;
-    const r = await supabase.from('pasong_licence_requests').select('*').order('created_at',{ascending:false}).limit(300);
-    if (r.error) { console.error('Admin licence requests:',r.error); return res.status(500).json({success:false,error:'Could not load licence requests. Check the PASONG licensing SQL table.'}); }
-    return res.json({success:true,requests:r.data||[]});
-  } catch(e) { console.error(e); return res.status(500).json({success:false,error:'Unable to load licence requests.'}); }
-});
-
-app.patch('/api/admin/licensing/dj-applications/:id/review', async (req,res) => {
-  try {
-    const admin = await getLicensingAdmin(req,res); if (!admin) return;
-    const status = String((req.body||{}).status||'');
-    if (!['approved','rejected','suspended'].includes(status)) return res.status(400).json({success:false,error:'Invalid DJ application status.'});
-    const r = await supabase.from('dj_license_profiles').update({status,review_note:String(req.body.review_note||'').slice(0,2000)||null,reviewed_by:admin.id,reviewed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',req.params.id).select().maybeSingle();
-    if (r.error) { console.error('Review DJ application:',r.error); return res.status(500).json({success:false,error:'Could not update DJ application.'}); }
-    if (!r.data) return res.status(404).json({success:false,error:'DJ application not found.'});
-    return res.json({success:true,application:r.data,message:status==='approved'?'Application approved. Payment must still be verified before any paid licence is active.':'DJ application updated.'});
-  } catch(e) { console.error(e); return res.status(500).json({success:false,error:'Unable to review DJ application.'}); }
-});
-
-app.patch('/api/admin/music-sellers/:id/review', async (req,res) => {
-  try {
-    const admin = await getLicensingAdmin(req,res); if (!admin) return;
-    const status = String((req.body||{}).status||'');
-    if (!['approved','rejected','suspended'].includes(status)) return res.status(400).json({success:false,error:'Invalid Music Seller status.'});
-    const r = await supabase.from('music_sellers').update({status,review_note:String(req.body.review_note||'').slice(0,2000)||null,reviewed_by:admin.id,reviewed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',req.params.id).select().maybeSingle();
-    if (r.error) { console.error('Review Music Seller:',r.error); return res.status(500).json({success:false,error:'Could not update Music Seller application.'}); }
-    if (!r.data) return res.status(404).json({success:false,error:'Music Seller application not found.'});
-    return res.json({success:true,application:r.data,message:status==='approved'?'Application approved. Payment must still be verified before any paid licence is active.':'Music Seller application updated.'});
-  } catch(e) { console.error(e); return res.status(500).json({success:false,error:'Unable to review Music Seller application.'}); }
-});
-
-app.patch('/api/admin/licensing/requests/:id/review', async (req,res) => {
-  try {
-    const admin = await getLicensingAdmin(req,res); if (!admin) return;
-    const status = String((req.body||{}).status||'');
-    if (!['approved_awaiting_payment','rejected','revoked'].includes(status)) return res.status(400).json({success:false,error:'Invalid licence request status.'});
-    const r = await supabase.from('pasong_licence_requests').update({status,admin_note:String(req.body.admin_note||'').slice(0,2000)||null,reviewed_by:admin.id,reviewed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',req.params.id).select().maybeSingle();
-    if (r.error) { console.error('Review licence request:',r.error); return res.status(500).json({success:false,error:'Could not update licence request.'}); }
-    if (!r.data) return res.status(404).json({success:false,error:'Licence request not found.'});
-    return res.json({success:true,request:r.data,message:'Request status updated. This does not mark payment as paid or activate a licence.'});
-  } catch(e) { console.error(e); return res.status(500).json({success:false,error:'Unable to review licence request.'}); }
-});
-
-// ============================================================
 // PASONG LICENSING CENTRE API — additive routes
 // These routes use the existing Supabase service-role client and
 // existing getAuthenticatedUser(req) helper. Keep before the 404 handler.
@@ -5879,3 +5857,4 @@ app.listen(
     );
   }
 );
+t
