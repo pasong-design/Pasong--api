@@ -411,6 +411,140 @@ app.get(
   }
 );
 
+// ============================================================
+// PASONG SONG COVER DESIGN WORKFLOW
+// Requests use the existing public.cover_design_requests table.
+// Payment is only marked paid by the server-to-server endpoint
+// after the payment provider has independently verified it.
+// ============================================================
+
+async function isCoverAdmin(user) {
+  if (!user) return false;
+  const roleValues = [
+    user.user_metadata?.role,
+    user.app_metadata?.role,
+    user.user_metadata?.user_role,
+    user.app_metadata?.user_role,
+  ].map(v => String(v || "").toLowerCase());
+  if (roleValues.includes("admin") || roleValues.includes("super_admin")) return true;
+  for (const table of ["profiles", "user_profiles", "admin_users"]) {
+    try {
+      const r = await supabase.from(table).select("role").eq("id", user.id).maybeSingle();
+      if (!r.error && ["admin", "super_admin"].includes(String(r.data?.role || "").toLowerCase())) return true;
+    } catch (_) {}
+  }
+  return false;
+}
+
+app.post("/api/cover-design-requests", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in to submit a cover request." });
+    const b = req.body || {};
+    const songTitle = cleanText(b.song_title, 180);
+    const photoUrl = String(b.photo_url || "").trim();
+    if (!songTitle) return res.status(400).json({ error: "Song title is required." });
+    if (!validUrl(photoUrl)) return res.status(400).json({ error: "A valid uploaded photo URL is required." });
+    const pricing = getCoverDesignPrice(req);
+    const row = {
+      artist_id: user.id,
+      artist_email: cleanText(user.email, 254),
+      song_title: songTitle,
+      performing_artists: cleanText(b.performing_artists, 500),
+      featured_artists: cleanText(b.featured_artists, 500),
+      producer: cleanText(b.producer, 300),
+      writer: cleanText(b.writer, 300),
+      genre: cleanText(b.genre, 120),
+      label: cleanText(b.label, 200),
+      cover_text: cleanText(b.cover_text, 2000),
+      photo_url: photoUrl,
+      country: getCountry(req) === "UG" ? "Uganda" : cleanText(b.country || getCountry(req), 100),
+      fee_amount: pricing.amount,
+      fee_currency: pricing.currency,
+      amount: pricing.amount,
+      currency: pricing.currency,
+      payment_status: "pending",
+      request_status: "awaiting_payment",
+      design_status: "pending",
+    };
+    const result = await supabase.from("cover_design_requests").insert(row).select("id,song_title,fee_amount,fee_currency,payment_status,request_status,created_at").single();
+    if (result.error) return res.status(500).json({ error: "Could not save cover request", details: result.error.message });
+    return res.status(201).json({ ok: true, request: result.data, message: "Cover request saved. Complete payment to send it for design." });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || "Could not submit cover request." });
+  }
+});
+
+app.get("/api/admin/cover-design-requests", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user || !(await isCoverAdmin(user))) return res.status(403).json({ error: "Administrator access required." });
+    const result = await supabase.from("cover_design_requests").select("*").order("created_at", { ascending: false }).limit(200);
+    if (result.error) return res.status(500).json({ error: result.error.message });
+    return res.json({ requests: result.data || [] });
+  } catch (e) { return res.status(500).json({ error: e.message || "Could not load cover requests." }); }
+});
+
+app.patch("/api/admin/cover-design-requests/:id", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user || !(await isCoverAdmin(user))) return res.status(403).json({ error: "Administrator access required." });
+    const id = String(req.params.id || "");
+    if (!validUuid(id)) return res.status(400).json({ error: "Invalid cover request ID." });
+    const body = req.body || {};
+    const existing = await supabase.from("cover_design_requests").select("id,payment_status,finished_cover_url").eq("id", id).maybeSingle();
+    if (existing.error) return res.status(500).json({ error: existing.error.message });
+    if (!existing.data) return res.status(404).json({ error: "Cover request not found." });
+    const patch = { updated_at: new Date().toISOString() };
+    if (body.finished_cover_url !== undefined) {
+      const url = String(body.finished_cover_url || "").trim();
+      if (url && !validUrl(url)) return res.status(400).json({ error: "Finished cover URL must be a valid URL." });
+      patch.finished_cover_url = url || null;
+    }
+    if (body.admin_notes !== undefined) patch.admin_notes = cleanText(body.admin_notes, 4000);
+    if (body.admin_note !== undefined) patch.admin_note = cleanText(body.admin_note, 4000);
+    const action = String(body.action || "").toLowerCase();
+    if (action === "start") {
+      if (String(existing.data.payment_status).toLowerCase() !== "paid") return res.status(409).json({ error: "Only paid requests can enter design." });
+      patch.design_status = "in_progress"; patch.request_status = "in_progress";
+    } else if (action === "approve") {
+      const finished = patch.finished_cover_url ?? existing.data.finished_cover_url;
+      if (String(existing.data.payment_status).toLowerCase() !== "paid") return res.status(409).json({ error: "Cannot approve an unpaid cover request." });
+      if (!finished || !validUrl(finished)) return res.status(400).json({ error: "Upload the finished cover before approval." });
+      patch.design_status = "approved"; patch.request_status = "approved"; patch.approved_at = new Date().toISOString();
+    } else if (action === "reject") {
+      patch.design_status = "rejected"; patch.request_status = "rejected";
+    } else if (action === "complete") {
+      if (String(existing.data.payment_status).toLowerCase() !== "paid") return res.status(409).json({ error: "Only paid requests can be completed." });
+      patch.design_status = "completed"; patch.request_status = "completed";
+    }
+    const result = await supabase.from("cover_design_requests").update(patch).eq("id", id).select("*").single();
+    if (result.error) return res.status(500).json({ error: result.error.message });
+    return res.json({ ok: true, request: result.data });
+  } catch (e) { return res.status(500).json({ error: e.message || "Could not update cover request." }); }
+});
+
+// Called only by a trusted payment backend after it verifies the transaction.
+app.post("/api/cover-design-requests/payment-complete", async (req, res) => {
+  try {
+    if (!safeSecretCompare(req.headers["x-pasong-payment-secret"], PASONG_PAYMENT_SECRET)) return res.status(401).json({ error: "Unauthorized" });
+    const b = req.body || {};
+    const id = String(b.request_id || "");
+    const reference = cleanText(b.payment_reference || b.transaction_id, 200);
+    if (!validUuid(id) || !reference) return res.status(400).json({ error: "Valid request_id and payment reference are required." });
+    if (String(b.payment_status || "").toLowerCase() !== "paid" && String(b.payment_status || "").toLowerCase() !== "successful") return res.status(400).json({ error: "Only verified successful payments can be recorded." });
+    const found = await supabase.from("cover_design_requests").select("id,fee_amount,fee_currency,payment_status").eq("id", id).maybeSingle();
+    if (found.error) return res.status(500).json({ error: found.error.message });
+    if (!found.data) return res.status(404).json({ error: "Cover request not found." });
+    if (String(found.data.payment_status).toLowerCase() === "paid") return res.json({ ok: true, already_paid: true });
+    if (Number(b.amount) !== Number(found.data.fee_amount) || String(b.currency || "").toUpperCase() !== String(found.data.fee_currency || "").toUpperCase()) return res.status(409).json({ error: "Payment amount or currency does not match the cover request." });
+    const now = new Date().toISOString();
+    const result = await supabase.from("cover_design_requests").update({ payment_status: "paid", payment_reference: reference, paid_at: now, request_status: "pending", design_status: "pending", amount: Number(b.amount), currency: String(b.currency).toUpperCase(), updated_at: now }).eq("id", id).select("id,song_title,payment_status,request_status,design_status,paid_at").single();
+    if (result.error) return res.status(500).json({ error: result.error.message });
+    return res.json({ ok: true, request: result.data });
+  } catch (e) { return res.status(500).json({ error: e.message || "Could not record verified cover payment." }); }
+});
+
 app.get("/api/tip-split", (req, res) => {
   res.json({
     artist_percent: 70,
@@ -489,12 +623,10 @@ function allowedCloudinaryFolder(
       "pasong-songs",
       "pasong/songs",
       "pasong/covers",
+      "pasong/covers/finished",
       "pasong-beats/audio",
       "pasong-beats/covers",
       "pasong-producers/profile",
-      // Homepage and admin advertisement uploads.
-      "pasong/ads",
-      "pasong/heroes",
     ].includes(value)
   ) {
     return true;
