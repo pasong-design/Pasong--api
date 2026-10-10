@@ -35,28 +35,35 @@ if (
   process.exit(1);
 }
 
-// Optional integrations must not crash the whole API when not configured.
-// Upload/payment routes should report a clear configuration error when used.
-const CLOUDINARY_READY = Boolean(
-  CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET
-);
-const PAYMENT_READY = Boolean(PASONG_PAYMENT_SECRET);
+if (
+  !CLOUDINARY_CLOUD_NAME ||
+  !CLOUDINARY_API_KEY ||
+  !CLOUDINARY_API_SECRET
+) {
+  console.error(
+    "Missing Cloudinary environment variables"
+  );
+  process.exit(1);
+}
 
-if (!CLOUDINARY_READY) {
-  console.warn("Cloudinary is not configured; upload endpoints may be unavailable.");
+if (!PASONG_PAYMENT_SECRET) {
+  console.error(
+    "Missing PASONG_PAYMENT_SECRET"
+  );
+  process.exit(1);
 }
-if (!PAYMENT_READY) {
-  console.warn("PASONG_PAYMENT_SECRET is not configured; payment endpoints may be unavailable.");
-}
+
 if (!CORS_ORIGIN.trim()) {
-  console.warn("CORS_ORIGIN is empty; using safe PASONG frontend defaults.");
+  console.error(
+    "Missing CORS_ORIGIN"
+  );
+  process.exit(1);
 }
 
-const allowedOrigins = [
-  ...CORS_ORIGIN.split(",").map((v) => v.trim()).filter(Boolean),
-  "https://pasong-frontend.vercel.app",
-  "https://pasong.vercel.app",
-].filter((v, i, a) => v && a.indexOf(v) === i);
+const allowedOrigins = CORS_ORIGIN
+  .split(",")
+  .map((v) => v.trim())
+  .filter(Boolean);
 
 app.use(
   cors({
@@ -94,13 +101,11 @@ const supabase = createClient(
   SUPABASE_SERVICE_ROLE_KEY
 );
 
-if (CLOUDINARY_READY) {
-  cloudinary.config({
-    cloud_name: CLOUDINARY_CLOUD_NAME,
-    api_key: CLOUDINARY_API_KEY,
-    api_secret: CLOUDINARY_API_SECRET,
-  });
-}
+cloudinary.config({
+  cloud_name: CLOUDINARY_CLOUD_NAME,
+  api_key: CLOUDINARY_API_KEY,
+  api_secret: CLOUDINARY_API_SECRET,
+});
 
 const coverUpload = multer({
   storage: multer.memoryStorage(),
@@ -134,267 +139,6 @@ app.get("/", (req, res) => {
     producer_marketplace: "READY",
     beats: "READY",
   });
-});
-
-
-
-// ============================================================
-// PASONG PREMIUM
-// Global Premium plan with localized currency display.
-// Payment activation is intentionally NOT granted by the client;
-// a verified payment webhook/admin completion must activate it.
-// ============================================================
-
-const PREMIUM_PLANS = {
-  monthly: {
-    id: "premium_monthly",
-    interval: "month",
-    days: 30,
-    prices: {
-      UG: { amount: 10000, currency: "UGX", label: "UGX 10,000" },
-      KE: { amount: 399, currency: "KES", label: "KES 399" },
-      TZ: { amount: 7500, currency: "TZS", label: "TZS 7,500" },
-      RW: { amount: 3500, currency: "RWF", label: "RWF 3,500" },
-      NG: { amount: 5000, currency: "NGN", label: "NGN 5,000" },
-      GH: { amount: 45, currency: "GHS", label: "GHS 45" },
-      ZA: { amount: 59, currency: "ZAR", label: "ZAR 59" },
-      GB: { amount: 2.49, currency: "GBP", label: "£2.49" },
-      EU: { amount: 2.99, currency: "EUR", label: "€2.99" },
-      US: { amount: 2.99, currency: "USD", label: "$2.99" },
-      CA: { amount: 4.09, currency: "CAD", label: "CA$4.09" },
-      AU: { amount: 4.49, currency: "AUD", label: "A$4.49" },
-      DEFAULT: { amount: 2.99, currency: "USD", label: "$2.99" },
-    },
-  },
-  yearly: {
-    id: "premium_yearly",
-    interval: "year",
-    days: 365,
-    prices: {
-      UG: { amount: 100000, currency: "UGX", label: "UGX 100,000" },
-      KE: { amount: 3990, currency: "KES", label: "KES 3,990" },
-      TZ: { amount: 75000, currency: "TZS", label: "TZS 75,000" },
-      RW: { amount: 35000, currency: "RWF", label: "RWF 35,000" },
-      NG: { amount: 50000, currency: "NGN", label: "NGN 50,000" },
-      GH: { amount: 450, currency: "GHS", label: "GHS 450" },
-      ZA: { amount: 590, currency: "ZAR", label: "ZAR 590" },
-      GB: { amount: 24.90, currency: "GBP", label: "£24.90" },
-      EU: { amount: 29.90, currency: "EUR", label: "€29.90" },
-      US: { amount: 29.90, currency: "USD", label: "$29.90" },
-      CA: { amount: 40.90, currency: "CAD", label: "CA$40.90" },
-      AU: { amount: 44.90, currency: "AUD", label: "A$44.90" },
-      DEFAULT: { amount: 29.90, currency: "USD", label: "$29.90" },
-    },
-  },
-};
-
-const PREMIUM_FEATURES = [
-  "Premium badge",
-  "Ad-free listening",
-  "Higher-quality audio",
-  "Offline listening for eligible content",
-  "Premium-exclusive releases",
-  "Early access to selected releases",
-  "Premium-only playlists",
-];
-
-function getPremiumCountry(req) {
-  return getCountry(req) || "US";
-}
-
-function getPremiumPrice(req, planKey = "monthly") {
-  const plan = PREMIUM_PLANS[planKey] || PREMIUM_PLANS.monthly;
-  const country = getPremiumCountry(req);
-  return {
-    plan: plan.id,
-    interval: plan.interval,
-    days: plan.days,
-    country,
-    ...(plan.prices[country] || plan.prices.DEFAULT),
-  };
-}
-
-app.get("/api/premium/pricing", (req, res) => {
-  const monthly = getPremiumPrice(req, "monthly");
-  const yearly = getPremiumPrice(req, "yearly");
-  res.json({
-    success: true,
-    country: monthly.country,
-    currency: monthly.currency,
-    monthly,
-    yearly,
-    features: PREMIUM_FEATURES,
-    pricing_note: "PASONG uses fixed regional price points. IP/country detection is for display; the payment provider must confirm the billing country before charging.",
-  });
-});
-
-app.get("/api/premium/status", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) {
-      return res.json({
-        success: true,
-        authenticated: false,
-        premium: false,
-        status: "free",
-      });
-    }
-
-    const result = await supabase
-      .from("premium_subscriptions")
-      .select("id,user_id,plan,status,started_at,expires_at,currency,amount,payment_reference")
-      .eq("user_id", user.id)
-      .order("expires_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (result.error) {
-      console.error("Premium status lookup failed:", result.error);
-      return res.status(500).json({ success: false, error: "Unable to load Premium status." });
-    }
-
-    const subscription = result.data || null;
-    const active = !!subscription &&
-      subscription.status === "active" &&
-      (!subscription.expires_at || new Date(subscription.expires_at).getTime() > Date.now());
-
-    res.json({
-      success: true,
-      authenticated: true,
-      premium: active,
-      status: active ? "active" : (subscription?.status || "free"),
-      subscription,
-    });
-  } catch (error) {
-    console.error("Premium status error:", error);
-    res.status(500).json({ success: false, error: "Unable to load Premium status." });
-  }
-});
-
-
-app.post("/api/premium/complete", async (req, res) => {
-  try {
-    const secret = String(req.headers["x-pasong-payment-secret"] || "");
-    if (!PASONG_PAYMENT_SECRET || secret !== PASONG_PAYMENT_SECRET) {
-      return res.status(401).json({ success: false, error: "Unauthorized payment completion." });
-    }
-
-    const { payment_reference, payment_status, provider_reference } = req.body || {};
-    if (!payment_reference || payment_status !== "paid") {
-      return res.status(400).json({ success: false, error: "A paid Premium payment is required." });
-    }
-
-    const paymentResult = await supabase
-      .from("premium_payments")
-      .select("*")
-      .eq("payment_reference", String(payment_reference))
-      .maybeSingle();
-
-    if (paymentResult.error || !paymentResult.data) {
-      return res.status(404).json({ success: false, error: "Premium payment not found." });
-    }
-
-    const payment = paymentResult.data;
-    if (payment.status === "paid") {
-      return res.json({ success: true, already_completed: true, payment });
-    }
-
-    const days = payment.plan === "premium_yearly" ? 365 : 30;
-    const now = new Date();
-    const start = now.toISOString();
-    const expires = new Date(now.getTime() + days * 86400000).toISOString();
-
-    const subscription = await supabase
-      .from("premium_subscriptions")
-      .insert({
-        user_id: payment.user_id,
-        plan: payment.plan,
-        status: "active",
-        started_at: start,
-        expires_at: expires,
-        currency: payment.currency,
-        amount: payment.amount,
-        payment_reference: payment.payment_reference,
-      })
-      .select()
-      .single();
-
-    if (subscription.error) {
-      console.error("Premium subscription activation failed:", subscription.error);
-      return res.status(500).json({ success: false, error: "Premium activation failed." });
-    }
-
-    const updatedPayment = await supabase
-      .from("premium_payments")
-      .update({
-        status: "paid",
-        provider_reference: provider_reference || null,
-        paid_at: start,
-      })
-      .eq("id", payment.id)
-      .select()
-      .single();
-
-    if (updatedPayment.error) {
-      console.error("Premium payment update failed:", updatedPayment.error);
-      return res.status(500).json({ success: false, error: "Premium payment status update failed." });
-    }
-
-    res.json({
-      success: true,
-      premium: true,
-      subscription: subscription.data,
-      payment: updatedPayment.data,
-    });
-  } catch (error) {
-    console.error("Premium completion error:", error);
-    res.status(500).json({ success: false, error: "Premium payment completion failed." });
-  }
-});
-
-app.post("/api/premium/checkout", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) {
-      return res.status(401).json({ success: false, error: "You must be logged in to subscribe to PASONG Premium." });
-    }
-
-    const planKey = req.body?.plan === "yearly" ? "yearly" : "monthly";
-    const pricing = getPremiumPrice(req, planKey);
-
-    // A checkout record is created, but Premium is NOT activated here.
-    // Your payment provider/webhook must verify the payment first.
-    const reference = "PREM-" + crypto.randomBytes(10).toString("hex").toUpperCase();
-
-    const result = await supabase
-      .from("premium_payments")
-      .insert({
-        user_id: user.id,
-        plan: pricing.plan,
-        amount: pricing.amount,
-        currency: pricing.currency,
-        country: pricing.country,
-        status: "pending",
-        payment_reference: reference,
-      })
-      .select()
-      .single();
-
-    if (result.error) {
-      console.error("Premium checkout creation failed:", result.error);
-      return res.status(500).json({ success: false, error: "Unable to start Premium checkout." });
-    }
-
-    res.status(201).json({
-      success: true,
-      payment: result.data,
-      pricing,
-      message: "Premium checkout created. Complete payment through the configured payment provider before Premium is activated.",
-    });
-  } catch (error) {
-    console.error("Premium checkout error:", error);
-    res.status(500).json({ success: false, error: "Unable to start Premium checkout." });
-  }
 });
 
 app.get("/health", (req, res) => {
@@ -748,6 +492,9 @@ function allowedCloudinaryFolder(
       "pasong-beats/audio",
       "pasong-beats/covers",
       "pasong-producers/profile",
+      // Homepage and admin advertisement uploads.
+      "pasong/ads",
+      "pasong/heroes",
     ].includes(value)
   ) {
     return true;
@@ -4977,43 +4724,12 @@ app.post(
   "/api/producer/withdraw",
   async (req, res) => {
     try {
-      // 1. Verify the Supabase user from the dashboard's access token.
-      const user = await getAuthenticatedUser(req);
+      const user =
+        await getAuthenticatedUser(req);
 
       if (!user) {
         return res.status(401).json({
-          success: false,
-          error: "You must be logged in to request a withdrawal.",
-        });
-      }
-
-      // 2. Verify that this authenticated user actually has a producer
-      //    profile. The Producer Dashboard uses artist_profiles for the
-      //    producer account, so we verify ownership by user_id here.
-      const profileResult = await supabase
-        .from("artist_profiles")
-        .select("id,user_id")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (profileResult.error) {
-        console.error(
-          "Producer profile lookup failed:",
-          profileResult.error
-        );
-
-        return res.status(500).json({
-          success: false,
-          error: "Unable to verify your producer account.",
-        });
-      }
-
-      if (!profileResult.data || profileResult.data.user_id !== user.id) {
-        return res.status(403).json({
-          success: false,
-          error: "Producer profile not found for this account.",
+          error: "Auth",
         });
       }
 
@@ -5023,153 +4739,150 @@ app.post(
         mobile_number,
       } = req.body || {};
 
-      // 3. Validate withdrawal amount.
-      const requestedAmount = Number(
-        String(amount ?? "")
-          .replace(/,/g, "")
-          .trim()
-      );
+      const requestedAmount =
+        Number(amount);
 
-      if (!validPositiveNumber(requestedAmount)) {
+      if (
+        !validPositiveNumber(
+          requestedAmount
+        )
+      ) {
         return res.status(400).json({
-          success: false,
-          error: "Invalid withdrawal amount.",
-        });
-      }
-
-      // Producer withdrawals must be at least UGX 10,000.
-      if (requestedAmount < 10000) {
-        return res.status(400).json({
-          success: false,
-          error: "Minimum withdrawal amount is UGX 10,000.",
-        });
-      }
-
-      // Only the two mobile-money providers supported by the Producer UI.
-      const normalizedProvider = normalizeProvider(provider);
-
-      if (!["MTN", "AIRTEL"].includes(normalizedProvider)) {
-        return res.status(400).json({
-          success: false,
-          error: "Mobile Money provider must be MTN or AIRTEL.",
-        });
-      }
-
-      // 4. Validate and normalize the Uganda mobile number.
-      let mobile = String(mobile_number || "")
-        .trim()
-        .replace(/\s+/g, "");
-
-      if (!/^(?:\+256|256|0)7[0-9]{8}$/.test(mobile)) {
-        return res.status(400).json({
-          success: false,
-          error: "Invalid Uganda mobile number.",
-        });
-      }
-
-      // Store one consistent local format: 07XXXXXXXX.
-      if (mobile.startsWith("+256")) {
-        mobile = "0" + mobile.substring(4);
-      } else if (mobile.startsWith("256")) {
-        mobile = "0" + mobile.substring(3);
-      }
-
-      // 5. Calculate the producer's currently available balance.
-      //    This includes existing credits and subtracts every debit,
-      //    including pending withdrawal debits, so the same money cannot
-      //    be withdrawn twice.
-      const availableBalance = await getProducerBalance(user.id);
-
-      if (requestedAmount > availableBalance) {
-        return res.status(400).json({
-          success: false,
           error:
-            "Insufficient producer balance. Available balance is UGX " +
-            Number(availableBalance).toLocaleString("en-UG") + ".",
-          available_balance: availableBalance,
+            "Invalid withdrawal amount",
         });
       }
 
-      // 6. Create the withdrawal request first as PENDING.
-      //    Payment processing can later move it to processing/paid/failed.
-      const withdrawal = await supabase
-        .from("producer_withdrawals")
-        .insert({
-          producer_user_id: user.id,
-          amount: requestedAmount,
-          currency: "UGX",
-          provider: normalizedProvider,
-          mobile_number: mobile,
-          status: "pending",
-        })
-        .select()
-        .single();
-
-      if (withdrawal.error) {
-        console.error(
-          "Producer withdrawal insert failed:",
-          withdrawal.error
+      const normalizedProvider =
+        normalizeProvider(
+          provider
         );
 
-        return res.status(500).json({
-          success: false,
-          error: "Withdrawal request could not be created.",
+      if (
+        !["MTN", "AIRTEL"].includes(
+          normalizedProvider
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid payment provider",
         });
       }
 
-      // 7. Reserve the requested amount in the producer ledger.
-      //    The debit is tied to the withdrawal ID so the payout can be
-      //    traced and reconciled later.
-      const debit = await supabase
-        .from("royalty_ledger")
-        .insert({
-          recipient_user_id: user.id,
-          recipient_type: "beat_producer",
-          amount: requestedAmount,
-          percentage: 100,
-          entry_type: "debit",
-          status: "pending_withdrawal",
-          withdrawal_id: withdrawal.data.id,
+      const mobile =
+        String(
+          mobile_number || ""
+        )
+          .trim()
+          .replace(
+            /\s+/g,
+            ""
+          );
+
+      if (
+        !/^(?:\+256|256|0)7[0-9]{8}$/.test(
+          mobile
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid Uganda mobile number",
         });
+      }
+
+      const availableBalance =
+        await getProducerBalance(
+          user.id
+        );
+
+      if (
+        requestedAmount >
+        availableBalance
+      ) {
+        return res.status(400).json({
+          error:
+            "Insufficient balance",
+        });
+      }
+
+      const withdrawal =
+        await supabase
+          .from(
+            "producer_withdrawals"
+          )
+          .insert({
+            producer_user_id:
+              user.id,
+            amount:
+              requestedAmount,
+            currency:
+              "UGX",
+            provider:
+              normalizedProvider,
+            mobile_number:
+              mobile,
+            status:
+              "pending",
+          })
+          .select()
+          .single();
+
+      if (
+        withdrawal.error
+      ) {
+        return res.status(500).json({
+          error:
+            "Withdrawal request failed",
+        });
+      }
+
+      const debit =
+        await supabase
+          .from(
+            "royalty_ledger"
+          )
+          .insert({
+            recipient_user_id:
+              user.id,
+            recipient_type:
+              "beat_producer",
+            amount:
+              requestedAmount,
+            percentage: 100,
+            entry_type:
+              "debit",
+            status:
+              "pending_withdrawal",
+            withdrawal_id:
+              withdrawal.data.id,
+          });
 
       if (debit.error) {
-        console.error(
-          "Producer withdrawal ledger debit failed:",
-          debit.error
-        );
-
-        // Do not leave an orphaned withdrawal request if the balance
-        // reservation could not be created.
         await supabase
-          .from("producer_withdrawals")
+          .from(
+            "producer_withdrawals"
+          )
           .delete()
-          .eq("id", withdrawal.data.id);
+          .eq(
+            "id",
+            withdrawal.data.id
+          );
 
         return res.status(500).json({
-          success: false,
-          error: "Withdrawal balance reservation failed.",
+          error:
+            "Withdrawal balance update failed",
         });
       }
 
-      const remainingBalance = Number(
-        (availableBalance - requestedAmount).toFixed(2)
-      );
-
-      return res.status(201).json({
+      res.json({
         success: true,
-        message: "Withdrawal request submitted successfully.",
-        withdrawal: withdrawal.data,
-        available_balance: remainingBalance,
+        withdrawal:
+          withdrawal.data,
       });
-    } catch (error) {
-      console.error(
-        "Producer withdrawal error:",
-        error
-      );
-
-      return res.status(500).json({
-        success: false,
-        error: "Withdrawal failed. Please try again.",
+    } catch {
+      res.status(500).json({
+        error:
+          "Withdrawal failed",
       });
     }
   }
@@ -5640,194 +5353,6 @@ app.post(
   }
 );
 
-// ============================================================
-// PASONG LICENSING CENTRE API — additive routes
-// These routes use the existing Supabase service-role client and
-// existing getAuthenticatedUser(req) helper. Keep before the 404 handler.
-// ============================================================
-function licensingText(v, max = 200) { return String(v || '').trim().slice(0, max); }
-function licensingScopes(v) { return Array.isArray(v) ? v.map(x => licensingText(x, 60)).filter(Boolean).slice(0, 10) : []; }
-
-app.post('/api/dj-licenses/register', async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ error: 'Please sign in to your PASONG account first.' });
-    const b = req.body || {};
-    const dj_name = licensingText(b.dj_name, 120), legal_name = licensingText(b.legal_name, 120);
-    const contact_phone = licensingText(b.contact_phone, 40), country = licensingText(b.country, 100);
-    const district = licensingText(b.district, 120), requested_scopes = licensingScopes(b.requested_scopes);
-    if (!dj_name || !legal_name || !contact_phone || !country || !district || !b.accepted_terms || !requested_scopes.length)
-      return res.status(400).json({ error: 'Complete all required fields, select at least one DJ activity, and accept the terms.' });
-    const payload = { user_id:user.id, email:user.email || null, dj_name, legal_name, contact_phone, country, district, city:licensingText(b.city,120)||null, requested_scopes, accepted_terms:true, accepted_terms_at:new Date().toISOString(), updated_at:new Date().toISOString() };
-    const result = await supabase.from('dj_license_profiles').upsert(payload, { onConflict:'user_id' }).select().single();
-    if (result.error) { console.error('DJ licence registration:', result.error); return res.status(500).json({ error: 'DJ application could not be saved. Check that PASONG Licensing SQL has been run in Supabase.' }); }
-    return res.status(201).json({ success:true, message:'DJ licence application submitted. It is not active until approved and payment is verified.', profile:result.data });
-  } catch (e) { console.error('DJ licence registration error:', e); return res.status(500).json({ error:'Unable to submit DJ licence application.' }); }
-});
-
-app.get('/api/dj-licenses/me', async (req, res) => {
-  try { const user=await getAuthenticatedUser(req); if(!user) return res.status(401).json({error:'Please sign in first.'});
-    const r=await supabase.from('dj_license_profiles').select('*').eq('user_id',user.id).maybeSingle();
-    if(r.error) { console.error('DJ profile:',r.error); return res.status(500).json({error:'Unable to load DJ application. Check licensing database setup.'}); }
-    return res.json({success:true,profile:r.data});
-  } catch(e) { return res.status(500).json({error:'Unable to load DJ application.'}); }
-});
-
-app.post('/api/music-sellers/register', async (req, res) => {
-  try {
-    const user=await getAuthenticatedUser(req); if(!user) return res.status(401).json({error:'Please sign in to your PASONG account first.'});
-    const b=req.body||{}; const seller_type=b.seller_type==='shop'?'shop':'individual';
-    const legal_name=licensingText(b.legal_name,120), contact_phone=licensingText(b.contact_phone,40), country=licensingText(b.country,100), district=licensingText(b.district,120), business_name=licensingText(b.business_name,150);
-    if(!legal_name||!contact_phone||!country||!district||!b.accepted_terms||(seller_type==='shop'&&!business_name)) return res.status(400).json({error:'Complete all required fields and accept the terms.'});
-    const payload={user_id:user.id,email:user.email||null,seller_type,legal_name,business_name:business_name||null,contact_phone,country,district,city:licensingText(b.city,120)||null,registration_number:licensingText(b.registration_number,120)||null,accepted_terms:true,accepted_terms_at:new Date().toISOString(),updated_at:new Date().toISOString()};
-    const r=await supabase.from('music_sellers').upsert(payload,{onConflict:'user_id'}).select().single();
-    if(r.error){console.error('Music seller registration:',r.error);return res.status(500).json({error:'Music Seller application could not be saved. Check that the Music Seller SQL has been run in Supabase.'});}
-    return res.status(201).json({success:true,message:'Music Seller application submitted. It is not active until approved and payment is verified.',seller:r.data});
-  } catch(e){console.error('Music seller registration error:',e);return res.status(500).json({error:'Unable to submit Music Seller application.'});}
-});
-
-app.get('/api/music-sellers/me', async (req,res)=>{
-  try{const user=await getAuthenticatedUser(req);if(!user)return res.status(401).json({error:'Please sign in first.'});
-    const r=await supabase.from('music_sellers').select('*').eq('user_id',user.id).maybeSingle();
-    if(r.error){console.error('Music seller profile:',r.error);return res.status(500).json({error:'Unable to load Music Seller application. Check database setup.'});}
-    return res.json({success:true,seller:r.data});
-  }catch(e){return res.status(500).json({error:'Unable to load Music Seller application.'});}
-});
-
-app.get('/api/licensing/catalog', async (req,res)=>{
-  try{const user=await getAuthenticatedUser(req);if(!user)return res.status(401).json({error:'Please sign in first.'});
-    const type=req.query.type==='seller'?'seller':'dj';
-    const table='pasong_licensing_catalog';
-    let q=supabase.from(table).select('*').eq('is_active',true).eq('rights_confirmed',true).lte('rights_valid_from',new Date().toISOString()).gte('rights_valid_until',new Date().toISOString()).order('title');
-    const r=await q;
-    if(r.error){console.error('Licensing catalogue:',r.error);return res.status(500).json({error:'Unable to load licensing catalogue. Check PASONG Licensing SQL setup.'});}
-    let catalog=(r.data||[]).map(t=>({...t,licence_summary:t.licence_summary||'',dj_performance_rights:!!t.dj_performance_rights,dj_mix_recording_rights:!!t.dj_mix_recording_rights,dj_online_distribution_rights:!!t.dj_online_distribution_rights,digital_distribution_rights:!!t.digital_distribution_rights,physical_distribution_rights:!!t.physical_distribution_rights}));
-    if(type==='seller') catalog=catalog.filter(t=>t.digital_distribution_rights||t.physical_distribution_rights);
-    else catalog=catalog.filter(t=>t.dj_performance_rights||t.dj_mix_recording_rights||t.dj_online_distribution_rights);
-    return res.json({success:true,type,note:'Only titles with confirmed, current rights are shown.',catalog});
-  }catch(e){console.error('Licensing catalogue error:',e);return res.status(500).json({error:'Unable to load licensing catalogue.'});}
-});
-
-app.post('/api/licensing/requests', async (req,res)=>{
-  try{const user=await getAuthenticatedUser(req);if(!user)return res.status(401).json({error:'Please sign in first.'});
-    const b=req.body||{},type=b.licence_type==='seller'?'seller':'dj',scope=licensingText(b.scope,80),catalog_id=licensingText(b.catalog_id,80);
-    if(!catalog_id||!scope||b.accepted_terms!==true)return res.status(400).json({error:'Confirm the licence terms and choose a valid licence scope.'});
-    const profileTable=type==='dj'?'dj_license_profiles':'music_sellers';
-    const profile=await supabase.from(profileTable).select('id,status').eq('user_id',user.id).maybeSingle();
-    if(profile.error)return res.status(500).json({error:'Unable to verify your application.'});
-    if(!profile.data||profile.data.status!=='approved')return res.status(403).json({error:'Your relevant application must be approved before requesting catalogue licences.'});
-    const c=await supabase.from('pasong_licensing_catalog').select('*').eq('id',catalog_id).eq('is_active',true).eq('rights_confirmed',true).maybeSingle();
-    if(c.error||!c.data)return res.status(404).json({error:'This title is not currently available for licensing.'});
-    const t=c.data; const allowed=type==='dj'?({public_performance:t.dj_performance_rights,dj_mix_recording:t.dj_mix_recording_rights,online_mix_distribution:t.dj_online_distribution_rights}[scope]):({digital_distribution:t.digital_distribution_rights,physical_distribution:t.physical_distribution_rights}[scope]);
-    if(!allowed)return res.status(403).json({error:'The rights holder has not authorised that use for this title.'});
-    const feeKey={public_performance:'dj_performance_fee',dj_mix_recording:'dj_mix_recording_fee',online_mix_distribution:'dj_online_distribution_fee',digital_distribution:'digital_distribution_fee',physical_distribution:'physical_distribution_fee'}[scope];
-    const r=await supabase.from('pasong_licence_requests').insert({user_id:user.id,licence_type:type,profile_id:profile.data.id,catalog_id:t.id,track_title:t.title,artist_name:t.artist_name,requested_scope:scope,fee:Number(t[feeKey]||0),currency:t.currency||'UGX',status:'pending_review',accepted_terms:true,accepted_terms_at:new Date().toISOString()}).select().single();
-    if(r.error){console.error('Licence request:',r.error);return res.status(500).json({error:'Could not create licence request.'});}
-    return res.status(201).json({success:true,message:'Licence request submitted. It is not a licence until payment is verified and the request is activated.',request:r.data});
-  }catch(e){console.error('Licence request error:',e);return res.status(500).json({error:'Unable to create licence request.'});}
-});
-
-
-// PASONG licensing checkout: MTN MoMo RequestToPay. Payment is recorded before
-// contacting MTN so an accepted request is never lost if the database write fails.
-// Secrets are read only from Render environment variables; no client can mark paid.
-const licensingEnv = (...names) => {
-  for (const name of names) if (process.env[name] && String(process.env[name]).trim()) return String(process.env[name]).trim();
-  return '';
-};
-const mtnConfig = () => ({
-  base: (licensingEnv('MTN_MOMO_BASE_URL','MTN_BASE_URL') || 'https://momodeveloper.mtn.com').replace(/\/$/, ''),
-  subscription: licensingEnv('MTN_MOMO_SUBSCRIPTION_KEY','MTN_COLLECTION_SUBSCRIPTION_KEY','MTN_SUBSCRIPTION_KEY'),
-  apiUser: licensingEnv('MTN_MOMO_API_USER','MTN_API_USER'),
-  apiKey: licensingEnv('MTN_MOMO_API_KEY','MTN_API_KEY'),
-  target: licensingEnv('MTN_MOMO_TARGET_ENVIRONMENT','MTN_TARGET_ENVIRONMENT') || 'production'
-});
-function licensingPhone(v) {
-  let p=String(v||'').replace(/[\s()-]/g,'');
-  if (/^0[37]\d{8}$/.test(p)) p='256'+p.slice(1);
-  else if (/^\+[37]\d+$/.test(p)) p=p.slice(1);
-  else if (p.startsWith('+')) p=p.slice(1);
-  return /^256[37]\d{8}$/.test(p) ? p : '';
-}
-async function mtnToken(cfg) {
-  const basic=Buffer.from(cfg.apiUser+':'+cfg.apiKey).toString('base64');
-  const r=await fetch(cfg.base+'/collection/token/',{method:'POST',headers:{'Authorization':'Basic '+basic,'Ocp-Apim-Subscription-Key':cfg.subscription}});
-  const txt=await r.text(); let data={}; try{data=JSON.parse(txt)}catch{}
-  if(!r.ok||!data.access_token) throw new Error('MTN authentication failed ('+r.status+'). Check the Collection API credentials and environment on Render.');
-  return data.access_token;
-}
-app.post('/api/licensing/checkout', async (req,res) => {
-  let paymentId=null;
-  try {
-    const user=await getAuthenticatedUser(req);
-    if(!user) return res.status(401).json({success:false,error:'Please sign in first.'});
-    const type=String(req.body?.licence_type||'').toLowerCase();
-    const amount=type==='dj'?35000:type==='seller'?50000:0;
-    if(!amount) return res.status(400).json({success:false,error:'Invalid licence type.'});
-    const method=String(req.body?.payment_method||'MTN_MOMO').toUpperCase();
-    if(!['MTN_MOMO','MTN','MTN MOMO'].includes(method)) return res.status(400).json({success:false,error:'MTN Mobile Money is the only licensing payment method currently connected.'});
-    const phone=licensingPhone(req.body?.phone_number);
-    if(!phone) return res.status(400).json({success:false,error:'Enter a valid mobile money number with country code, for example +2567XXXXXXXX.'});
-    const cfg=mtnConfig();
-    if(!cfg.subscription||!cfg.apiUser||!cfg.apiKey) return res.status(503).json({success:false,code:'LICENSING_MTN_NOT_CONFIGURED',error:'The licensing checkout is not connected to MTN yet. The required MTN Collection credentials are not available to the server. No payment was requested.'});
-    // This table is supplied in PASONG_Licensing_Payments.sql. Insert BEFORE any MTN request.
-    const ref='PASONG-LIC-'+crypto.randomUUID();
-    const saved=await supabase.from('pasong_licence_payments').insert({user_id:user.id,licence_type:type,amount,currency:'UGX',provider:'MTN_MOMO',external_reference:ref,phone_number:phone,status:'initiating'}).select('id').single();
-    if(saved.error){console.error('Licensing payment record creation failed:',saved.error);return res.status(500).json({success:false,error:'Could not create the licensing payment record. No payment request was sent.'});}
-    paymentId=saved.data.id;
-    const token=await mtnToken(cfg);
-    const uuid=crypto.randomUUID();
-    const payload={amount:String(amount),currency:'UGX',externalId:ref,payer:{partyIdType:'MSISDN',partyId:phone},payerMessage:type==='dj'?'PASONG DJ licence':'PASONG Music Seller licence',payeeNote:ref};
-    const headers={'Authorization':'Bearer '+token,'X-Reference-Id':uuid,'X-Target-Environment':cfg.target,'Ocp-Apim-Subscription-Key':cfg.subscription,'Content-Type':'application/json','X-Callback-Url':licensingEnv('MTN_MOMO_CALLBACK_URL','MTN_CALLBACK_URL')};
-    if(!headers['X-Callback-Url']) delete headers['X-Callback-Url'];
-    const request=await fetch(cfg.base+'/collection/v1_0/requesttopay',{method:'POST',headers,body:JSON.stringify(payload)});
-    if(request.status!==202){const msg=await request.text();await supabase.from('pasong_licence_payments').update({status:'failed',provider_message:msg.slice(0,500)}).eq('id',paymentId);return res.status(502).json({success:false,error:'MTN did not accept the payment request ('+request.status+'). No licence has been activated.'});}
-    await supabase.from('pasong_licence_payments').update({status:'pending',provider_transaction_id:uuid}).eq('id',paymentId);
-    return res.status(202).json({success:true,payment_id:paymentId,external_reference:ref,message:'Payment request sent to '+phone+'. Approve the MTN Mobile Money prompt on your phone. PASONG will verify the payment before activating the licence.'});
-  } catch(e) {
-    console.error('Licensing checkout error:',e);
-    if(paymentId) await supabase.from('pasong_licence_payments').update({status:'failed',provider_message:String(e.message||e).slice(0,500)}).eq('id',paymentId);
-    return res.status(502).json({success:false,error:e.message||'Unable to start licensing payment. No licence has been activated.'});
-  }
-});
-
-// Server-side payment status check. A browser redirect or client status is never trusted.
-app.get('/api/licensing/payment-status/:id', async (req,res)=>{
-  try {
-    const user=await getAuthenticatedUser(req); if(!user)return res.status(401).json({success:false,error:'Please sign in first.'});
-    const row=await supabase.from('pasong_licence_payments').select('*').eq('id',req.params.id).eq('user_id',user.id).maybeSingle();
-    if(row.error||!row.data)return res.status(404).json({success:false,error:'Licensing payment not found.'});
-    const p=row.data; if(p.status==='successful'||p.status==='failed')return res.json({success:true,status:p.status,licence_type:p.licence_type});
-    if(!p.provider_transaction_id)return res.json({success:true,status:p.status,licence_type:p.licence_type});
-    const cfg=mtnConfig(); if(!cfg.subscription||!cfg.apiUser||!cfg.apiKey)return res.json({success:true,status:p.status,licence_type:p.licence_type});
-    const token=await mtnToken(cfg);
-    const r=await fetch(cfg.base+'/collection/v1_0/requesttopay/'+encodeURIComponent(p.provider_transaction_id),{headers:{'Authorization':'Bearer '+token,'X-Target-Environment':cfg.target,'Ocp-Apim-Subscription-Key':cfg.subscription}});
-    const data=await r.json().catch(()=>({}));
-    if(!r.ok)return res.json({success:true,status:p.status,licence_type:p.licence_type});
-    const providerStatus=String(data.status||'').toUpperCase();
-    if(providerStatus==='SUCCESSFUL'){
-      await supabase.from('pasong_licence_payments').update({status:'successful',paid_at:new Date().toISOString(),provider_message:'MTN status verified'}).eq('id',p.id);
-      // Profile approval remains a separate PASONG admin action.
-      return res.json({success:true,status:'successful',licence_type:p.licence_type,message:'Payment verified. Your licence application still requires PASONG review.'});
-    }
-    if(['FAILED','REJECTED','TIMEOUT','EXPIRED'].includes(providerStatus)){
-      await supabase.from('pasong_licence_payments').update({status:'failed',provider_message:providerStatus}).eq('id',p.id);
-      return res.json({success:true,status:'failed',licence_type:p.licence_type});
-    }
-    return res.json({success:true,status:'pending',licence_type:p.licence_type});
-  }catch(e){console.error('Licensing payment status error:',e);return res.status(500).json({success:false,error:'Unable to check payment status.'});}
-});
-
-
-app.get('/api/licensing/my-requests',async(req,res)=>{
-  try{const user=await getAuthenticatedUser(req);if(!user)return res.status(401).json({error:'Please sign in first.'});
-    const r=await supabase.from('pasong_licence_requests').select('*').eq('user_id',user.id).order('created_at',{ascending:false});
-    if(r.error){console.error('My licence requests:',r.error);return res.status(500).json({error:'Unable to load your licence requests.'});}
-    return res.json({success:true,requests:r.data||[]});
-  }catch(e){return res.status(500).json({error:'Unable to load licence requests.'});}
-});
-
-
 app.use(
   (error, req, res, next) => {
     if (
@@ -5880,4 +5405,3 @@ app.listen(
     );
   }
 );
-t
