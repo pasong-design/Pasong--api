@@ -191,116 +191,36 @@ function getCountry(req) {
     .toUpperCase();
 }
 
-async function detectCountryFromClientIp(req) {
-  // Prefer edge-provided country headers where available.
-  const edgeCountry = getCountry(req);
-  if (/^[A-Z]{2}$/.test(edgeCountry)) return edgeCountry;
-
-  // Render usually provides the original client IP in x-forwarded-for.
-  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
-  const candidate = forwarded || String(req.ip || req.socket?.remoteAddress || "").trim();
-  const ip = candidate.replace(/^::ffff:/i, "");
-  // Do not ask a public geolocation service to look up local/private addresses.
-  const isPublicIPv4 = (value) => {
-    const p = value.split(".").map(Number);
-    return p.length === 4 && p.every(n => Number.isInteger(n) && n >= 0 && n <= 255) &&
-      !(p[0] === 10 || p[0] === 127 || p[0] === 0 ||
-        (p[0] === 192 && p[1] === 168) ||
-        (p[0] === 172 && p[1] >= 16 && p[1] <= 31) ||
-        (p[0] === 169 && p[1] === 254));
-  };
-  const isPublicIPv6 = value => value.includes(":") && !/^(::1|::ffff:127\.|fe80:|fc|fd)/i.test(value);
-  if (!ip || ip.includes(",") || !(isPublicIPv4(ip) || isPublicIPv6(ip))) return "";
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3500);
-    const response = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`, { signal: controller.signal, headers: { accept: "application/json" } });
-    clearTimeout(timer);
-    if (!response.ok) return "";
-    const data = await response.json();
-    const code = String(data.country_code || "").trim().toUpperCase();
-    return data.success !== false && /^[A-Z]{2}$/.test(code) && code !== "XX" ? code : "";
-  } catch (error) {
-    return "";
-  }
-}
-
-function getPricingForCountry(country) {
-  return getPricing({ headers: { "x-vercel-ip-country": String(country || "").toUpperCase() } });
-}
-
-function getPricing(req) {
-  const country = getCountry(req);
+function getPricingForCountry(countryCode) {
+  const country = String(countryCode || "").trim().toUpperCase();
 
   if (country === "UG") {
-    return {
-      amount: 700,
-      currency: "UGX",
-      label: "UGX 700",
-    };
+    return { amount: 700, currency: "UGX", label: "UGX 700" };
   }
 
-  const eastAfrica = [
-    "KE",
-    "TZ",
-    "RW",
-    "BI",
-    "SS",
-    "ET",
-  ];
-
+  const eastAfrica = ["KE", "TZ", "RW", "BI", "SS", "ET"];
   if (eastAfrica.includes(country)) {
-    return {
-      amount: 1000,
-      currency: "UGX",
-      label: "UGX 1,000",
-    };
+    return { amount: 1000, currency: "UGX", label: "UGX 1,000" };
   }
 
   const africa = [
-    "NG",
-    "GH",
-    "ZA",
-    "ZM",
-    "ZW",
-    "MW",
-    "MZ",
-    "BW",
-    "NA",
-    "CM",
-    "SN",
-    "CI",
-    "SL",
-    "LR",
-    "GM",
-    "GN",
-    "EG",
-    "MA",
-    "DZ",
-    "TN",
+    "NG", "GH", "ZA", "ZM", "ZW", "MW", "MZ", "BW", "NA",
+    "CM", "SN", "CI", "SL", "LR", "GM", "GN", "EG", "MA", "DZ", "TN",
   ];
-
   if (africa.includes(country)) {
-    return {
-      amount: 0.57,
-      currency: "USD",
-      label: "$0.57",
-    };
+    return { amount: 0.57, currency: "USD", label: "$0.57" };
   }
 
   if (country === "GB") {
-    return {
-      amount: 1,
-      currency: "GBP",
-      label: "£1",
-    };
+    return { amount: 1, currency: "GBP", label: "£1" };
   }
 
-  return {
-    amount: 1,
-    currency: "USD",
-    label: "$1",
-  };
+  return { amount: 1, currency: "USD", label: "$1" };
+}
+
+// Payment/checkout code uses trusted edge headers only; never the query string.
+function getPricing(req) {
+  return getPricingForCountry(getCountry(req));
 }
 
 function getCoverDesignPrice(req) {
@@ -423,13 +343,18 @@ function isSameUrl(a, b) {
   );
 }
 
-app.get("/api/pricing", async (req, res) => {
-  const country = await detectCountryFromClientIp(req) || getCountry(req);
+app.get("/api/pricing", (req, res) => {
+  const detectedCountry = getCountry(req);
+  // ?country=XX is only a diagnostic preview for this endpoint.
+  // It does not affect getPricing(req), checkout, or payment amounts.
+  const previewCountry = String(req.query.country || "").trim().toUpperCase();
+  const validCountryCode = /^[A-Z]{2}$/.test(previewCountry);
+  const country = validCountryCode ? previewCountry : detectedCountry;
   const pricing = getPricingForCountry(country);
-  res.set("Cache-Control", "no-store, max-age=0");
+
   res.json({
-    country,
-    detected: /^[A-Z]{2}$/.test(country),
+    country: country || "",
+    detected: Boolean(detectedCountry) && !validCountryCode,
     price: pricing.amount,
     currency: pricing.currency,
     label: pricing.label,
@@ -1023,14 +948,7 @@ app.post(
         }
       }
 
-      // The API is hosted separately from the Vercel frontend, so Vercel's
-      // geo headers may not reach this server. Use the country code resolved
-      // by the dashboard IP lookup when creating the song, with request-header
-      // pricing as a fallback. The amount/currency are recalculated here.
-      const submittedCountry = String(body.country_code || "").trim().toUpperCase();
-      const serverDetectedCountry = await detectCountryFromClientIp(req);
-      const pricingCountry = serverDetectedCountry || ( /^[A-Z]{2}$/.test(submittedCountry) ? submittedCountry : getCountry(req) );
-      const pricing = getPricingForCountry(pricingCountry);
+      const pricing = getPricing(req);
 
       const songResult =
         await supabase
