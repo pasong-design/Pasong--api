@@ -22,10 +22,6 @@ const CLOUDINARY_API_SECRET =
   process.env.CLOUDINARY_API_SECRET;
 const PASONG_PAYMENT_SECRET =
   process.env.PASONG_PAYMENT_SECRET;
-// Advertising checkout configuration (Flutterwave secret stays on the server).
-const FLUTTERWAVE_SECRET_KEY = process.env.FLUTTERWAVE_SECRET_KEY || "";
-const PASONG_FRONTEND_URL = process.env.PASONG_FRONTEND_URL || "https://pasong-frontend.vercel.app";
-const PASONG_API_PUBLIC_URL = process.env.PASONG_API_PUBLIC_URL || "https://pasong-api.vercel.app";
 const CORS_ORIGIN =
   process.env.CORS_ORIGIN || "";
 
@@ -830,6 +826,13 @@ app.post(
 
       const body = req.body || {};
 
+      // Missing acceptance never approves a song. The review queue will show it as undeclared.
+      const contractAccepted = body.contractAccepted === true;
+      const societyStatus = cleanText(body.collecting_society_status, 60) || "unsure";
+      const societyName = cleanText(body.collecting_society_name, 200) || null;
+      const rightsNotes = cleanText(body.rights_notes, 2000) || null;
+      const declarationVersion = "PASONG-SONG-RIGHTS-v1";
+
       const title = cleanText(
         body.title,
         200
@@ -1007,7 +1010,8 @@ app.post(
               pricing.amount,
             currency:
               pricing.currency,
-            status: "approved",
+            // Artist agreement is not proof of ownership; all songs require admin review.
+            status: "pending",
             cover_url: coverUrl,
             audio_url: audioUrl,
             preview_url:
@@ -1022,6 +1026,27 @@ app.post(
         return res.status(500).json({
           error:
             "Song creation failed",
+        });
+      }
+
+      const declarationResult = await supabase
+        .from("song_rights_declarations")
+        .insert({
+          song_id: songResult.data.id,
+          user_id: loggedInUser.id,
+          agreement_version: declarationVersion,
+          contract_accepted: contractAccepted,
+          collecting_society_status: ["none", "registered", "third_party", "unsure"].includes(societyStatus) ? societyStatus : "unsure",
+          collecting_society_name: societyName,
+          rights_notes: rightsNotes,
+          accepted_at: new Date().toISOString(),
+          review_status: "pending",
+        });
+
+      if (declarationResult.error) {
+        await supabase.from("songs").delete().eq("id", songResult.data.id);
+        return res.status(500).json({
+          error: "Could not save your rights declaration. Please contact PASONG support.",
         });
       }
 
@@ -1089,6 +1114,83 @@ app.post(
     }
   }
 );
+
+async function getAdminUser(req) {
+  const user = await getAuthenticatedUser(req);
+  if (!user) return null;
+  const roles = [user.user_metadata?.role, user.app_metadata?.role, user.user_metadata?.user_role, user.app_metadata?.user_role]
+    .map(v => String(v || "").toLowerCase());
+  if (roles.includes("admin") || roles.includes("super_admin")) return user;
+  for (const table of ["admin_users", "profiles", "user_profiles"]) {
+    try {
+      const result = await supabase.from(table).select("role").eq("id", user.id).maybeSingle();
+      if (!result.error && ["admin", "super_admin"].includes(String(result.data?.role || "").toLowerCase())) return user;
+    } catch (_) {}
+  }
+  return null;
+}
+
+app.get("/api/admin/songs/review", async (req, res) => {
+  const admin = await getAdminUser(req);
+  if (!admin) return res.status(403).json({ error: "Administrator access required." });
+  try {
+    const requested = String(req.query.status || "pending").toLowerCase();
+    let query = supabase.from("songs").select("id,title,status,created_at,artist_id,artist_user_id,uploader_user_id,producer_user_id,writer_user_id,cover_url,preview_url,label_name").order("created_at", { ascending: false }).limit(100);
+    if (requested !== "all") query = query.eq("status", requested);
+    const result = await query;
+    if (result.error) throw result.error;
+    const songs = result.data || [];
+    const ids = songs.map(s => s.id);
+    let declarations = [];
+    if (ids.length) {
+      const d = await supabase.from("song_rights_declarations").select("song_id,user_id,agreement_version,contract_accepted,collecting_society_status,collecting_society_name,rights_notes,accepted_at,review_status,admin_notes,reviewed_by,reviewed_at").in("song_id", ids);
+      if (d.error) throw d.error;
+      declarations = d.data || [];
+    }
+    const bySong = new Map(declarations.map(d => [String(d.song_id), d]));
+    return res.json({ songs: songs.map(song => ({ ...song, rights_declaration: bySong.get(String(song.id)) || null })) });
+  } catch (error) {
+    console.error("Admin song review list failed:", error);
+    return res.status(500).json({ error: "Could not load song review queue. Ensure the PASONG song-rights SQL migration has been run." });
+  }
+});
+
+app.post("/api/admin/songs/:id/review", async (req, res) => {
+  const admin = await getAdminUser(req);
+  if (!admin) return res.status(403).json({ error: "Administrator access required." });
+  const songId = String(req.params.id || "");
+  if (!validUuid(songId)) return res.status(400).json({ error: "Invalid song ID." });
+  const action = String(req.body?.action || "").toLowerCase();
+  const notes = cleanText(req.body?.admin_notes, 2000) || null;
+  const statusMap = { approve: "approved", reject: "rejected", request_info: "more_information_required" };
+  const newStatus = statusMap[action];
+  if (!newStatus) return res.status(400).json({ error: "Action must be approve, reject, or request_info." });
+  if ((action === "reject" || action === "request_info") && !notes) return res.status(400).json({ error: "Please enter a reason or information request." });
+  try {
+    const current = await supabase.from("songs").select("id,status").eq("id", songId).maybeSingle();
+    if (current.error) throw current.error;
+    if (!current.data) return res.status(404).json({ error: "Song not found." });
+    if (action === "approve") {
+      const declarationCheck = await supabase.from("song_rights_declarations").select("contract_accepted,collecting_society_status").eq("song_id", songId).maybeSingle();
+      if (declarationCheck.error) throw declarationCheck.error;
+      if (!declarationCheck.data || declarationCheck.data.contract_accepted !== true) {
+        return res.status(409).json({ error: "Cannot approve: the artist's rights agreement has not been recorded. Ask the artist to accept the agreement and resubmit." });
+      }
+    }
+    const update = await supabase.from("songs").update({ status: newStatus }).eq("id", songId).select("id,title,status").single();
+    if (update.error) throw update.error;
+    const declaration = await supabase.from("song_rights_declarations").update({ review_status: newStatus, admin_notes: notes, reviewed_by: admin.id, reviewed_at: new Date().toISOString() }).eq("song_id", songId);
+    if (declaration.error) {
+      // Keep the song non-public if the review audit record could not be saved.
+      if (action === "approve") await supabase.from("songs").update({ status: "pending" }).eq("id", songId);
+      throw declaration.error;
+    }
+    return res.json({ success: true, song: update.data });
+  } catch (error) {
+    console.error("Admin song review action failed:", error);
+    return res.status(500).json({ error: "Could not save the review decision." });
+  }
+});
 
 function publicSong(song) {
   if (!song) {
@@ -5356,415 +5458,6 @@ app.post(
     }
   }
 );
-
-// PASONG advertising packages, checkout and payment verification.
-const PASONG_AD_PACKAGES = {
-  home_image: {
-    amount: Number(process.env.PASONG_AD_HOME_IMAGE_UGX || 25000),
-    days: 7,
-    name: "Homepage Image",
-  },
-  home_video: {
-    amount: Number(process.env.PASONG_AD_HOME_VIDEO_UGX || 40000),
-    days: 7,
-    name: "Homepage Video",
-  },
-  sitewide: {
-    amount: Number(process.env.PASONG_AD_SITEWIDE_UGX || 60000),
-    days: 7,
-    name: "PASONG Sitewide",
-  },
-};
-
-function cleanAdText(value, max = 5000) {
-  return String(value == null ? "" : value).trim().slice(0, max);
-}
-
-function validHttpUrl(value) {
-  if (!value) return true;
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function normalizeAdMediaType(value) {
-  return String(value || "").trim().toLowerCase() === "video"
-    ? "video"
-    : "image";
-}
-
-app.get("/api/advertising/packages", (req, res) => {
-  res.json({
-    success: true,
-    currency: "UGX",
-    packages: Object.entries(PASONG_AD_PACKAGES).map(([key, pkg]) => ({
-      key,
-      name: pkg.name,
-      amount: pkg.amount,
-      currency: "UGX",
-      days: pkg.days,
-    })),
-  });
-});
-
-app.post("/api/advertising/checkout", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-
-    if (!user) {
-      return res.status(401).json({
-        error: "Please sign in to advertise on PASONG.",
-      });
-    }
-
-    if (!FLUTTERWAVE_SECRET_KEY) {
-      return res.status(503).json({
-        error:
-          "Advertising payment is not configured. Add FLUTTERWAVE_SECRET_KEY to Render.",
-      });
-    }
-
-    const body = req.body || {};
-    const packageKey = cleanAdText(body.package_key, 40);
-    const pkg = PASONG_AD_PACKAGES[packageKey];
-
-    if (!pkg || !Number.isFinite(pkg.amount) || pkg.amount <= 0) {
-      return res.status(400).json({
-        error: "Invalid advertising package.",
-      });
-    }
-
-    const advertiserName = cleanAdText(body.advertiser_name, 160);
-    const advertiserEmail = cleanAdText(body.advertiser_email || user.email, 200);
-    const advertiserPhone = cleanAdText(body.advertiser_phone, 60);
-    const title = cleanAdText(body.title, 200);
-    const description = cleanAdText(body.description, 5000);
-    const targetUrl = cleanAdText(body.target_url, 1000);
-    const requestedPlacement = cleanAdText(body.placement, 60).toLowerCase();
-    const mediaUrl = cleanAdText(body.media_url, 2000);
-    const mediaType = normalizeAdMediaType(body.media_type);
-
-    if (!advertiserName || !advertiserEmail || !title || !description || !mediaUrl) {
-      return res.status(400).json({
-        error:
-          "Advertiser name, email, title, description and advert media are required.",
-      });
-    }
-
-    if (!validHttpUrl(mediaUrl) || !validHttpUrl(targetUrl)) {
-      return res.status(400).json({
-        error: "Invalid media or destination URL.",
-      });
-    }
-
-    if (packageKey === "home_image" && mediaType !== "image") {
-      return res.status(400).json({
-        error: "Homepage Image requires an image advert.",
-      });
-    }
-
-    if (packageKey === "home_video" && mediaType !== "video") {
-      return res.status(400).json({
-        error: "Homepage Video requires a video advert.",
-      });
-    }
-
-    // Keep placement values compatible with the existing PASONG
-    // Advertisement Manager shown in the admin dashboard.
-    const placement =
-      packageKey === "home_image" || packageKey === "home_video"
-        ? "home"
-        : packageKey === "sitewide"
-          ? "all"
-          : requestedPlacement || "home";
-
-    const txRef =
-      `PASONG-AD-${Date.now()}-${crypto.randomBytes(8).toString("hex")}`;
-
-    const campaignResult = await supabase
-      .from("advertising_campaigns")
-      .insert({
-        user_id: user.id,
-        package_key: packageKey,
-        amount: pkg.amount,
-        currency: "UGX",
-        days: pkg.days,
-        advertiser_name: advertiserName,
-        advertiser_email: advertiserEmail,
-        advertiser_phone: advertiserPhone || null,
-        title,
-        description,
-        target_url: targetUrl || null,
-        placement,
-        media_url: mediaUrl,
-        media_type: mediaType,
-        tx_ref: txRef,
-        payment_status: "pending",
-        status: "pending",
-      })
-      .select()
-      .single();
-
-    if (campaignResult.error || !campaignResult.data) {
-      console.error("Advertising campaign insert failed:", campaignResult.error);
-      return res.status(500).json({
-        error: "Unable to create advertising campaign.",
-        details: campaignResult.error?.message || null,
-      });
-    }
-
-    const customerName =
-      advertiserName ||
-      user.email?.split("@")[0] ||
-      "PASONG Advertiser";
-
-    const redirectUrl =
-      `${PASONG_API_PUBLIC_URL}/api/advertising/flutterwave/callback`;
-
-    const flutterwavePayload = {
-      tx_ref: txRef,
-      amount: pkg.amount,
-      currency: "UGX",
-      redirect_url: redirectUrl,
-      // Uganda customers can pay by card or MTN/Airtel Mobile Money.
-      // Flutterwave accepts payment_options as a comma + space separated list.
-      payment_options: "card, mobilemoneyuganda",
-      customer: {
-        email: advertiserEmail,
-        name: customerName,
-        ...(advertiserPhone ? { phonenumber: advertiserPhone } : {}),
-      },
-      customizations: {
-        title: "PASONG Advertising",
-        description: `${pkg.name} - ${pkg.days} days`,
-        logo: "https://pasong-frontend.vercel.app/favicon.ico",
-      },
-      meta: {
-        pasong_ad_campaign_id: campaignResult.data.id,
-        package_key: packageKey,
-        user_id: user.id,
-      },
-    };
-
-    const fwResponse = await fetch("https://api.flutterwave.com/v3/payments", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(flutterwavePayload),
-    });
-
-    const fwText = await fwResponse.text();
-    let fwData = {};
-
-    try {
-      fwData = fwText ? JSON.parse(fwText) : {};
-    } catch {
-      fwData = {};
-    }
-
-    if (!fwResponse.ok) {
-      console.error("Advertising Flutterwave checkout failed:", fwData);
-
-      await supabase
-        .from("advertising_campaigns")
-        .update({ status: "payment_failed" })
-        .eq("id", campaignResult.data.id);
-
-      return res.status(502).json({
-        error: "Flutterwave could not create the advertising checkout.",
-        details: fwData.message || fwData.error || null,
-      });
-    }
-
-    const checkoutUrl = fwData?.data?.link || fwData?.link || "";
-
-    if (!checkoutUrl) {
-      await supabase
-        .from("advertising_campaigns")
-        .update({ status: "payment_failed" })
-        .eq("id", campaignResult.data.id);
-
-      return res.status(502).json({
-        error: "Flutterwave did not return a checkout link.",
-      });
-    }
-
-    return res.json({
-      success: true,
-      provider: "FLUTTERWAVE",
-      campaign_id: campaignResult.data.id,
-      external_reference: txRef,
-      checkout_url: checkoutUrl,
-      amount: pkg.amount,
-      currency: "UGX",
-      days: pkg.days,
-    });
-  } catch (error) {
-    console.error("Advertising checkout error:", error);
-
-    return res.status(500).json({
-      error: "Advertising checkout setup failed.",
-      details: error?.message || null,
-    });
-  }
-});
-
-app.get("/api/advertising/flutterwave/callback", async (req, res) => {
-  const frontendUrl = PASONG_FRONTEND_URL.replace(/\/$/, "");
-
-  try {
-    const txRef = cleanAdText(req.query.tx_ref, 200);
-    const transactionId = cleanAdText(req.query.transaction_id, 100);
-    const status = cleanAdText(req.query.status, 40).toLowerCase();
-
-    if (!FLUTTERWAVE_SECRET_KEY || status !== "successful" || !txRef || !transactionId) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`
-      );
-    }
-
-    const verifyResponse = await fetch(
-      `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(transactionId)}/verify`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    const verifyText = await verifyResponse.text();
-    let verifyData = {};
-
-    try {
-      verifyData = verifyText ? JSON.parse(verifyText) : {};
-    } catch {
-      verifyData = {};
-    }
-
-    const payment = verifyData?.data || {};
-    const verifiedStatus = String(payment.status || "").trim().toLowerCase();
-    const verifiedTxRef = String(payment.tx_ref || "").trim();
-    const verifiedAmount = Number(payment.amount);
-    const verifiedCurrency = String(payment.currency || "").trim().toUpperCase();
-
-    if (
-      !verifyResponse.ok ||
-      String(verifyData.status || "").toLowerCase() !== "success" ||
-      verifiedStatus !== "successful" ||
-      verifiedTxRef !== txRef ||
-      !Number.isFinite(verifiedAmount) ||
-      verifiedCurrency !== "UGX"
-    ) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`
-      );
-    }
-
-    const campaignResult = await supabase
-      .from("advertising_campaigns")
-      .select("*")
-      .eq("tx_ref", txRef)
-      .maybeSingle();
-
-    if (campaignResult.error || !campaignResult.data) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
-          "Advertising campaign was not found."
-        )}`
-      );
-    }
-
-    const campaign = campaignResult.data;
-    const expectedAmount = Number(campaign.amount);
-
-    if (!Number.isFinite(expectedAmount) || verifiedAmount !== expectedAmount) {
-      await supabase
-        .from("advertising_campaigns")
-        .update({ status: "payment_failed" })
-        .eq("id", campaign.id);
-
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=failed&tx_ref=${encodeURIComponent(txRef)}`
-      );
-    }
-
-    // Protect against duplicate callback processing.
-    if (campaign.payment_status === "paid" && campaign.advertisement_id) {
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=success&campaign_id=${encodeURIComponent(
-          campaign.id
-        )}`
-      );
-    }
-
-    const startAt = new Date();
-    const endAt = new Date(
-      startAt.getTime() + Number(campaign.days || 7) * 24 * 60 * 60 * 1000
-    );
-
-    const adResult = await supabase
-      .from("advertisements")
-      .insert({
-        title: campaign.title,
-        description: campaign.description,
-        image_url: campaign.media_url,
-        target_url: campaign.target_url,
-        placement: campaign.placement,
-        start_at: startAt.toISOString(),
-        end_at: endAt.toISOString(),
-        status: "pending",
-        clicks: 0,
-        impressions: 0,
-        created_by: campaign.user_id,
-        media_type: campaign.media_type,
-      })
-      .select()
-      .single();
-
-    if (adResult.error || !adResult.data) {
-      console.error("Advertising ad creation failed:", adResult.error);
-
-      return res.redirect(
-        `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
-          "Payment was verified but PASONG could not create the campaign."
-        )}`
-      );
-    }
-
-    await supabase
-      .from("advertising_campaigns")
-      .update({
-        payment_status: "paid",
-        status: "pending",
-        transaction_id: transactionId,
-        advertisement_id: adResult.data.id,
-        start_at: startAt.toISOString(),
-        end_at: endAt.toISOString(),
-      })
-      .eq("id", campaign.id);
-
-    return res.redirect(
-      `${frontendUrl}/advertise.html?payment=success&campaign_id=${encodeURIComponent(
-        campaign.id
-      )}`
-    );
-  } catch (error) {
-    console.error("Advertising callback error:", error);
-
-    return res.redirect(
-      `${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent(
-        "Unable to verify the advertising payment."
-      )}`
-    );
-  }
-});
 
 app.use(
   (error, req, res, next) => {
