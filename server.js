@@ -983,7 +983,16 @@ app.post(
         }
       }
 
-      const pricing = getPricing(req);
+      // The API is hosted separately from the Vercel frontend, so Vercel's
+      // geo headers may not reach this server. Use the country code resolved
+      // by the dashboard IP lookup when creating the song, with request-header
+      // pricing as a fallback. The amount/currency are recalculated here.
+      const submittedCountry = String(body.country_code || "")
+        .trim()
+        .toUpperCase();
+      const pricing = /^[A-Z]{2}$/.test(submittedCountry)
+        ? getPricing({ headers: { "x-vercel-ip-country": submittedCountry } })
+        : getPricing(req);
 
       const songResult =
         await supabase
