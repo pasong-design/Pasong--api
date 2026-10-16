@@ -6763,12 +6763,6 @@ app.get("/api/advertising/flutterwave/callback", async (req, res) => {
   }
 });
 
-
-// ============================================================
-// PASONG MUSIC PROMOTIONS — authenticated Flutterwave checkout
-// Kept separate from website advertising campaigns.
-// ============================================================
-
 app.get("/api/promotions/songs", async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
@@ -7097,6 +7091,8 @@ app.get("/api/promotions/flutterwave/callback", async (req, res) => {
     return res.redirect(`${frontendUrl}/promotion.html?payment=error&message=${encodeURIComponent("Unable to verify promotion payment.")}`);
   }
 });
+
+
 
 app.use(
   (error, req, res, next) => {
