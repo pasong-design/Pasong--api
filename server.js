@@ -6349,6 +6349,96 @@ app.post(
 
 
 
+
+// ============================================================
+// PASONG UNIFIED PROMOTION CHECKOUT (SAFE GATEWAY)
+// Frontend: promotion-checkout.html
+// This endpoint validates the request and deliberately refuses
+// to create a payment until a real MTN/Airtel/PesaPal integration
+// and a durable promotion-order schema are configured. It does not
+// fall back to Flutterwave or mark any campaign paid.
+// ============================================================
+const PASONG_UNIFIED_PROMOTION_PACKAGES = {
+  'song-starter': { type: 'song', amount: 50000, days: 7 },
+  'song-viral': { type: 'song', amount: 150000, days: 14 },
+  'song-hero': { type: 'song', amount: 300000, days: 30 },
+  'profile-starter': { type: 'profile', amount: 55000, days: 30 },
+  'profile-viral': { type: 'profile', amount: 120000, days: 30 },
+  'profile-pro': { type: 'profile', amount: 250000, days: 30 },
+  'business-starter': { type: 'business', amount: 105000, days: 7 },
+  'business-growth': { type: 'business', amount: 220000, days: 14 },
+  'business-pro': { type: 'business', amount: 450000, days: 30 },
+  'tiktok-starter': { type: 'tiktok', amount: 45000, days: 30 },
+  'tiktok-growth': { type: 'tiktok', amount: 84000, days: 30 },
+  'tiktok-pro': { type: 'tiktok', amount: 180000, days: 30 },
+  'tiktok-max': { type: 'tiktok', amount: 350000, days: 30 },
+};
+
+app.get('/api/promotions/checkout/status', (req, res) => {
+  res.json({
+    success: true,
+    checkout_ready: false,
+    providers: { mtn: false, airtel: false, pesapal: false },
+    message: 'Promotion checkout is not enabled until provider APIs and the promotion order storage are configured.',
+  });
+});
+
+app.post('/api/promotions/checkout', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const promotionType = String(body.promotion_type || '').trim().toLowerCase();
+    const packageKey = String(body.package_key || '').trim();
+    const provider = String(body.provider || '').trim().toLowerCase();
+    const target = body.target && typeof body.target === 'object' ? body.target : {};
+    const pkg = PASONG_UNIFIED_PROMOTION_PACKAGES[packageKey];
+
+    if (!pkg || pkg.type !== promotionType) {
+      return res.status(400).json({ error: 'Invalid promotion package.' });
+    }
+    if (!['mtn', 'airtel', 'card'].includes(provider)) {
+      return res.status(400).json({ error: 'Choose MTN Mobile Money, Airtel Money, or PesaPal card checkout.' });
+    }
+    if (Number(body.amount) !== pkg.amount || String(body.currency || '').toUpperCase() !== 'UGX') {
+      return res.status(400).json({ error: 'Promotion price mismatch. Refresh the page and try again.' });
+    }
+    if (promotionType === 'song' && !String(target.song_id || '').trim()) {
+      return res.status(400).json({ error: 'Song link or ID is required.' });
+    }
+    if (promotionType === 'profile' && !String(target.profile_id || '').trim()) {
+      return res.status(400).json({ error: 'Profile link or ID is required.' });
+    }
+    if (promotionType === 'business' && !String(target.business_name || '').trim()) {
+      return res.status(400).json({ error: 'Business name is required.' });
+    }
+    if (promotionType === 'tiktok') {
+      let url;
+      try { url = new URL(String(target.tiktok_url || '')); } catch (_) {
+        return res.status(400).json({ error: 'Enter a valid public TikTok link.' });
+      }
+      const host = url.hostname.toLowerCase().replace(/^www\./, '');
+      if (url.protocol !== 'https:' || !(host === 'tiktok.com' || host.endsWith('.tiktok.com'))) {
+        return res.status(400).json({ error: 'Enter a valid public HTTPS TikTok link.' });
+      }
+    }
+
+    // Intentionally fail closed. The current production API uses a separate
+    // Flutterwave flow for advertising; it must not be silently used for this
+    // new MTN/Airtel/PesaPal checkout. No payment or paid campaign is created.
+    const providerName = provider === 'mtn' ? 'MTN Mobile Money' : provider === 'airtel' ? 'Airtel Money' : 'PesaPal cards';
+    return res.status(503).json({
+      error: `${providerName} promotion checkout is not configured on PASONG yet. No payment has been taken.`,
+      code: 'PROMOTION_PROVIDER_NOT_CONFIGURED',
+      provider,
+      amount: pkg.amount,
+      currency: 'UGX',
+      days: pkg.days,
+    });
+  } catch (error) {
+    console.error('Unified promotion checkout error:', error);
+    return res.status(500).json({ error: 'Could not prepare promotion checkout. No payment has been taken.' });
+  }
+});
+
 // ============================================================
 // PASONG ADVERTISING
 // Public package list + authenticated campaign checkout.
@@ -6762,337 +6852,6 @@ app.get("/api/advertising/flutterwave/callback", async (req, res) => {
     );
   }
 });
-
-app.get("/api/promotions/songs", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ error: "Please sign in to promote your music." });
-
-    const profileResult = await supabase
-      .from("artist_profiles")
-      .select("id,user_id,artist_name,stage_name,performing_name")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (profileResult.error || !profileResult.data) {
-      return res.status(404).json({ error: "Artist profile not found. Complete your Artist Profile first." });
-    }
-
-    const profile = profileResult.data;
-    const result = await supabase
-      .from("songs")
-      .select("id,title,artist_id,artist_user_id,uploader_user_id,cover_url,cover_image_url,status,created_at")
-      .or(`artist_id.eq.${profile.id},artist_user_id.eq.${user.id},uploader_user_id.eq.${user.id}`)
-      .order("created_at", { ascending: false });
-
-    if (result.error) {
-      console.error("Promotion songs lookup failed:", result.error);
-      return res.status(500).json({ error: "Unable to load your songs." });
-    }
-
-    return res.json({
-      success: true,
-      artist: profile,
-      songs: result.data || [],
-    });
-  } catch (error) {
-    console.error("Promotion songs error:", error);
-    return res.status(500).json({ error: "Unable to load your songs." });
-  }
-});
-
-app.get("/api/promotions/mine", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ error: "Please sign in." });
-
-    const profileResult = await supabase
-      .from("artist_profiles")
-      .select("id")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (profileResult.error || !profileResult.data) {
-      return res.status(404).json({ error: "Artist profile not found." });
-    }
-
-    const result = await supabase
-      .from("promotions")
-      .select("*")
-      .eq("artist_id", profileResult.data.id)
-      .order("created_at", { ascending: false });
-
-    if (result.error) {
-      console.error("Promotion history lookup failed:", result.error);
-      return res.status(500).json({ error: "Unable to load your promotions." });
-    }
-
-    const rows = result.data || [];
-    const packageIds = [...new Set(rows.map(x => x.package_id).filter(Boolean))];
-    const songIds = [...new Set(rows.map(x => x.song_id).filter(Boolean))];
-    const [pkgResult, songResult] = await Promise.all([
-      packageIds.length ? supabase.from("promotion_packages").select("id,name").in("id", packageIds) : Promise.resolve({ data: [], error: null }),
-      songIds.length ? supabase.from("songs").select("id,title").in("id", songIds) : Promise.resolve({ data: [], error: null }),
-    ]);
-
-    const packageNames = new Map((pkgResult.data || []).map(x => [String(x.id), x.name]));
-    const songTitles = new Map((songResult.data || []).map(x => [String(x.id), x.title]));
-
-    return res.json({
-      success: true,
-      promotions: rows.map(p => ({
-        ...p,
-        package_name: packageNames.get(String(p.package_id)) || "Promotion",
-        song_title: songTitles.get(String(p.song_id)) || "Promotion Campaign",
-      })),
-    });
-  } catch (error) {
-    console.error("Promotion history error:", error);
-    return res.status(500).json({ error: "Unable to load your promotions." });
-  }
-});
-
-app.post("/api/promotions/checkout", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ error: "Please sign in to promote your music." });
-    if (!FLUTTERWAVE_SECRET_KEY) {
-      return res.status(503).json({ error: "Promotion payment is not configured. Add FLUTTERWAVE_SECRET_KEY to Render." });
-    }
-
-    const body = req.body || {};
-    const songId = String(body.song_id || "").trim();
-    const packageId = String(body.package_id || "").trim();
-    const startRaw = String(body.start_date || "").trim();
-    const goal = String(body.goal || "streams").trim().toLowerCase();
-    const campaignNote = cleanAdText(body.campaign_note, 500);
-
-    if (!validUuid(songId) || !validUuid(packageId)) {
-      return res.status(400).json({ error: "Select a valid song and promotion package." });
-    }
-    if (!["streams", "sales", "fans", "exposure", "release"].includes(goal)) {
-      return res.status(400).json({ error: "Invalid promotion goal." });
-    }
-
-    const startDate = new Date(`${startRaw}T00:00:00.000Z`);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(startRaw) || Number.isNaN(startDate.getTime()) || startDate.toISOString().slice(0, 10) !== startRaw) {
-      return res.status(400).json({ error: "Choose a valid campaign start date." });
-    }
-    if (startRaw < new Date().toISOString().slice(0, 10)) {
-      return res.status(400).json({ error: "Campaign start date cannot be in the past." });
-    }
-
-    const profileResult = await supabase
-      .from("artist_profiles")
-      .select("id,user_id,artist_name,stage_name,performing_name")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (profileResult.error || !profileResult.data) {
-      return res.status(404).json({ error: "Artist profile not found." });
-    }
-    const artist = profileResult.data;
-
-    const songResult = await supabase
-      .from("songs")
-      .select("id,title,artist_id,artist_user_id,uploader_user_id")
-      .eq("id", songId)
-      .maybeSingle();
-
-    if (songResult.error || !songResult.data) {
-      return res.status(404).json({ error: "Song not found." });
-    }
-    const song = songResult.data;
-    const ownsSong =
-      String(song.artist_id || "") === String(artist.id) ||
-      String(song.artist_user_id || "") === String(user.id) ||
-      String(song.uploader_user_id || "") === String(user.id);
-    if (!ownsSong) {
-      return res.status(403).json({ error: "You can only promote a song belonging to your account." });
-    }
-
-    const packageResult = await supabase
-      .from("promotion_packages")
-      .select("*")
-      .eq("id", packageId)
-      .maybeSingle();
-
-    if (packageResult.error || !packageResult.data) {
-      return res.status(404).json({ error: "Promotion package not found." });
-    }
-    const pkg = packageResult.data;
-    const amount = Number(pkg.price);
-    const currency = String(pkg.currency || "UGX").trim().toUpperCase();
-    const days = Number(pkg.duration_days ?? pkg.duration ?? pkg.days);
-    if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(days) || days < 1 || !/^[A-Z]{3}$/.test(currency)) {
-      return res.status(400).json({ error: "This promotion package has invalid price, currency or duration. Please contact PASONG admin." });
-    }
-
-    const endDate = new Date(startDate.getTime() + days * 86400000);
-    const txRef = `PASONG-PROMO-${Date.now()}-${crypto.randomBytes(8).toString("hex")}`;
-
-    const campaignResult = await supabase
-      .from("promotions")
-      .insert({
-        song_id: song.id,
-        artist_id: artist.id,
-        package_id: pkg.id,
-        start_date: startDate.toISOString(),
-        end_date: endDate.toISOString(),
-        amount,
-        currency,
-        status: "pending",
-        payment_status: "pending",
-        tx_ref: txRef,
-        campaign_note: campaignNote || null,
-        goal,
-      })
-      .select()
-      .single();
-
-    if (campaignResult.error || !campaignResult.data) {
-      console.error("Promotion campaign insert failed:", campaignResult.error);
-      return res.status(500).json({ error: "Unable to create your promotion request. Confirm the promotion SQL migration has been run." });
-    }
-
-    const callbackUrl = `${PASONG_API_PUBLIC_URL}/api/promotions/flutterwave/callback`;
-    const payload = {
-      tx_ref: txRef,
-      amount,
-      currency,
-      redirect_url: callbackUrl,
-      payment_options: "card, mobilemoneyuganda",
-      customer: {
-        email: user.email,
-        name: artist.performing_name || artist.stage_name || artist.artist_name || user.email,
-      },
-      customizations: {
-        title: "PASONG Music Promotion",
-        description: `${pkg.name || "Promotion"} — ${days} days`,
-        logo: "https://pasong-frontend.vercel.app/favicon.ico",
-      },
-      meta: {
-        pasong_promotion_id: campaignResult.data.id,
-        package_id: pkg.id,
-        song_id: song.id,
-        user_id: user.id,
-      },
-    };
-
-    const fwResponse = await fetch("https://api.flutterwave.com/v3/payments", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const fwText = await fwResponse.text();
-    let fwData = {};
-    try { fwData = fwText ? JSON.parse(fwText) : {}; } catch {}
-
-    const checkoutUrl = fwData?.data?.link || fwData?.link || "";
-    if (!fwResponse.ok || !checkoutUrl) {
-      console.error("Promotion Flutterwave checkout failed:", fwData);
-      await supabase.from("promotions").update({ payment_status: "failed", status: "payment_failed" }).eq("id", campaignResult.data.id);
-      return res.status(502).json({ error: "Flutterwave could not create the promotion checkout.", details: fwData.message || fwData.error || null });
-    }
-
-    return res.status(201).json({
-      success: true,
-      promotion_id: campaignResult.data.id,
-      external_reference: txRef,
-      checkout_url: checkoutUrl,
-      amount,
-      currency,
-      days,
-    });
-  } catch (error) {
-    console.error("Promotion checkout error:", error);
-    return res.status(500).json({ error: "Unable to start promotion checkout." });
-  }
-});
-
-app.get("/api/promotions/flutterwave/callback", async (req, res) => {
-  const frontendUrl = PASONG_FRONTEND_URL.replace(/\/$/, "");
-  const failUrl = tx => `${frontendUrl}/promotion.html?payment=failed${tx ? `&tx_ref=${encodeURIComponent(tx)}` : ""}`;
-
-  try {
-    const txRef = cleanAdText(req.query.tx_ref, 200);
-    const transactionId = cleanAdText(req.query.transaction_id, 100);
-    const status = cleanAdText(req.query.status, 40).toLowerCase();
-
-    if (!FLUTTERWAVE_SECRET_KEY || status !== "successful" || !txRef || !transactionId) {
-      return res.redirect(failUrl(txRef));
-    }
-
-    const verifyResponse = await fetch(`https://api.flutterwave.com/v3/transactions/${encodeURIComponent(transactionId)}/verify`, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${FLUTTERWAVE_SECRET_KEY}`, "Content-Type": "application/json" },
-    });
-    const verifyText = await verifyResponse.text();
-    let verifyData = {};
-    try { verifyData = verifyText ? JSON.parse(verifyText) : {}; } catch {}
-
-    const payment = verifyData?.data || {};
-    const verifiedStatus = String(payment.status || "").trim().toLowerCase();
-    const verifiedTxRef = String(payment.tx_ref || "").trim();
-    const verifiedAmount = Number(payment.amount);
-    const verifiedCurrency = String(payment.currency || "").trim().toUpperCase();
-
-    if (!verifyResponse.ok || String(verifyData.status || "").toLowerCase() !== "success" ||
-        verifiedStatus !== "successful" || verifiedTxRef !== txRef ||
-        !Number.isFinite(verifiedAmount) || !verifiedCurrency) {
-      return res.redirect(failUrl(txRef));
-    }
-
-    const campaignResult = await supabase
-      .from("promotions")
-      .select("*")
-      .eq("tx_ref", txRef)
-      .maybeSingle();
-
-    if (campaignResult.error || !campaignResult.data) {
-      return res.redirect(`${frontendUrl}/promotion.html?payment=error&message=${encodeURIComponent("Promotion request was not found.")}`);
-    }
-
-    const campaign = campaignResult.data;
-    if (campaign.payment_status === "paid") {
-      return res.redirect(`${frontendUrl}/promotion.html?payment=success&promotion_id=${encodeURIComponent(campaign.id)}`);
-    }
-
-    if (Number(campaign.amount) !== verifiedAmount ||
-        String(campaign.currency || "").toUpperCase() !== verifiedCurrency) {
-      await supabase.from("promotions").update({ payment_status: "failed", status: "payment_failed" }).eq("id", campaign.id);
-      return res.redirect(failUrl(txRef));
-    }
-
-    const update = await supabase
-      .from("promotions")
-      .update({
-        payment_status: "paid",
-        provider_transaction_id: transactionId,
-        status: "pending",
-      })
-      .eq("id", campaign.id)
-      .neq("payment_status", "paid")
-      .select("id")
-      .maybeSingle();
-
-    if (update.error) {
-      console.error("Promotion payment update failed:", update.error);
-      return res.redirect(`${frontendUrl}/promotion.html?payment=error&message=${encodeURIComponent("Payment was verified, but PASONG could not update the promotion. Contact support with your transaction reference.")}`);
-    }
-
-    return res.redirect(`${frontendUrl}/promotion.html?payment=success&promotion_id=${encodeURIComponent(campaign.id)}`);
-  } catch (error) {
-    console.error("Promotion Flutterwave callback error:", error);
-    return res.redirect(`${frontendUrl}/promotion.html?payment=error&message=${encodeURIComponent("Unable to verify promotion payment.")}`);
-  }
-});
-
-
 
 app.use(
   (error, req, res, next) => {
