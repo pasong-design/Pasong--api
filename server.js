@@ -22,6 +22,26 @@ const CLOUDINARY_API_SECRET =
   process.env.CLOUDINARY_API_SECRET;
 const PASONG_PAYMENT_SECRET =
   process.env.PASONG_PAYMENT_SECRET;
+
+// Pesapal API 3.0 credentials. Keep secrets in Render environment variables.
+const PESAPAL_CONSUMER_KEY = process.env.PESAPAL_CONSUMER_KEY || "";
+const PESAPAL_CONSUMER_SECRET = process.env.PESAPAL_CONSUMER_SECRET || "";
+const PESAPAL_ENVIRONMENT = String(process.env.PESAPAL_ENVIRONMENT || "sandbox").toLowerCase();
+const PESAPAL_IPN_ID = process.env.PESAPAL_IPN_ID || "";
+const PESAPAL_BEATS_IPN_ID = process.env.PESAPAL_BEATS_IPN_ID || PESAPAL_IPN_ID;
+const PESAPAL_ADVERTISING_IPN_ID = process.env.PESAPAL_ADVERTISING_IPN_ID || "";
+const PESAPAL_BASE_URL = PESAPAL_ENVIRONMENT === "live"
+  ? "https://pay.pesapal.com/v3"
+  : "https://cybqa.pesapal.com/pesapalv3";
+
+const PASONG_FRONTEND_URL =
+  process.env.PASONG_FRONTEND_URL ||
+  "https://pasong-frontend.vercel.app";
+
+const PASONG_API_PUBLIC_URL =
+  process.env.PASONG_API_PUBLIC_URL ||
+  "https://pasong-api.vercel.app";
+
 const CORS_ORIGIN =
   process.env.CORS_ORIGIN || "";
 
@@ -141,6 +161,383 @@ app.get("/", (req, res) => {
   });
 });
 
+
+
+// ============================================================
+// PASONG PREMIUM
+// Global Premium plan with localized currency display.
+// Payment activation is intentionally NOT granted by the client;
+// a verified payment webhook/admin completion must activate it.
+// ============================================================
+
+const PREMIUM_PLANS = {
+  monthly: {
+    id: "premium_monthly",
+    interval: "month",
+    days: 30,
+    prices: {
+      UG: { amount: 10000, currency: "UGX", label: "UGX 10,000" },
+      KE: { amount: 399, currency: "KES", label: "KES 399" },
+      TZ: { amount: 7500, currency: "TZS", label: "TZS 7,500" },
+      RW: { amount: 3500, currency: "RWF", label: "RWF 3,500" },
+      NG: { amount: 5000, currency: "NGN", label: "NGN 5,000" },
+      GH: { amount: 45, currency: "GHS", label: "GHS 45" },
+      ZA: { amount: 59, currency: "ZAR", label: "ZAR 59" },
+      GB: { amount: 2.49, currency: "GBP", label: "£2.49" },
+      EU: { amount: 2.99, currency: "EUR", label: "€2.99" },
+      US: { amount: 2.99, currency: "USD", label: "$2.99" },
+      CA: { amount: 4.09, currency: "CAD", label: "CA$4.09" },
+      AU: { amount: 4.49, currency: "AUD", label: "A$4.49" },
+      DEFAULT: { amount: 2.99, currency: "USD", label: "$2.99" },
+    },
+  },
+  yearly: {
+    id: "premium_yearly",
+    interval: "year",
+    days: 365,
+    prices: {
+      UG: { amount: 100000, currency: "UGX", label: "UGX 100,000" },
+      KE: { amount: 3990, currency: "KES", label: "KES 3,990" },
+      TZ: { amount: 75000, currency: "TZS", label: "TZS 75,000" },
+      RW: { amount: 35000, currency: "RWF", label: "RWF 35,000" },
+      NG: { amount: 50000, currency: "NGN", label: "NGN 50,000" },
+      GH: { amount: 450, currency: "GHS", label: "GHS 450" },
+      ZA: { amount: 590, currency: "ZAR", label: "ZAR 590" },
+      GB: { amount: 24.90, currency: "GBP", label: "£24.90" },
+      EU: { amount: 29.90, currency: "EUR", label: "€29.90" },
+      US: { amount: 29.90, currency: "USD", label: "$29.90" },
+      CA: { amount: 40.90, currency: "CAD", label: "CA$40.90" },
+      AU: { amount: 44.90, currency: "AUD", label: "A$44.90" },
+      DEFAULT: { amount: 29.90, currency: "USD", label: "$29.90" },
+    },
+  },
+};
+
+const PREMIUM_FEATURES = [
+  "Premium badge",
+  "Ad-free listening",
+  "Higher-quality audio",
+  "Offline listening for eligible content",
+  "Premium-exclusive releases",
+  "Early access to selected releases",
+  "Premium-only playlists",
+];
+
+function getPremiumCountry(req) {
+  return getCountry(req) || "US";
+}
+
+function getPremiumPrice(req, planKey = "monthly") {
+  const plan = PREMIUM_PLANS[planKey] || PREMIUM_PLANS.monthly;
+  const country = getPremiumCountry(req);
+  return {
+    plan: plan.id,
+    interval: plan.interval,
+    days: plan.days,
+    country,
+    ...(plan.prices[country] || plan.prices.DEFAULT),
+  };
+}
+
+app.get("/api/premium/pricing", (req, res) => {
+  const monthly = getPremiumPrice(req, "monthly");
+  const yearly = getPremiumPrice(req, "yearly");
+  res.json({
+    success: true,
+    country: monthly.country,
+    currency: monthly.currency,
+    monthly,
+    yearly,
+    features: PREMIUM_FEATURES,
+    pricing_note: "PASONG uses fixed regional price points. IP/country detection is for display; the payment provider must confirm the billing country before charging.",
+  });
+});
+
+app.get("/api/premium/status", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.json({
+        success: true,
+        authenticated: false,
+        premium: false,
+        status: "free",
+      });
+    }
+
+    const result = await supabase
+      .from("premium_subscriptions")
+      .select("id,user_id,plan,status,started_at,expires_at,currency,amount,payment_reference")
+      .eq("user_id", user.id)
+      .order("expires_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (result.error) {
+      console.error("Premium status lookup failed:", result.error);
+      return res.status(500).json({ success: false, error: "Unable to load Premium status." });
+    }
+
+    const subscription = result.data || null;
+    const active = !!subscription &&
+      subscription.status === "active" &&
+      (!subscription.expires_at || new Date(subscription.expires_at).getTime() > Date.now());
+
+    res.json({
+      success: true,
+      authenticated: true,
+      premium: active,
+      status: active ? "active" : (subscription?.status || "free"),
+      subscription,
+    });
+  } catch (error) {
+    console.error("Premium status error:", error);
+    res.status(500).json({ success: false, error: "Unable to load Premium status." });
+  }
+});
+
+
+app.post("/api/premium/complete", async (req, res) => {
+  try {
+    // This endpoint is for the payment provider/webhook only.
+    // Never call it directly from premium.html with a public secret.
+    const secret = String(req.headers["x-pasong-payment-secret"] || "");
+
+    if (!PASONG_PAYMENT_SECRET || !safeSecretCompare(secret, PASONG_PAYMENT_SECRET)) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized payment completion.",
+      });
+    }
+
+    const { payment_reference, payment_status, provider_reference } = req.body || {};
+
+    if (!payment_reference || payment_status !== "paid") {
+      return res.status(400).json({
+        success: false,
+        error: "A paid Premium payment is required.",
+      });
+    }
+
+    const paymentResult = await supabase
+      .from("premium_payments")
+      .select("*")
+      .eq("payment_reference", String(payment_reference).trim())
+      .maybeSingle();
+
+    if (paymentResult.error) {
+      console.error("Premium payment lookup failed:", paymentResult.error);
+      return res.status(500).json({
+        success: false,
+        error: "Unable to verify Premium payment.",
+      });
+    }
+
+    if (!paymentResult.data) {
+      return res.status(404).json({
+        success: false,
+        error: "Premium payment not found.",
+      });
+    }
+
+    const payment = paymentResult.data;
+
+    // Idempotency: a webhook/provider may retry the same notification.
+    if (payment.status === "paid") {
+      const existing = await supabase
+        .from("premium_subscriptions")
+        .select("*")
+        .eq("payment_reference", payment.payment_reference)
+        .maybeSingle();
+
+      return res.json({
+        success: true,
+        already_completed: true,
+        premium: true,
+        subscription: existing.data || null,
+        payment,
+      });
+    }
+
+    if (payment.status !== "pending") {
+      return res.status(409).json({
+        success: false,
+        error: `Premium payment is already ${payment.status}.`,
+      });
+    }
+
+    const days = payment.plan === "premium_yearly" ? 365 : 30;
+    const now = new Date();
+
+    // If the user already has an active Premium subscription, extend it
+    // from the current expiry rather than creating overlapping subscriptions.
+    const activeResult = await supabase
+      .from("premium_subscriptions")
+      .select("*")
+      .eq("user_id", payment.user_id)
+      .eq("status", "active")
+      .gt("expires_at", now.toISOString())
+      .order("expires_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (activeResult.error) {
+      console.error("Active Premium lookup failed:", activeResult.error);
+      return res.status(500).json({
+        success: false,
+        error: "Unable to check existing Premium subscription.",
+      });
+    }
+
+    const currentExpiry = activeResult.data
+      ? new Date(activeResult.data.expires_at)
+      : now;
+
+    const start = activeResult.data
+      ? activeResult.data.started_at
+      : now.toISOString();
+
+    const expires = new Date(
+      Math.max(currentExpiry.getTime(), now.getTime()) + days * 86400000
+    ).toISOString();
+
+    let subscriptionData;
+
+    if (activeResult.data) {
+      const updatedSubscription = await supabase
+        .from("premium_subscriptions")
+        .update({
+          expires_at: expires,
+          plan: payment.plan,
+          currency: payment.currency,
+          amount: payment.amount,
+        })
+        .eq("id", activeResult.data.id)
+        .select()
+        .single();
+
+      if (updatedSubscription.error) {
+        console.error(
+          "Premium subscription extension failed:",
+          updatedSubscription.error
+        );
+        return res.status(500).json({
+          success: false,
+          error: "Premium activation failed.",
+        });
+      }
+
+      subscriptionData = updatedSubscription.data;
+    } else {
+      const insertedSubscription = await supabase
+        .from("premium_subscriptions")
+        .insert({
+          user_id: payment.user_id,
+          plan: payment.plan,
+          status: "active",
+          started_at: start,
+          expires_at: expires,
+          currency: payment.currency,
+          amount: payment.amount,
+          payment_reference: payment.payment_reference,
+        })
+        .select()
+        .single();
+
+      if (insertedSubscription.error) {
+        console.error(
+          "Premium subscription activation failed:",
+          insertedSubscription.error
+        );
+        return res.status(500).json({
+          success: false,
+          error: "Premium activation failed.",
+        });
+      }
+
+      subscriptionData = insertedSubscription.data;
+    }
+
+    const updatedPayment = await supabase
+      .from("premium_payments")
+      .update({
+        status: "paid",
+        provider_reference: provider_reference || null,
+        paid_at: now.toISOString(),
+      })
+      .eq("id", payment.id)
+      .eq("status", "pending")
+      .select()
+      .maybeSingle();
+
+    if (updatedPayment.error) {
+      console.error("Premium payment update failed:", updatedPayment.error);
+      return res.status(500).json({
+        success: false,
+        error: "Premium payment status update failed.",
+      });
+    }
+
+    res.json({
+      success: true,
+      premium: true,
+      subscription: subscriptionData,
+      payment: updatedPayment.data || payment,
+    });
+  } catch (error) {
+    console.error("Premium completion error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Premium payment completion failed.",
+    });
+  }
+});
+
+app.post("/api/premium/checkout", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ success: false, error: "You must be logged in to subscribe to PASONG Premium." });
+    }
+
+    const planKey = req.body?.plan === "yearly" ? "yearly" : "monthly";
+    const pricing = getPremiumPrice(req, planKey);
+
+    // A checkout record is created, but Premium is NOT activated here.
+    // Your payment provider/webhook must verify the payment first.
+    const reference = "PREM-" + crypto.randomBytes(10).toString("hex").toUpperCase();
+
+    const result = await supabase
+      .from("premium_payments")
+      .insert({
+        user_id: user.id,
+        plan: pricing.plan,
+        amount: pricing.amount,
+        currency: pricing.currency,
+        country: pricing.country,
+        status: "pending",
+        payment_reference: reference,
+      })
+      .select()
+      .single();
+
+    if (result.error) {
+      console.error("Premium checkout creation failed:", result.error);
+      return res.status(500).json({ success: false, error: "Unable to start Premium checkout." });
+    }
+
+    res.status(201).json({
+      success: true,
+      payment: result.data,
+      pricing,
+      message: "Premium checkout created. Complete payment through the configured payment provider before Premium is activated.",
+    });
+  } catch (error) {
+    console.error("Premium checkout error:", error);
+    res.status(500).json({ success: false, error: "Unable to start Premium checkout." });
+  }
+});
+
 app.get("/health", (req, res) => {
   res.json({
     status: "ok",
@@ -181,6 +578,73 @@ async function getAuthenticatedUser(req) {
   }
 }
 
+
+// ============================================================
+// PASONG STUDIO FEATURE CHECKOUT PREPARATION
+// Authenticates the owner and returns server-authoritative package
+// details. This does NOT collect payment or activate a feature.
+// ============================================================
+app.get("/api/studio-registration/checkout", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: "Please sign in to the PASONG account that registered this studio.",
+        code: "AUTH_REQUIRED",
+      });
+    }
+
+    const studioId = String(req.query.studio_id || "").trim();
+    const packageKey = String(req.query.package || "").trim().toLowerCase();
+    const packages = {
+      starter: { label: "Starter Feature", amount: 25000, currency: "UGX", days: 7 },
+      pro: { label: "Pro Feature", amount: 60000, currency: "UGX", days: 14 },
+      premium: { label: "Premium Feature", amount: 120000, currency: "UGX", days: 30 },
+    };
+    const selectedPackage = packages[packageKey];
+
+    if (!studioId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(studioId)) {
+      return res.status(400).json({ success: false, error: "A valid studio ID is required." });
+    }
+    if (!selectedPackage) {
+      return res.status(400).json({ success: false, error: "Choose a valid studio feature package." });
+    }
+
+    const result = await supabase
+      .from("producer_studios")
+      .select("id,studio_name,owner_id,status,country,city")
+      .eq("id", studioId)
+      .eq("owner_id", user.id)
+      .maybeSingle();
+
+    if (result.error) {
+      console.error("Studio feature checkout lookup failed:", result.error);
+      return res.status(500).json({ success: false, error: "Unable to verify this studio registration." });
+    }
+    if (!result.data) {
+      return res.status(404).json({ success: false, error: "This studio was not found under your signed-in account." });
+    }
+
+    return res.json({
+      success: true,
+      payment_enabled: false,
+      studio: {
+        id: result.data.id,
+        studio_name: result.data.studio_name,
+        status: result.data.status,
+        country: result.data.country,
+        city: result.data.city,
+      },
+      package: { key: packageKey, ...selectedPackage },
+      message: "Studio registration checkout verified. Payment is not connected yet; no money has been taken.",
+    });
+  } catch (error) {
+    console.error("Studio registration checkout preparation error:", error);
+    return res.status(500).json({ success: false, error: "Unable to prepare studio registration checkout." });
+  }
+});
+
 function getCountry(req) {
   return String(
     req.headers["x-vercel-ip-country"] ||
@@ -191,36 +655,78 @@ function getCountry(req) {
     .toUpperCase();
 }
 
-function getPricingForCountry(countryCode) {
-  const country = String(countryCode || "").trim().toUpperCase();
+function getPricing(req) {
+  const country = getCountry(req);
 
   if (country === "UG") {
-    return { amount: 700, currency: "UGX", label: "UGX 700" };
+    return {
+      amount: 700,
+      currency: "UGX",
+      label: "UGX 700",
+    };
   }
 
-  const eastAfrica = ["KE", "TZ", "RW", "BI", "SS", "ET"];
+  const eastAfrica = [
+    "KE",
+    "TZ",
+    "RW",
+    "BI",
+    "SS",
+    "ET",
+  ];
+
   if (eastAfrica.includes(country)) {
-    return { amount: 1000, currency: "UGX", label: "UGX 1,000" };
+    return {
+      amount: 1000,
+      currency: "UGX",
+      label: "UGX 1,000",
+    };
   }
 
   const africa = [
-    "NG", "GH", "ZA", "ZM", "ZW", "MW", "MZ", "BW", "NA",
-    "CM", "SN", "CI", "SL", "LR", "GM", "GN", "EG", "MA", "DZ", "TN",
+    "NG",
+    "GH",
+    "ZA",
+    "ZM",
+    "ZW",
+    "MW",
+    "MZ",
+    "BW",
+    "NA",
+    "CM",
+    "SN",
+    "CI",
+    "SL",
+    "LR",
+    "GM",
+    "GN",
+    "EG",
+    "MA",
+    "DZ",
+    "TN",
   ];
+
   if (africa.includes(country)) {
-    return { amount: 0.57, currency: "USD", label: "$0.57" };
+    return {
+      amount: 0.57,
+      currency: "USD",
+      label: "$0.57",
+    };
   }
 
   if (country === "GB") {
-    return { amount: 1, currency: "GBP", label: "£1" };
+    return {
+      amount: 1,
+      currency: "GBP",
+      label: "£1",
+    };
   }
 
-  return { amount: 1, currency: "USD", label: "$1" };
-}
-
-// Payment/checkout code uses trusted edge headers only; never the query string.
-function getPricing(req) {
-  return getPricingForCountry(getCountry(req));
+  return {
+    amount: 1,
+    currency: "USD",
+    label: "$1",
+  };
 }
 
 function getCoverDesignPrice(req) {
@@ -280,7 +786,6 @@ function allowedPaymentProvider(provider) {
     "MTN MOMO",
     "AIRTEL MONEY",
     "PESAPAL",
-    "FLUTTERWAVE",
   ].includes(
     String(provider || "")
       .trim()
@@ -344,17 +849,10 @@ function isSameUrl(a, b) {
 }
 
 app.get("/api/pricing", (req, res) => {
-  const detectedCountry = getCountry(req);
-  // ?country=XX is only a diagnostic preview for this endpoint.
-  // It does not affect getPricing(req), checkout, or payment amounts.
-  const previewCountry = String(req.query.country || "").trim().toUpperCase();
-  const validCountryCode = /^[A-Z]{2}$/.test(previewCountry);
-  const country = validCountryCode ? previewCountry : detectedCountry;
-  const pricing = getPricingForCountry(country);
+  const pricing = getPricing(req);
 
   res.json({
-    country: country || "",
-    detected: Boolean(detectedCountry) && !validCountryCode,
+    country: getCountry(req),
     price: pricing.amount,
     currency: pricing.currency,
     label: pricing.label,
@@ -457,11 +955,8 @@ function allowedCloudinaryFolder(
       "pasong-beats/audio",
       "pasong-beats/covers",
       "pasong-producers/profile",
-      // Homepage and admin advertisement uploads.
       "pasong/ads",
-      "pasong/heroes",
-      // Producer Dashboard studio registration photos.
-      "pasong/studios",
+      "pasong-ads",
     ].includes(value)
   ) {
     return true;
@@ -793,13 +1288,6 @@ app.post(
 
       const body = req.body || {};
 
-      // Missing acceptance never approves a song. The review queue will show it as undeclared.
-      const contractAccepted = body.contractAccepted === true;
-      const societyStatus = cleanText(body.collecting_society_status, 60) || "unsure";
-      const societyName = cleanText(body.collecting_society_name, 200) || null;
-      const rightsNotes = cleanText(body.rights_notes, 2000) || null;
-      const declarationVersion = "PASONG-SONG-RIGHTS-v1";
-
       const title = cleanText(
         body.title,
         200
@@ -977,8 +1465,7 @@ app.post(
               pricing.amount,
             currency:
               pricing.currency,
-            // Artist agreement is not proof of ownership; all songs require admin review.
-            status: "pending",
+            status: "approved",
             cover_url: coverUrl,
             audio_url: audioUrl,
             preview_url:
@@ -993,27 +1480,6 @@ app.post(
         return res.status(500).json({
           error:
             "Song creation failed",
-        });
-      }
-
-      const declarationResult = await supabase
-        .from("song_rights_declarations")
-        .insert({
-          song_id: songResult.data.id,
-          user_id: loggedInUser.id,
-          agreement_version: declarationVersion,
-          contract_accepted: contractAccepted,
-          collecting_society_status: ["none", "registered", "third_party", "unsure"].includes(societyStatus) ? societyStatus : "unsure",
-          collecting_society_name: societyName,
-          rights_notes: rightsNotes,
-          accepted_at: new Date().toISOString(),
-          review_status: "pending",
-        });
-
-      if (declarationResult.error) {
-        await supabase.from("songs").delete().eq("id", songResult.data.id);
-        return res.status(500).json({
-          error: "Could not save your rights declaration. Please contact PASONG support.",
         });
       }
 
@@ -1082,83 +1548,6 @@ app.post(
   }
 );
 
-async function getAdminUser(req) {
-  const user = await getAuthenticatedUser(req);
-  if (!user) return null;
-  const roles = [user.user_metadata?.role, user.app_metadata?.role, user.user_metadata?.user_role, user.app_metadata?.user_role]
-    .map(v => String(v || "").toLowerCase());
-  if (roles.includes("admin") || roles.includes("super_admin")) return user;
-  for (const table of ["admin_users", "profiles", "user_profiles"]) {
-    try {
-      const result = await supabase.from(table).select("role").eq("id", user.id).maybeSingle();
-      if (!result.error && ["admin", "super_admin"].includes(String(result.data?.role || "").toLowerCase())) return user;
-    } catch (_) {}
-  }
-  return null;
-}
-
-app.get("/api/admin/songs/review", async (req, res) => {
-  const admin = await getAdminUser(req);
-  if (!admin) return res.status(403).json({ error: "Administrator access required." });
-  try {
-    const requested = String(req.query.status || "pending").toLowerCase();
-    let query = supabase.from("songs").select("id,title,status,created_at,artist_id,artist_user_id,uploader_user_id,producer_user_id,writer_user_id,cover_url,preview_url,label_name").order("created_at", { ascending: false }).limit(100);
-    if (requested !== "all") query = query.eq("status", requested);
-    const result = await query;
-    if (result.error) throw result.error;
-    const songs = result.data || [];
-    const ids = songs.map(s => s.id);
-    let declarations = [];
-    if (ids.length) {
-      const d = await supabase.from("song_rights_declarations").select("song_id,user_id,agreement_version,contract_accepted,collecting_society_status,collecting_society_name,rights_notes,accepted_at,review_status,admin_notes,reviewed_by,reviewed_at").in("song_id", ids);
-      if (d.error) throw d.error;
-      declarations = d.data || [];
-    }
-    const bySong = new Map(declarations.map(d => [String(d.song_id), d]));
-    return res.json({ songs: songs.map(song => ({ ...song, rights_declaration: bySong.get(String(song.id)) || null })) });
-  } catch (error) {
-    console.error("Admin song review list failed:", error);
-    return res.status(500).json({ error: "Could not load song review queue. Ensure the PASONG song-rights SQL migration has been run." });
-  }
-});
-
-app.post("/api/admin/songs/:id/review", async (req, res) => {
-  const admin = await getAdminUser(req);
-  if (!admin) return res.status(403).json({ error: "Administrator access required." });
-  const songId = String(req.params.id || "");
-  if (!validUuid(songId)) return res.status(400).json({ error: "Invalid song ID." });
-  const action = String(req.body?.action || "").toLowerCase();
-  const notes = cleanText(req.body?.admin_notes, 2000) || null;
-  const statusMap = { approve: "approved", reject: "rejected", request_info: "more_information_required" };
-  const newStatus = statusMap[action];
-  if (!newStatus) return res.status(400).json({ error: "Action must be approve, reject, or request_info." });
-  if ((action === "reject" || action === "request_info") && !notes) return res.status(400).json({ error: "Please enter a reason or information request." });
-  try {
-    const current = await supabase.from("songs").select("id,status").eq("id", songId).maybeSingle();
-    if (current.error) throw current.error;
-    if (!current.data) return res.status(404).json({ error: "Song not found." });
-    if (action === "approve") {
-      const declarationCheck = await supabase.from("song_rights_declarations").select("contract_accepted,collecting_society_status").eq("song_id", songId).maybeSingle();
-      if (declarationCheck.error) throw declarationCheck.error;
-      if (!declarationCheck.data || declarationCheck.data.contract_accepted !== true) {
-        return res.status(409).json({ error: "Cannot approve: the artist's rights agreement has not been recorded. Ask the artist to accept the agreement and resubmit." });
-      }
-    }
-    const update = await supabase.from("songs").update({ status: newStatus }).eq("id", songId).select("id,title,status").single();
-    if (update.error) throw update.error;
-    const declaration = await supabase.from("song_rights_declarations").update({ review_status: newStatus, admin_notes: notes, reviewed_by: admin.id, reviewed_at: new Date().toISOString() }).eq("song_id", songId);
-    if (declaration.error) {
-      // Keep the song non-public if the review audit record could not be saved.
-      if (action === "approve") await supabase.from("songs").update({ status: "pending" }).eq("id", songId);
-      throw declaration.error;
-    }
-    return res.json({ success: true, song: update.data });
-  } catch (error) {
-    console.error("Admin song review action failed:", error);
-    return res.status(500).json({ error: "Could not save the review decision." });
-  }
-});
-
 function publicSong(song) {
   if (!song) {
     return null;
@@ -1168,13 +1557,23 @@ function publicSong(song) {
     ...song,
   };
 
+  // PASONG supports free public streaming. Some older songs were
+  // uploaded before preview_url was stored. In that case, use the
+  // existing audio_url as the public streaming source.
+  const publicStreamUrl =
+    song.preview_url ||
+    song.audio_url ||
+    null;
+
+  // Never expose the original field separately.
   delete safeSong.audio_url;
 
+  // Keep both fields for compatibility with existing PASONG pages.
   safeSong.preview_url =
-    song.preview_url || null;
+    publicStreamUrl;
 
   safeSong.audio_url =
-    song.preview_url || null;
+    publicStreamUrl;
 
   return safeSong;
 }
@@ -1863,6 +2262,10 @@ app.get(
     }
   }
 );
+
+// Multi-song cart checkout is routed through the existing PASONG Secure Checkout page
+// (pasong_checkout.html), which owns the MTN/Airtel demo payment flow.
+// Do not initiate a separate card transaction here; beat cards use Pesapal checkout.
 
 app.post(
   "/api/payments/complete",
@@ -3812,6 +4215,290 @@ app.post(
   }
 );
 
+
+// ============================================================
+// PASONG BEAT CARD CHECKOUT - PESAPAL API 3.0
+// Hosted checkout; payment is verified server-to-server before
+// the existing protected beat-order completion route is called.
+// Required environment variables: PESAPAL_CONSUMER_KEY,
+// PESAPAL_CONSUMER_SECRET, PESAPAL_ENVIRONMENT, PESAPAL_BEATS_IPN_ID.
+// Register the IPN URL in Pesapal and set the returned notification ID.
+// ============================================================
+
+async function pesapalRequestToken() {
+  if (!PESAPAL_CONSUMER_KEY || !PESAPAL_CONSUMER_SECRET) {
+    throw new Error("Pesapal credentials are not configured.");
+  }
+  const response = await fetch(`${PESAPAL_BASE_URL}/api/Auth/RequestToken`, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      consumer_key: PESAPAL_CONSUMER_KEY,
+      consumer_secret: PESAPAL_CONSUMER_SECRET,
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.token) {
+    console.error("Pesapal authentication failed:", data);
+    throw new Error("Pesapal authentication failed.");
+  }
+  return data.token;
+}
+
+async function pesapalGetTransactionStatus(trackingId) {
+  if (!trackingId) throw new Error("Missing Pesapal tracking ID.");
+  const token = await pesapalRequestToken();
+  const url = `${PESAPAL_BASE_URL}/api/Transactions/GetTransactionStatus?orderTrackingId=${encodeURIComponent(trackingId)}`;
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    console.error("Pesapal transaction status lookup failed:", data);
+    throw new Error("Unable to verify Pesapal transaction status.");
+  }
+  return data;
+}
+
+function pesapalPaymentIsCompleted(payment) {
+  const status = String(
+    payment?.payment_status_description ||
+    payment?.status ||
+    payment?.payment_status ||
+    ""
+  ).trim().toLowerCase();
+  const code = Number(payment?.status_code ?? payment?.payment_status_code);
+  return status === "completed" || status === "successful" || code === 1;
+}
+
+async function completeVerifiedBeatPesapalPayment({ trackingId, merchantReference }) {
+  const txRef = String(merchantReference || "").trim();
+  if (!txRef || !trackingId) throw new Error("Missing Pesapal payment reference.");
+
+  const statusData = await pesapalGetTransactionStatus(trackingId);
+  const statusReference = String(
+    statusData?.merchant_reference || statusData?.OrderMerchantReference || ""
+  ).trim();
+
+  if (!pesapalPaymentIsCompleted(statusData)) {
+    return { paid: false, status: statusData };
+  }
+  if (statusReference && statusReference !== txRef) {
+    throw new Error("Pesapal merchant reference mismatch.");
+  }
+
+  const orderLookup = await supabase
+    .from("beat_orders")
+    .select("id,beat_id,package_type,price,currency,buyer_id,external_reference,status")
+    .eq("external_reference", txRef)
+    .maybeSingle();
+
+  if (orderLookup.error || !orderLookup.data) {
+    throw new Error("PASONG could not find this payment order.");
+  }
+  const order = orderLookup.data;
+  const verifiedAmount = Number(statusData?.amount);
+  const verifiedCurrency = String(statusData?.currency || "").trim().toUpperCase();
+  const expectedAmount = Number(order.price);
+  const expectedCurrency = String(order.currency || "").trim().toUpperCase();
+
+  if (
+    !Number.isFinite(verifiedAmount) ||
+    verifiedAmount <= 0 ||
+    !isSameAmount(verifiedAmount, expectedAmount) ||
+    verifiedCurrency !== expectedCurrency
+  ) {
+    console.error("Pesapal amount/currency mismatch:", {
+      verifiedAmount, expectedAmount, verifiedCurrency, expectedCurrency,
+    });
+    throw new Error("Pesapal payment amount or currency did not match the order.");
+  }
+
+  if (order.status === "paid") {
+    return { paid: true, alreadyCompleted: true, order };
+  }
+
+  const completeResponse = await fetch(
+    `http://127.0.0.1:${PORT}/api/beats/payments/complete`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-pasong-payment-secret": PASONG_PAYMENT_SECRET,
+      },
+      body: JSON.stringify({
+        order_id: order.id,
+        transaction_id: String(trackingId),
+        external_reference: txRef,
+        payment_status: "SUCCESSFUL",
+        amount: verifiedAmount,
+        currency: verifiedCurrency,
+      }),
+    }
+  );
+  const completeData = await completeResponse.json().catch(() => ({}));
+  if (!completeResponse.ok) {
+    console.error("PASONG beat payment completion failed:", completeData);
+    throw new Error(completeData.error || "PASONG could not finish the verified order.");
+  }
+  return { paid: true, order, completion: completeData };
+}
+
+app.post("/api/beats/:id/card-checkout", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Auth" });
+    if (!validUuid(req.params.id)) return res.status(400).json({ error: "Invalid beat id" });
+    if (!PESAPAL_CONSUMER_KEY || !PESAPAL_CONSUMER_SECRET || !PESAPAL_BEATS_IPN_ID) {
+      return res.status(503).json({
+        error: "Pesapal checkout is not configured. Set PESAPAL_CONSUMER_KEY, PESAPAL_CONSUMER_SECRET and PESAPAL_BEATS_IPN_ID in Render.",
+      });
+    }
+
+    const orderId = String(req.body?.order_id || "").trim();
+    const packageType = String(req.body?.package_type || "").trim();
+    if (!validUuid(orderId)) return res.status(400).json({ error: "Invalid order id" });
+    if (!["mp3", "wav", "stems", "exclusive"].includes(packageType)) {
+      return res.status(400).json({ error: "Invalid package" });
+    }
+
+    const orderResult = await supabase.from("beat_orders").select("*")
+      .eq("id", orderId).eq("buyer_id", user.id).eq("beat_id", req.params.id).maybeSingle();
+    if (orderResult.error || !orderResult.data) {
+      return res.status(404).json({ error: "Beat order not found" });
+    }
+    const order = orderResult.data;
+    if (order.status === "paid") return res.status(400).json({ error: "This order has already been paid" });
+    if (String(order.provider || "").trim().toUpperCase() !== "PESAPAL") {
+      return res.status(400).json({ error: "This order is not a Pesapal payment order. Create the order with provider PESAPAL." });
+    }
+    if (order.package_type !== packageType) return res.status(400).json({ error: "Package does not match the order" });
+
+    const beatResult = await supabase.from("beats")
+      .select("id,title,producer_id,status,is_exclusive_sold")
+      .eq("id", req.params.id).maybeSingle();
+    if (beatResult.error || !beatResult.data) return res.status(404).json({ error: "Beat not found" });
+    const beat = beatResult.data;
+    if (beat.status !== "approved" || beat.is_exclusive_sold) {
+      return res.status(400).json({ error: "Beat is no longer available" });
+    }
+
+    const amount = Number(order.price);
+    const currency = String(order.currency || "UGX").trim().toUpperCase();
+    if (!Number.isFinite(amount) || amount <= 0 || currency !== "UGX") {
+      return res.status(400).json({ error: "Invalid order amount or currency for Pesapal checkout" });
+    }
+    const merchantReference = String(order.external_reference || "").trim();
+    if (!merchantReference || !/^[A-Za-z0-9._:-]{1,50}$/.test(merchantReference)) {
+      return res.status(400).json({ error: "Invalid order payment reference" });
+    }
+
+    const customerName = String(
+      user.user_metadata?.full_name || user.user_metadata?.name ||
+      user.email?.split("@")[0] || "PASONG Customer"
+    ).trim();
+    const nameParts = customerName.split(/\s+/);
+    const callbackUrl = `${PASONG_API_PUBLIC_URL}/api/beats/pesapal/callback`;
+    const cancelUrl = `${PASONG_FRONTEND_URL}/beat-checkout.html?payment=cancelled`;
+
+    const token = await pesapalRequestToken();
+    const payload = {
+      id: merchantReference,
+      currency,
+      amount,
+      description: `${beat.title || "Beat"} - ${packageType} licence`.slice(0, 100),
+      callback_url: callbackUrl,
+      cancellation_url: cancelUrl,
+      notification_id: PESAPAL_BEATS_IPN_ID,
+      redirect_mode: "TOP_WINDOW",
+      billing_address: {
+        email_address: String(user.email || ""),
+        phone_number: String(req.body?.phone_number || "").trim() || undefined,
+        country_code: "UG",
+        first_name: nameParts[0] || "PASONG",
+        last_name: nameParts.slice(1).join(" ") || "Customer",
+      },
+    };
+    if (!payload.billing_address.email_address && !payload.billing_address.phone_number) {
+      return res.status(400).json({ error: "Your account must have an email address or provide a phone number for Pesapal checkout." });
+    }
+
+    const submitResponse = await fetch(`${PESAPAL_BASE_URL}/api/Transactions/SubmitOrderRequest`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    const submitData = await submitResponse.json().catch(() => ({}));
+    const checkoutUrl = String(submitData?.redirect_url || "").trim();
+    const trackingId = String(submitData?.order_tracking_id || "").trim();
+    if (!submitResponse.ok || !checkoutUrl || !trackingId) {
+      console.error("Pesapal checkout creation failed:", submitData);
+      return res.status(502).json({
+        error: "Pesapal could not create the checkout.",
+        details: submitData?.error?.message || submitData?.message || null,
+      });
+    }
+
+    return res.json({
+      success: true,
+      provider: "PESAPAL",
+      order_id: order.id,
+      external_reference: merchantReference,
+      order_tracking_id: trackingId,
+      checkout_url: checkoutUrl,
+    });
+  } catch (error) {
+    console.error("Pesapal beat checkout error:", error);
+    return res.status(500).json({ error: "Pesapal checkout setup failed", details: error?.message || null });
+  }
+});
+
+app.get("/api/beats/pesapal/callback", async (req, res) => {
+  const frontendUrl = PASONG_FRONTEND_URL.replace(/\/$/, "");
+  const trackingId = String(req.query.OrderTrackingId || "").trim();
+  const merchantReference = String(req.query.OrderMerchantReference || "").trim();
+  if (!trackingId || !merchantReference) {
+    return res.redirect(`${frontendUrl}/beat-checkout.html?payment=failed`);
+  }
+  try {
+    const result = await completeVerifiedBeatPesapalPayment({ trackingId, merchantReference });
+    if (!result.paid) {
+      return res.redirect(`${frontendUrl}/beat-checkout.html?payment=pending&tx_ref=${encodeURIComponent(merchantReference)}`);
+    }
+    return res.redirect(`${frontendUrl}/beat-checkout.html?payment=success&order_id=${encodeURIComponent(result.order.id)}&id=${encodeURIComponent(result.order.beat_id)}&package=${encodeURIComponent(result.order.package_type)}`);
+  } catch (error) {
+    console.error("Pesapal beat callback error:", error);
+    return res.redirect(`${frontendUrl}/beat-checkout.html?payment=error&message=${encodeURIComponent("Unable to verify the Pesapal payment.")}`);
+  }
+});
+
+app.get("/api/beats/pesapal/ipn", async (req, res) => {
+  const trackingId = String(req.query.OrderTrackingId || "").trim();
+  const merchantReference = String(req.query.OrderMerchantReference || "").trim();
+  const notificationType = String(req.query.OrderNotificationType || "IPNCHANGE").trim();
+  if (!trackingId || !merchantReference) {
+    return res.status(400).json({ error: "Missing Pesapal IPN parameters" });
+  }
+  try {
+    const result = await completeVerifiedBeatPesapalPayment({ trackingId, merchantReference });
+    return res.json({
+      orderNotificationType: notificationType,
+      orderTrackingId: trackingId,
+      orderMerchantReference: merchantReference,
+      status: result.paid ? "completed" : "pending",
+    });
+  } catch (error) {
+    console.error("Pesapal beat IPN processing error:", error);
+    return res.status(500).json({ error: "Pesapal IPN processing failed" });
+  }
+});
+
+
 app.post(
   "/api/beats/payments/complete",
   async (req, res) => {
@@ -4797,12 +5484,43 @@ app.post(
   "/api/producer/withdraw",
   async (req, res) => {
     try {
-      const user =
-        await getAuthenticatedUser(req);
+      // 1. Verify the Supabase user from the dashboard's access token.
+      const user = await getAuthenticatedUser(req);
 
       if (!user) {
         return res.status(401).json({
-          error: "Auth",
+          success: false,
+          error: "You must be logged in to request a withdrawal.",
+        });
+      }
+
+      // 2. Verify that this authenticated user actually has a producer
+      //    profile. The Producer Dashboard uses artist_profiles for the
+      //    producer account, so we verify ownership by user_id here.
+      const profileResult = await supabase
+        .from("artist_profiles")
+        .select("id,user_id")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (profileResult.error) {
+        console.error(
+          "Producer profile lookup failed:",
+          profileResult.error
+        );
+
+        return res.status(500).json({
+          success: false,
+          error: "Unable to verify your producer account.",
+        });
+      }
+
+      if (!profileResult.data || profileResult.data.user_id !== user.id) {
+        return res.status(403).json({
+          success: false,
+          error: "Producer profile not found for this account.",
         });
       }
 
@@ -4812,150 +5530,153 @@ app.post(
         mobile_number,
       } = req.body || {};
 
-      const requestedAmount =
-        Number(amount);
-
-      if (
-        !validPositiveNumber(
-          requestedAmount
-        )
-      ) {
-        return res.status(400).json({
-          error:
-            "Invalid withdrawal amount",
-        });
-      }
-
-      const normalizedProvider =
-        normalizeProvider(
-          provider
-        );
-
-      if (
-        !["MTN", "AIRTEL"].includes(
-          normalizedProvider
-        )
-      ) {
-        return res.status(400).json({
-          error:
-            "Invalid payment provider",
-        });
-      }
-
-      const mobile =
-        String(
-          mobile_number || ""
-        )
+      // 3. Validate withdrawal amount.
+      const requestedAmount = Number(
+        String(amount ?? "")
+          .replace(/,/g, "")
           .trim()
-          .replace(
-            /\s+/g,
-            ""
-          );
+      );
 
-      if (
-        !/^(?:\+256|256|0)7[0-9]{8}$/.test(
-          mobile
-        )
-      ) {
+      if (!validPositiveNumber(requestedAmount)) {
         return res.status(400).json({
-          error:
-            "Invalid Uganda mobile number",
+          success: false,
+          error: "Invalid withdrawal amount.",
         });
       }
 
-      const availableBalance =
-        await getProducerBalance(
-          user.id
+      // Producer withdrawals must be at least UGX 10,000.
+      if (requestedAmount < 10000) {
+        return res.status(400).json({
+          success: false,
+          error: "Minimum withdrawal amount is UGX 10,000.",
+        });
+      }
+
+      // Only the two mobile-money providers supported by the Producer UI.
+      const normalizedProvider = normalizeProvider(provider);
+
+      if (!["MTN", "AIRTEL"].includes(normalizedProvider)) {
+        return res.status(400).json({
+          success: false,
+          error: "Mobile Money provider must be MTN or AIRTEL.",
+        });
+      }
+
+      // 4. Validate and normalize the Uganda mobile number.
+      let mobile = String(mobile_number || "")
+        .trim()
+        .replace(/\s+/g, "");
+
+      if (!/^(?:\+256|256|0)7[0-9]{8}$/.test(mobile)) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid Uganda mobile number.",
+        });
+      }
+
+      // Store one consistent local format: 07XXXXXXXX.
+      if (mobile.startsWith("+256")) {
+        mobile = "0" + mobile.substring(4);
+      } else if (mobile.startsWith("256")) {
+        mobile = "0" + mobile.substring(3);
+      }
+
+      // 5. Calculate the producer's currently available balance.
+      //    This includes existing credits and subtracts every debit,
+      //    including pending withdrawal debits, so the same money cannot
+      //    be withdrawn twice.
+      const availableBalance = await getProducerBalance(user.id);
+
+      if (requestedAmount > availableBalance) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Insufficient producer balance. Available balance is UGX " +
+            Number(availableBalance).toLocaleString("en-UG") + ".",
+          available_balance: availableBalance,
+        });
+      }
+
+      // 6. Create the withdrawal request first as PENDING.
+      //    Payment processing can later move it to processing/paid/failed.
+      const withdrawal = await supabase
+        .from("producer_withdrawals")
+        .insert({
+          producer_user_id: user.id,
+          amount: requestedAmount,
+          currency: "UGX",
+          provider: normalizedProvider,
+          mobile_number: mobile,
+          status: "pending",
+        })
+        .select()
+        .single();
+
+      if (withdrawal.error) {
+        console.error(
+          "Producer withdrawal insert failed:",
+          withdrawal.error
         );
 
-      if (
-        requestedAmount >
-        availableBalance
-      ) {
-        return res.status(400).json({
-          error:
-            "Insufficient balance",
-        });
-      }
-
-      const withdrawal =
-        await supabase
-          .from(
-            "producer_withdrawals"
-          )
-          .insert({
-            producer_user_id:
-              user.id,
-            amount:
-              requestedAmount,
-            currency:
-              "UGX",
-            provider:
-              normalizedProvider,
-            mobile_number:
-              mobile,
-            status:
-              "pending",
-          })
-          .select()
-          .single();
-
-      if (
-        withdrawal.error
-      ) {
         return res.status(500).json({
-          error:
-            "Withdrawal request failed",
+          success: false,
+          error: "Withdrawal request could not be created.",
         });
       }
 
-      const debit =
-        await supabase
-          .from(
-            "royalty_ledger"
-          )
-          .insert({
-            recipient_user_id:
-              user.id,
-            recipient_type:
-              "beat_producer",
-            amount:
-              requestedAmount,
-            percentage: 100,
-            entry_type:
-              "debit",
-            status:
-              "pending_withdrawal",
-            withdrawal_id:
-              withdrawal.data.id,
-          });
+      // 7. Reserve the requested amount in the producer ledger.
+      //    The debit is tied to the withdrawal ID so the payout can be
+      //    traced and reconciled later.
+      const debit = await supabase
+        .from("royalty_ledger")
+        .insert({
+          recipient_user_id: user.id,
+          recipient_type: "beat_producer",
+          amount: requestedAmount,
+          percentage: 100,
+          entry_type: "debit",
+          status: "pending_withdrawal",
+          withdrawal_id: withdrawal.data.id,
+        });
 
       if (debit.error) {
+        console.error(
+          "Producer withdrawal ledger debit failed:",
+          debit.error
+        );
+
+        // Do not leave an orphaned withdrawal request if the balance
+        // reservation could not be created.
         await supabase
-          .from(
-            "producer_withdrawals"
-          )
+          .from("producer_withdrawals")
           .delete()
-          .eq(
-            "id",
-            withdrawal.data.id
-          );
+          .eq("id", withdrawal.data.id);
 
         return res.status(500).json({
-          error:
-            "Withdrawal balance update failed",
+          success: false,
+          error: "Withdrawal balance reservation failed.",
         });
       }
 
-      res.json({
+      const remainingBalance = Number(
+        (availableBalance - requestedAmount).toFixed(2)
+      );
+
+      return res.status(201).json({
         success: true,
-        withdrawal:
-          withdrawal.data,
+        message: "Withdrawal request submitted successfully.",
+        withdrawal: withdrawal.data,
+        available_balance: remainingBalance,
       });
-    } catch {
-      res.status(500).json({
-        error:
-          "Withdrawal failed",
+    } catch (error) {
+      console.error(
+        "Producer withdrawal error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error: "Withdrawal failed. Please try again.",
       });
     }
   }
@@ -5425,6 +6146,376 @@ app.post(
     }
   }
 );
+
+
+
+
+// ============================================================
+// PASONG UNIFIED PROMOTION CHECKOUT (SAFE GATEWAY)
+// Frontend: promotion-checkout.html
+// This endpoint validates the request and deliberately refuses
+// to create a payment until a real MTN/Airtel/PesaPal integration
+// and a durable promotion-order schema are configured. It does not
+// fall back to another provider or mark any campaign paid.
+// ============================================================
+const PASONG_UNIFIED_PROMOTION_PACKAGES = {
+  'song-starter': { type: 'song', amount: 50000, days: 7 },
+  'song-viral': { type: 'song', amount: 150000, days: 14 },
+  'song-hero': { type: 'song', amount: 300000, days: 30 },
+  'profile-starter': { type: 'profile', amount: 55000, days: 30 },
+  'profile-viral': { type: 'profile', amount: 120000, days: 30 },
+  'profile-pro': { type: 'profile', amount: 250000, days: 30 },
+  'business-starter': { type: 'business', amount: 105000, days: 7 },
+  'business-growth': { type: 'business', amount: 220000, days: 14 },
+  'business-pro': { type: 'business', amount: 450000, days: 30 },
+  'tiktok-starter': { type: 'tiktok', amount: 45000, days: 30 },
+  'tiktok-growth': { type: 'tiktok', amount: 84000, days: 30 },
+  'tiktok-pro': { type: 'tiktok', amount: 180000, days: 30 },
+  'tiktok-max': { type: 'tiktok', amount: 350000, days: 30 },
+};
+
+app.get('/api/promotions/checkout/status', (req, res) => {
+  res.json({
+    success: true,
+    checkout_ready: false,
+    providers: { mtn: false, airtel: false, pesapal: false },
+    message: 'Promotion checkout is not enabled until provider APIs and the promotion order storage are configured.',
+  });
+});
+
+app.post('/api/promotions/checkout', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const promotionType = String(body.promotion_type || '').trim().toLowerCase();
+    const packageKey = String(body.package_key || '').trim();
+    const provider = String(body.provider || '').trim().toLowerCase();
+    const target = body.target && typeof body.target === 'object' ? body.target : {};
+    const pkg = PASONG_UNIFIED_PROMOTION_PACKAGES[packageKey];
+
+    if (!pkg || pkg.type !== promotionType) {
+      return res.status(400).json({ error: 'Invalid promotion package.' });
+    }
+    if (!['mtn', 'airtel', 'card'].includes(provider)) {
+      return res.status(400).json({ error: 'Choose MTN Mobile Money, Airtel Money, or PesaPal card checkout.' });
+    }
+    if (Number(body.amount) !== pkg.amount || String(body.currency || '').toUpperCase() !== 'UGX') {
+      return res.status(400).json({ error: 'Promotion price mismatch. Refresh the page and try again.' });
+    }
+    if (promotionType === 'song' && !String(target.song_id || '').trim()) {
+      return res.status(400).json({ error: 'Song link or ID is required.' });
+    }
+    if (promotionType === 'profile' && !String(target.profile_id || '').trim()) {
+      return res.status(400).json({ error: 'Profile link or ID is required.' });
+    }
+    if (promotionType === 'business' && !String(target.business_name || '').trim()) {
+      return res.status(400).json({ error: 'Business name is required.' });
+    }
+    if (promotionType === 'tiktok') {
+      let url;
+      try { url = new URL(String(target.tiktok_url || '')); } catch (_) {
+        return res.status(400).json({ error: 'Enter a valid public TikTok link.' });
+      }
+      const host = url.hostname.toLowerCase().replace(/^www\./, '');
+      if (url.protocol !== 'https:' || !(host === 'tiktok.com' || host.endsWith('.tiktok.com'))) {
+        return res.status(400).json({ error: 'Enter a valid public HTTPS TikTok link.' });
+      }
+    }
+
+    // Intentionally fail closed until MTN/Airtel provider APIs and promotion-order
+    // storage are configured. Card promotion checkout must not bypass this route.
+    const providerName = provider === 'mtn' ? 'MTN Mobile Money' : provider === 'airtel' ? 'Airtel Money' : 'PesaPal cards';
+    return res.status(503).json({
+      error: `${providerName} promotion checkout is not configured on PASONG yet. No payment has been taken.`,
+      code: 'PROMOTION_PROVIDER_NOT_CONFIGURED',
+      provider,
+      amount: pkg.amount,
+      currency: 'UGX',
+      days: pkg.days,
+    });
+  } catch (error) {
+    console.error('Unified promotion checkout error:', error);
+    return res.status(500).json({ error: 'Could not prepare promotion checkout. No payment has been taken.' });
+  }
+});
+
+// ============================================================
+// PASONG ADVERTISING
+// Public package list + authenticated campaign checkout.
+// Prices are controlled by the backend, never by the browser.
+// ============================================================
+
+const PASONG_AD_PACKAGES = {
+  home_image: {
+    amount: Number(process.env.PASONG_AD_HOME_IMAGE_UGX || 25000),
+    days: 7,
+    name: "Homepage Image",
+  },
+  home_video: {
+    amount: Number(process.env.PASONG_AD_HOME_VIDEO_UGX || 40000),
+    days: 7,
+    name: "Homepage Video",
+  },
+  sitewide: {
+    amount: Number(process.env.PASONG_AD_SITEWIDE_UGX || 60000),
+    days: 7,
+    name: "PASONG Sitewide",
+  },
+};
+
+function cleanAdText(value, max = 5000) {
+  return String(value == null ? "" : value).trim().slice(0, max);
+}
+
+function validHttpUrl(value) {
+  if (!value) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeAdMediaType(value) {
+  return String(value || "").trim().toLowerCase() === "video"
+    ? "video"
+    : "image";
+}
+
+app.get("/api/advertising/packages", (req, res) => {
+  res.json({
+    success: true,
+    currency: "UGX",
+    packages: Object.entries(PASONG_AD_PACKAGES).map(([key, pkg]) => ({
+      key,
+      name: pkg.name,
+      amount: pkg.amount,
+      currency: "UGX",
+      days: pkg.days,
+    })),
+  });
+});
+
+app.post("/api/advertising/checkout", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in to advertise on PASONG." });
+    if (!PESAPAL_CONSUMER_KEY || !PESAPAL_CONSUMER_SECRET || !PESAPAL_ADVERTISING_IPN_ID) {
+      return res.status(503).json({
+        error: "Pesapal advertising checkout is not configured. Set PESAPAL_CONSUMER_KEY, PESAPAL_CONSUMER_SECRET and PESAPAL_ADVERTISING_IPN_ID in Render.",
+      });
+    }
+
+    const body = req.body || {};
+    const packageKey = cleanAdText(body.package_key, 40);
+    const pkg = PASONG_AD_PACKAGES[packageKey];
+    if (!pkg || !Number.isFinite(pkg.amount) || pkg.amount <= 0) {
+      return res.status(400).json({ error: "Invalid advertising package." });
+    }
+
+    const advertiserName = cleanAdText(body.advertiser_name, 160);
+    const advertiserEmail = cleanAdText(body.advertiser_email || user.email, 200);
+    const advertiserPhone = cleanAdText(body.advertiser_phone, 60);
+    const title = cleanAdText(body.title, 200);
+    const description = cleanAdText(body.description, 5000);
+    const targetUrl = cleanAdText(body.target_url, 1000);
+    const requestedPlacement = cleanAdText(body.placement, 60).toLowerCase();
+    const mediaUrl = cleanAdText(body.media_url, 2000);
+    const mediaType = normalizeAdMediaType(body.media_type);
+
+    if (!advertiserName || !advertiserEmail || !title || !description || !mediaUrl) {
+      return res.status(400).json({ error: "Advertiser name, email, title, description and advert media are required." });
+    }
+    if (!validHttpUrl(mediaUrl) || !validHttpUrl(targetUrl)) {
+      return res.status(400).json({ error: "Invalid media or destination URL." });
+    }
+    if (packageKey === "home_image" && mediaType !== "image") {
+      return res.status(400).json({ error: "Homepage Image requires an image advert." });
+    }
+    if (packageKey === "home_video" && mediaType !== "video") {
+      return res.status(400).json({ error: "Homepage Video requires a video advert." });
+    }
+
+    const placement = packageKey === "home_image" || packageKey === "home_video"
+      ? "home"
+      : packageKey === "sitewide" ? "all" : requestedPlacement || "home";
+    const txRef = `PASONG-AD-${Date.now()}-${crypto.randomBytes(8).toString("hex")}`;
+
+    const campaignResult = await supabase.from("advertising_campaigns").insert({
+      user_id: user.id,
+      package_key: packageKey,
+      amount: pkg.amount,
+      currency: "UGX",
+      days: pkg.days,
+      advertiser_name: advertiserName,
+      advertiser_email: advertiserEmail,
+      advertiser_phone: advertiserPhone || null,
+      title,
+      description,
+      target_url: targetUrl || null,
+      placement,
+      media_url: mediaUrl,
+      media_type: mediaType,
+      tx_ref: txRef,
+      payment_status: "pending",
+      status: "pending",
+    }).select().single();
+
+    if (campaignResult.error || !campaignResult.data) {
+      console.error("Advertising campaign insert failed:", campaignResult.error);
+      return res.status(500).json({
+        error: "Unable to create advertising campaign.",
+        details: campaignResult.error?.message || null,
+      });
+    }
+
+    const nameParts = String(advertiserName || user.email?.split("@")[0] || "PASONG Advertiser").trim().split(/\s+/);
+    const token = await pesapalRequestToken();
+    const payload = {
+      id: txRef,
+      currency: "UGX",
+      amount: pkg.amount,
+      description: `${pkg.name} - ${pkg.days} days`.slice(0, 100),
+      callback_url: `${PASONG_API_PUBLIC_URL}/api/advertising/pesapal/callback`,
+      cancellation_url: `${PASONG_FRONTEND_URL}/advertise.html?payment=cancelled`,
+      notification_id: PESAPAL_ADVERTISING_IPN_ID,
+      redirect_mode: "TOP_WINDOW",
+      billing_address: {
+        email_address: advertiserEmail || undefined,
+        phone_number: advertiserPhone || undefined,
+        country_code: "UG",
+        first_name: nameParts[0] || "PASONG",
+        last_name: nameParts.slice(1).join(" ") || "Advertiser",
+      },
+    };
+
+    const submitResponse = await fetch(`${PESAPAL_BASE_URL}/api/Transactions/SubmitOrderRequest`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+    });
+    const submitData = await submitResponse.json().catch(() => ({}));
+    const checkoutUrl = String(submitData?.redirect_url || "").trim();
+    if (!submitResponse.ok || !checkoutUrl || !submitData?.order_tracking_id) {
+      console.error("Pesapal advertising checkout failed:", submitData);
+      await supabase.from("advertising_campaigns").update({ status: "payment_failed" }).eq("id", campaignResult.data.id);
+      return res.status(502).json({
+        error: "Pesapal could not create the advertising checkout.",
+        details: submitData?.error?.message || submitData?.message || null,
+      });
+    }
+
+    return res.json({
+      success: true,
+      provider: "PESAPAL",
+      campaign_id: campaignResult.data.id,
+      external_reference: txRef,
+      order_tracking_id: submitData.order_tracking_id,
+      checkout_url: checkoutUrl,
+      amount: pkg.amount,
+      currency: "UGX",
+      days: pkg.days,
+    });
+  } catch (error) {
+    console.error("Pesapal advertising checkout error:", error);
+    return res.status(500).json({ error: "Pesapal advertising checkout setup failed.", details: error?.message || null });
+  }
+});
+
+async function completeVerifiedPesapalAdvertisingPayment(trackingId, txRef) {
+  const campaignResult = await supabase.from("advertising_campaigns")
+    .select("*").eq("tx_ref", txRef).maybeSingle();
+  if (campaignResult.error || !campaignResult.data) throw new Error("Advertising campaign was not found.");
+  const campaign = campaignResult.data;
+  if (campaign.payment_status === "paid" && campaign.advertisement_id) {
+    return { paid: true, campaign };
+  }
+
+  const payment = await pesapalGetTransactionStatus(trackingId);
+  if (!pesapalPaymentIsCompleted(payment)) return { paid: false, campaign };
+  const verifiedReference = String(payment?.merchant_reference || payment?.OrderMerchantReference || "").trim();
+  const verifiedAmount = Number(payment?.amount);
+  const verifiedCurrency = String(payment?.currency || "").trim().toUpperCase();
+  if (
+    (verifiedReference && verifiedReference !== txRef) ||
+    !Number.isFinite(verifiedAmount) ||
+    verifiedAmount !== Number(campaign.amount) ||
+    verifiedCurrency !== String(campaign.currency || "UGX").toUpperCase()
+  ) {
+    throw new Error("Pesapal payment amount, currency or reference did not match the campaign.");
+  }
+
+  const startAt = new Date();
+  const endAt = new Date(startAt.getTime() + Number(campaign.days || 7) * 86400000);
+  const adResult = await supabase.from("advertisements").insert({
+    title: campaign.title,
+    description: campaign.description,
+    image_url: campaign.media_url,
+    target_url: campaign.target_url,
+    placement: campaign.placement,
+    start_at: startAt.toISOString(),
+    end_at: endAt.toISOString(),
+    status: "pending",
+    clicks: 0,
+    impressions: 0,
+    created_by: campaign.user_id,
+    media_type: campaign.media_type,
+  }).select().single();
+
+  if (adResult.error || !adResult.data) {
+    console.error("Advertising ad creation failed:", adResult.error);
+    throw new Error("Payment was verified but PASONG could not create the campaign.");
+  }
+
+  const update = await supabase.from("advertising_campaigns").update({
+    payment_status: "paid",
+    status: "pending",
+    transaction_id: trackingId,
+    advertisement_id: adResult.data.id,
+    start_at: startAt.toISOString(),
+    end_at: endAt.toISOString(),
+  }).eq("id", campaign.id);
+  if (update.error) throw new Error("Payment was verified but PASONG could not update the campaign.");
+  return { paid: true, campaign };
+}
+
+app.get("/api/advertising/pesapal/callback", async (req, res) => {
+  const frontendUrl = PASONG_FRONTEND_URL.replace(/\/$/, "");
+  const trackingId = String(req.query.OrderTrackingId || "").trim();
+  const txRef = String(req.query.OrderMerchantReference || "").trim();
+  if (!trackingId || !txRef) {
+    return res.redirect(`${frontendUrl}/advertise.html?payment=failed`);
+  }
+  try {
+    const result = await completeVerifiedPesapalAdvertisingPayment(trackingId, txRef);
+    if (!result.paid) {
+      return res.redirect(`${frontendUrl}/advertise.html?payment=pending&tx_ref=${encodeURIComponent(txRef)}`);
+    }
+    return res.redirect(`${frontendUrl}/advertise.html?payment=success&campaign_id=${encodeURIComponent(result.campaign.id)}`);
+  } catch (error) {
+    console.error("Pesapal advertising callback error:", error);
+    return res.redirect(`${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent("Unable to verify the Pesapal payment.")}`);
+  }
+});
+
+app.get("/api/advertising/pesapal/ipn", async (req, res) => {
+  const trackingId = String(req.query.OrderTrackingId || "").trim();
+  const txRef = String(req.query.OrderMerchantReference || "").trim();
+  const notificationType = String(req.query.OrderNotificationType || "IPNCHANGE").trim();
+  if (!trackingId || !txRef) return res.status(400).json({ error: "Missing Pesapal IPN parameters." });
+  try {
+    const result = await completeVerifiedPesapalAdvertisingPayment(trackingId, txRef);
+    return res.json({
+      orderNotificationType: notificationType,
+      orderTrackingId: trackingId,
+      orderMerchantReference: txRef,
+      status: result.paid ? "completed" : "pending",
+    });
+  } catch (error) {
+    console.error("Pesapal advertising IPN error:", error);
+    return res.status(500).json({ error: "Pesapal IPN processing failed." });
+  }
+});
 
 app.use(
   (error, req, res, next) => {
