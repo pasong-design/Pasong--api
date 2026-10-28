@@ -538,6 +538,29 @@ app.post("/api/premium/checkout", async (req, res) => {
   }
 });
 
+// Public read-only event listings. Supabase credentials remain on the server (Render).
+app.get("/api/events", async (req, res) => {
+  try {
+    const now = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const result = await supabase
+      .from("events")
+      .select("id,title,description,category,cover_url,venue_name,address,city,country,starts_at,currency,status,event_ticket_types(id,name,price,currency,is_active,quantity_total,quantity_sold)")
+      .eq("status", "approved")
+      .gte("starts_at", now)
+      .order("starts_at", { ascending: true });
+
+    if (result.error) {
+      console.error("Public events query failed:", result.error.message);
+      return res.status(500).json({ success: false, error: "Unable to load events right now." });
+    }
+
+    return res.json({ success: true, events: Array.isArray(result.data) ? result.data : [] });
+  } catch (error) {
+    console.error("Public events endpoint error:", error);
+    return res.status(500).json({ success: false, error: "Unable to load events right now." });
+  }
+});
+
 app.get("/health", (req, res) => {
   res.json({
     status: "ok",
