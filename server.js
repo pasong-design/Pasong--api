@@ -952,6 +952,7 @@ function allowedCloudinaryFolder(
       "pasong-songs",
       "pasong/songs",
       "pasong/covers",
+      "pasong/studios",
       "pasong-beats/audio",
       "pasong-beats/covers",
       "pasong-producers/profile",
