@@ -297,6 +297,91 @@ app.get("/api/premium/status", async (req, res) => {
 });
 
 
+// TEMPORARY PASONG PREMIUM TEST ACTIVATION
+// Only enabled when both environment variables are configured in the backend.
+// Restricted to PREMIUM_TEST_EMAIL and requires a separate secret header.
+// This creates a clearly identifiable zero-value test record, NOT a real payment.
+app.post("/api/premium/test-activate", async (req, res) => {
+  try {
+    const allowedEmail = String(process.env.PREMIUM_TEST_EMAIL || "").trim().toLowerCase();
+    const configuredSecret = String(process.env.PREMIUM_TEST_SECRET || "");
+    const suppliedSecret = String(req.headers["x-premium-test-secret"] || "");
+
+    // Fail closed: the route is unavailable until explicitly enabled by the owner.
+    if (!allowedEmail || !configuredSecret) {
+      return res.status(404).json({ success: false, error: "Premium test activation is disabled." });
+    }
+    if (!safeSecretCompare(suppliedSecret, configuredSecret)) {
+      return res.status(401).json({ success: false, error: "Unauthorized test activation." });
+    }
+
+    const user = await getAuthenticatedUser(req);
+    if (!user || String(user.email || "").trim().toLowerCase() !== allowedEmail) {
+      return res.status(403).json({ success: false, error: "This test is restricted to the configured test account." });
+    }
+
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const testReference = "TEST-PREMIUM-" + crypto.randomBytes(6).toString("hex").toUpperCase();
+
+    // Reuse an existing test row for this user to avoid accumulating duplicates.
+    const existingResult = await supabase
+      .from("premium_subscriptions")
+      .select("id")
+      .eq("user_id", user.id)
+      .like("payment_reference", "TEST-PREMIUM-%")
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingResult.error) {
+      console.error("Premium test subscription lookup failed:", existingResult.error);
+      return res.status(500).json({ success: false, error: "Unable to check the existing test subscription." });
+    }
+
+    const testData = {
+      plan: "premium_monthly",
+      status: "active",
+      started_at: now.toISOString(),
+      expires_at: expiresAt,
+      currency: "TEST",
+      amount: 0,
+    };
+
+    let saved;
+    if (existingResult.data) {
+      saved = await supabase
+        .from("premium_subscriptions")
+        .update(testData)
+        .eq("id", existingResult.data.id)
+        .select("id,user_id,plan,status,started_at,expires_at,currency,amount,payment_reference")
+        .single();
+    } else {
+      saved = await supabase
+        .from("premium_subscriptions")
+        .insert({ user_id: user.id, ...testData, payment_reference: testReference })
+        .select("id,user_id,plan,status,started_at,expires_at,currency,amount,payment_reference")
+        .single();
+    }
+
+    if (saved.error) {
+      console.error("Premium test activation save failed:", saved.error);
+      return res.status(500).json({ success: false, error: "Unable to save the Premium test subscription." });
+    }
+
+    return res.status(201).json({
+      success: true,
+      test_mode: true,
+      payment_taken: false,
+      subscription: saved.data,
+      message: "Seven-day Premium test subscription activated. No payment was taken.",
+    });
+  } catch (error) {
+    console.error("Premium test activation error:", error);
+    return res.status(500).json({ success: false, error: "Premium test activation failed." });
+  }
+});
+
 app.post("/api/premium/complete", async (req, res) => {
   try {
     // This endpoint is for the payment provider/webhook only.
