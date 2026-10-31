@@ -1007,9 +1007,17 @@ app.get("/api/buy3/my-purchases", async (req, res) => {
     if (!["song", "beat"].includes(type)) return res.status(400).json({ error: "Choose song or beat." });
     const table = type === "song" ? "downloads" : "beat_downloads";
     const idField = type === "song" ? "song_id" : "beat_id";
-    const downloads = await supabase.from(table).select(`${idField},order_id,package_type`)
+    // The PASONG songs downloads table has no package_type column.
+    // beat_downloads does store package_type, so select it only for beats.
+    const purchaseFields = type === "beat"
+      ? `${idField},order_id,package_type`
+      : `${idField},order_id`;
+    const downloads = await supabase.from(table).select(purchaseFields)
       .eq("user_id", user.id).order("created_at", { ascending: false }).limit(200);
-    if (downloads.error) return res.status(500).json({ error: "Could not load purchase history." });
+    if (downloads.error) {
+      console.error("Buy3 purchase history query failed", { type, code: downloads.error.code, message: downloads.error.message });
+      return res.status(500).json({ error: "Could not load purchase history." });
+    }
     const unique = new Map();
     for (const d of downloads.data || []) if (d[idField] && d.order_id && !unique.has(d[idField])) unique.set(d[idField], d);
     const items = [];
