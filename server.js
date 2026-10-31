@@ -878,6 +878,260 @@ function validUuid(value) {
   );
 }
 
+// ============================================================
+// PASONG BUY 3 GET 1 - authenticated promotion APIs
+// Paid purchases remain in the existing orders/downloads tables.
+// Promotional grants are stored separately and never create royalties.
+// ============================================================
+const PASONG_PROMO_BEAT_PACKAGES = new Set(["mp3", "wav", "stems"]);
+
+async function promoGetOwnedItem(userId, itemType, itemId) {
+  if (itemType === "song") {
+    const songResult = await supabase.from("songs")
+      .select("id,artist_user_id,producer_user_id,artist_id")
+      .eq("id", itemId).maybeSingle();
+    if (songResult.error || !songResult.data) return { ok: false, error: "Song not found." };
+    const song = songResult.data;
+    let owned = song.artist_user_id === userId || song.producer_user_id === userId;
+    if (!owned && song.artist_id) {
+      const profile = await supabase.from("artist_profiles").select("user_id")
+        .eq("id", song.artist_id).maybeSingle();
+      owned = Boolean(profile.data && profile.data.user_id === userId);
+    }
+    if (!owned) {
+      const collaboration = await supabase.from("song_artists").select("song_id")
+        .eq("song_id", itemId).eq("artist_user_id", userId).maybeSingle();
+      owned = Boolean(collaboration.data);
+    }
+    return owned ? { ok: true, item: song } : { ok: false, error: "You do not own or manage this song." };
+  }
+  if (itemType === "beat") {
+    const beatResult = await supabase.from("beats").select("id,producer_id")
+      .eq("id", itemId).maybeSingle();
+    if (beatResult.error || !beatResult.data) return { ok: false, error: "Beat not found." };
+    const profile = await supabase.from("artist_profiles").select("user_id")
+      .eq("id", beatResult.data.producer_id).maybeSingle();
+    if (!profile.data || profile.data.user_id !== userId) return { ok: false, error: "You do not own this beat." };
+    return { ok: true, item: beatResult.data };
+  }
+  return { ok: false, error: "Invalid item type." };
+}
+
+app.get("/api/buy3/owned-items", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in." });
+    const type = String(req.query.type || "song").toLowerCase();
+    let items = [];
+    if (type === "song") {
+      const profile = await supabase.from("artist_profiles").select("id").eq("user_id", user.id);
+      const ors = [`artist_user_id.eq.${user.id}`, `producer_user_id.eq.${user.id}`];
+      (profile.data || []).forEach(x => ors.push(`artist_id.eq.${x.id}`));
+      const result = await supabase.from("songs").select("*")
+        .or(ors.join(",")).order("created_at", { ascending: false }).limit(100);
+      if (result.error) return res.status(500).json({ error: "Could not load your songs." });
+      items = (result.data || []).map(x => ({ id: x.id, title: x.title || "Song", cover_url: x.cover_url || x.cover_image_url || null, status: x.status || "approved" }));
+    } else if (type === "beat") {
+      const profile = await supabase.from("artist_profiles").select("id").eq("user_id", user.id).maybeSingle();
+      if (!profile.data) return res.json({ items: [] });
+      const result = await supabase.from("beats").select("*")
+        .eq("producer_id", profile.data.id).order("created_at", { ascending: false }).limit(100);
+      if (result.error) return res.status(500).json({ error: "Could not load your beats." });
+      items = (result.data || []).map(x => ({ id: x.id, title: x.title || "Beat", cover_url: x.cover_url || x.cover_image_url || null, status: x.status || "approved" }));
+    } else return res.status(400).json({ error: "Choose song or beat." });
+    const ids = items.map(x => x.id);
+    let permissions = [];
+    if (ids.length) {
+      const p = await supabase.from("pasong_promo_item_permissions").select("item_id,enabled,beat_package_type")
+        .eq("owner_user_id", user.id).eq("item_type", type).in("item_id", ids);
+      if (!p.error) permissions = p.data || [];
+    }
+    const map = new Map(permissions.map(x => [x.item_id, x]));
+    return res.json({ items: items.map(x => ({ ...x, promo_enabled: !!map.get(x.id)?.enabled,
+      beat_package_type: map.get(x.id)?.beat_package_type || null })) });
+  } catch (e) { console.error("Buy3 owned items error", e); return res.status(500).json({ error: "Unable to load your items." }); }
+});
+
+app.post("/api/buy3/opt-in", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in." });
+    const type = String(req.body?.item_type || "").toLowerCase();
+    const id = String(req.body?.item_id || "");
+    const enabled = req.body?.enabled === true;
+    const packageType = req.body?.beat_package_type ? String(req.body.beat_package_type).toLowerCase() : null;
+    if (!validUuid(id) || !["song", "beat"].includes(type)) return res.status(400).json({ error: "Invalid item." });
+    if (type === "beat" && enabled && !PASONG_PROMO_BEAT_PACKAGES.has(packageType))
+      return res.status(400).json({ error: "Choose the exact beat licence package for this promotion." });
+    if (type === "song" && packageType) return res.status(400).json({ error: "Songs do not use beat licence packages." });
+    const owned = await promoGetOwnedItem(user.id, type, id);
+    if (!owned.ok) return res.status(403).json({ error: owned.error });
+    const saved = await supabase.from("pasong_promo_item_permissions").upsert({
+      item_type: type, item_id: id, owner_user_id: user.id, enabled,
+      beat_package_type: type === "beat" ? (enabled ? packageType : null) : null,
+      updated_at: new Date().toISOString()
+    }, { onConflict: "item_type,item_id,owner_user_id" }).select("id,enabled,beat_package_type").single();
+    if (saved.error) { console.error("Buy3 opt-in save failed", saved.error); return res.status(500).json({ error: "Could not save promotion permission." }); }
+    return res.json({ success: true, permission: saved.data });
+  } catch (e) { console.error("Buy3 opt-in error", e); return res.status(500).json({ error: "Could not update promotion permission." }); }
+});
+
+app.get("/api/buy3/catalog", async (req, res) => {
+  try {
+    const type = String(req.query.type || "song").toLowerCase();
+    if (!["song", "beat"].includes(type)) return res.status(400).json({ error: "Choose song or beat." });
+    const permissions = await supabase.from("pasong_promo_item_permissions")
+      .select("item_id,beat_package_type").eq("item_type", type).eq("enabled", true).limit(200);
+    if (permissions.error) return res.status(500).json({ error: "Could not load promotion catalogue." });
+    const ids = (permissions.data || []).map(x => x.item_id);
+    if (!ids.length) return res.json({ items: [] });
+    const source = type === "song" ? "songs" : "beats";
+    const fields = type === "song" ? "id,title,cover_url,artist_name,status" : "id,title,cover_url,producer_id,status";
+    const query = await supabase.from(source).select("*").in("id", ids).limit(200);
+    if (query.error) return res.status(500).json({ error: "Could not load promotion items." });
+    const permissionMap = new Map((permissions.data || []).map(x => [x.item_id, x]));
+    const items = (query.data || []).filter(x => !x.status || x.status === "approved").map(x => ({
+      id: x.id, title: x.title || (type === "song" ? "Song" : "Beat"),
+      cover_url: x.cover_url || x.cover_image_url || null, item_type: type,
+      beat_package_type: permissionMap.get(x.id)?.beat_package_type || null
+    }));
+    return res.json({ items });
+  } catch (e) { console.error("Buy3 catalog error", e); return res.status(500).json({ error: "Could not load promotion catalogue." }); }
+});
+
+app.get("/api/buy3/my-purchases", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in." });
+    const type = String(req.query.type || "song").toLowerCase();
+    if (!["song", "beat"].includes(type)) return res.status(400).json({ error: "Choose song or beat." });
+    const table = type === "song" ? "downloads" : "beat_downloads";
+    const idField = type === "song" ? "song_id" : "beat_id";
+    const downloads = await supabase.from(table).select(`${idField},order_id,package_type`)
+      .eq("user_id", user.id).order("created_at", { ascending: false }).limit(200);
+    if (downloads.error) return res.status(500).json({ error: "Could not load purchase history." });
+    const unique = new Map();
+    for (const d of downloads.data || []) if (d[idField] && d.order_id && !unique.has(d[idField])) unique.set(d[idField], d);
+    const items = [];
+    for (const [id, d] of unique) {
+      let title = "", cover = null, currency = "", amount = 0, valid = false;
+      if (type === "song") {
+        const [order, song, payment, oi] = await Promise.all([
+          supabase.from("orders").select("id,buyer_id,status,currency,total_amount").eq("id", d.order_id).eq("buyer_id", user.id).eq("status", "paid").maybeSingle(),
+          supabase.from("songs").select("*").eq("id", id).maybeSingle(),
+          supabase.from("payments").select("status,amount,currency").eq("order_id", d.order_id).eq("user_id", user.id).eq("status", "successful").maybeSingle(),
+          supabase.from("order_items").select("song_id,price,currency").eq("order_id", d.order_id).eq("song_id", id).maybeSingle()
+        ]);
+        valid = !!(order.data && song.data && payment.data && oi.data);
+        if (valid) { title = song.data.title || "Song"; cover = song.data.cover_url || song.data.cover_image_url || null; currency = payment.data.currency || oi.data.currency || order.data.currency || ""; amount = Number(payment.data.amount || oi.data.price || 0); }
+      } else {
+        const [order, beat] = await Promise.all([
+          supabase.from("beat_orders").select("id,buyer_id,status,price,currency,package_type").eq("id", d.order_id).eq("buyer_id", user.id).eq("status", "paid").maybeSingle(),
+          supabase.from("beats").select("*").eq("id", id).maybeSingle()
+        ]);
+        valid = !!(order.data && beat.data);
+        if (valid) { title = beat.data.title || "Beat"; cover = beat.data.cover_url || beat.data.cover_image_url || null; currency = order.data.currency || ""; amount = Number(order.data.price || 0); }
+      }
+      if (valid) items.push({ id, title, cover_url: cover, currency: String(currency).toUpperCase(), amount, package_type: d.package_type || null });
+    }
+    return res.json({ items });
+  } catch (e) { console.error("Buy3 purchase list error", e); return res.status(500).json({ error: "Could not load paid purchases." }); }
+});
+
+app.post("/api/buy3/qualify", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in." });
+    const type = String(req.body?.promotion_type || "").toLowerCase();
+    const ids = Array.isArray(req.body?.paid_item_ids) ? req.body.paid_item_ids.map(String) : [];
+    if (!["song", "beat"].includes(type) || ids.length !== 3 || ids.some(x => !validUuid(x)) || new Set(ids).size !== 3)
+      return res.status(400).json({ error: "Choose exactly three different paid songs or three different paid beats." });
+    let total = 0, currency = "", verifiedRows = [];
+    if (type === "song") {
+      for (const id of ids) {
+        const d = await supabase.from("downloads").select("id,order_id,song_id")
+          .eq("user_id", user.id).eq("song_id", id).limit(1).maybeSingle();
+        if (d.error || !d.data?.order_id) return res.status(400).json({ error: "All three songs must already be purchased by this account." });
+        const o = await supabase.from("orders").select("id,buyer_id,total_amount,currency,status")
+          .eq("id", d.data.order_id).eq("buyer_id", user.id).eq("status", "paid").maybeSingle();
+        if (o.error || !o.data) return res.status(400).json({ error: "A song purchase could not be verified." });
+        const oi = await supabase.from("order_items").select("song_id,price,currency").eq("order_id", o.data.id).eq("song_id", id).maybeSingle();
+        if (oi.error || !oi.data) return res.status(400).json({ error: "A song purchase record is incomplete." });
+        const pay = await supabase.from("payments").select("status,external_reference,amount,currency")
+          .eq("order_id", o.data.id).eq("user_id", user.id).eq("status", "successful").maybeSingle();
+        if (pay.error || !pay.data) return res.status(400).json({ error: "A song payment could not be verified." });
+        const rowCurrency = String(pay.data.currency || oi.data.currency || o.data.currency || "").toUpperCase();
+        if (!rowCurrency || (currency && currency !== rowCurrency)) return res.status(400).json({ error: "All three purchases must use the same currency." });
+        currency = rowCurrency; total += Number(pay.data.amount || oi.data.price || 0); verifiedRows.push(id);
+      }
+    } else {
+      for (const id of ids) {
+        const d = await supabase.from("beat_downloads").select("id,order_id,beat_id,package_type")
+          .eq("user_id", user.id).eq("beat_id", id).limit(1).maybeSingle();
+        if (d.error || !d.data?.order_id) return res.status(400).json({ error: "All three beats must already be purchased by this account." });
+        const o = await supabase.from("beat_orders").select("id,buyer_id,price,currency,status")
+          .eq("id", d.data.order_id).eq("buyer_id", user.id).eq("status", "paid").maybeSingle();
+        if (o.error || !o.data) return res.status(400).json({ error: "A beat purchase could not be verified." });
+        const rowCurrency = String(o.data.currency || "").toUpperCase();
+        if (!rowCurrency || (currency && currency !== rowCurrency)) return res.status(400).json({ error: "All three purchases must use the same currency." });
+        currency = rowCurrency; total += Number(o.data.price || 0); verifiedRows.push(id);
+      }
+    }
+    const paymentReference = `BUY3-${type.toUpperCase()}-${user.id}-${crypto.randomBytes(8).toString("hex")}`;
+    const rpc = await supabase.rpc("pasong_create_buy3_qualification", {
+      p_buyer_user_id: user.id, p_promotion_type: type, p_paid_item_ids: verifiedRows,
+      p_currency: currency, p_amount_paid: Number(total.toFixed(2)), p_payment_reference: paymentReference
+    });
+    if (rpc.error) {
+      const message = /duplicate|unique/i.test(rpc.error.message || "")
+        ? "One or more paid items have already been used for this promotion. Choose three other paid items."
+        : "Could not create your promotion qualification.";
+      console.error("Buy3 qualification RPC failed", rpc.error);
+      return res.status(409).json({ error: message });
+    }
+    return res.json({ success: true, qualification_id: rpc.data, promotion_type: type, status: "awaiting_claim" });
+  } catch (e) { console.error("Buy3 qualification error", e); return res.status(500).json({ error: "Could not verify promotion purchases." }); }
+});
+
+app.get("/api/buy3/my-qualifications", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in." });
+    const [q, e] = await Promise.all([
+      supabase.from("pasong_promo_qualifications").select("id,promotion_type,paid_item_ids,currency,amount_paid,status,created_at,claimed_at")
+        .eq("buyer_user_id", user.id).order("created_at", { ascending: false }),
+      supabase.from("pasong_promo_free_entitlements").select("id,item_type,free_item_id,beat_package_type,created_at")
+        .eq("buyer_user_id", user.id).order("created_at", { ascending: false })
+    ]);
+    if (q.error || e.error) return res.status(500).json({ error: "Could not load your promotion history." });
+    return res.json({ qualifications: q.data || [], entitlements: e.data || [] });
+  } catch (e) { console.error("Buy3 history error", e); return res.status(500).json({ error: "Could not load promotion history." }); }
+});
+
+app.post("/api/buy3/claim", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in." });
+    const qualificationId = String(req.body?.qualification_id || "");
+    const type = String(req.body?.item_type || "").toLowerCase();
+    const itemId = String(req.body?.free_item_id || "");
+    const packageType = req.body?.beat_package_type ? String(req.body.beat_package_type).toLowerCase() : null;
+    if (!validUuid(qualificationId) || !validUuid(itemId) || !["song", "beat"].includes(type))
+      return res.status(400).json({ error: "Invalid promotion claim." });
+    if (type === "beat" && !PASONG_PROMO_BEAT_PACKAGES.has(packageType))
+      return res.status(400).json({ error: "A valid beat licence package is required." });
+    const rpc = await supabase.rpc("pasong_claim_buy3_free_item", {
+      p_qualification_id: qualificationId, p_buyer_user_id: user.id,
+      p_item_type: type, p_free_item_id: itemId, p_beat_package_type: packageType
+    });
+    if (rpc.error) {
+      console.error("Buy3 claim RPC failed", rpc.error);
+      return res.status(400).json({ error: rpc.error.message || "Could not claim this free item." });
+    }
+    return res.json({ success: true, entitlement_id: rpc.data, message: "Free promotional item claimed." });
+  } catch (e) { console.error("Buy3 claim error", e); return res.status(500).json({ error: "Could not complete your free-item claim." }); }
+});
+
 function validPositiveNumber(value) {
   const number = Number(value);
 
@@ -2171,14 +2425,15 @@ app.get(
           .limit(1)
           .maybeSingle();
 
-      if (
-        download.error ||
-        !download.data
-      ) {
-        return res.status(403).json({
-          error:
-            "Not purchased",
-        });
+      let hasAccess = Boolean(download.data);
+      if (!hasAccess) {
+        const promo = await supabase.from("pasong_promo_free_entitlements")
+          .select("id").eq("buyer_user_id", user.id).eq("item_type", "song")
+          .eq("free_item_id", req.params.id).limit(1).maybeSingle();
+        hasAccess = Boolean(!promo.error && promo.data);
+      }
+      if (!hasAccess) {
+        return res.status(403).json({ error: "Not purchased or included in a PASONG promotion." });
       }
 
       const song =
@@ -5362,18 +5617,26 @@ app.get(
           .limit(1)
           .maybeSingle();
 
-      if (
-        result.error ||
-        !result.data
-      ) {
-        return res.status(403).json({
-          error:
-            "Not purchased",
-        });
+      let accessRecord = result.data || null;
+      if (!accessRecord) {
+        const promo = await supabase.from("pasong_promo_free_entitlements")
+          .select("id,beat_package_type").eq("buyer_user_id", user.id)
+          .eq("item_type", "beat").eq("free_item_id", req.params.id)
+          .limit(1).maybeSingle();
+        if (!promo.error && promo.data) {
+          accessRecord = { package_type: promo.data.beat_package_type, beats: null, promo_free: true };
+        }
+      }
+      if (!accessRecord) {
+        return res.status(403).json({ error: "Not purchased or included in a PASONG promotion." });
       }
 
-      const beat =
-        result.data.beats;
+      let beat = accessRecord.beats;
+      if (!beat) {
+        const beatLookup = await supabase.from("beats").select("*").eq("id", req.params.id).maybeSingle();
+        if (beatLookup.error || !beatLookup.data) return res.status(404).json({ error: "Beat not found" });
+        beat = beatLookup.data;
+      }
 
       if (!beat) {
         return res.status(404).json({
@@ -5382,11 +5645,14 @@ app.get(
         });
       }
 
+      if (accessRecord.promo_free && !["mp3", "wav", "stems"].includes(accessRecord.package_type)) {
+        return res.status(403).json({ error: "This promotional beat licence package is not supported." });
+      }
+
       let url = null;
 
       if (
-        result.data
-          .package_type ===
+        accessRecord.package_type ===
         "mp3"
       ) {
         url =
@@ -5395,8 +5661,7 @@ app.get(
       }
 
       if (
-        result.data
-          .package_type ===
+        accessRecord.package_type ===
         "wav"
       ) {
         url =
@@ -5404,8 +5669,7 @@ app.get(
       }
 
       if (
-        result.data
-          .package_type ===
+        accessRecord.package_type ===
         "stems"
       ) {
         url =
@@ -5413,8 +5677,7 @@ app.get(
       }
 
       if (
-        result.data
-          .package_type ===
+        accessRecord.package_type ===
         "exclusive"
       ) {
         url =
@@ -5432,8 +5695,8 @@ app.get(
         download_url:
           url,
         package_type:
-          result.data
-            .package_type,
+          accessRecord.package_type,
+        promotional: Boolean(accessRecord.promo_free),
       });
     } catch {
       res.status(500).json({
