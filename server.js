@@ -688,6 +688,112 @@ async function getAuthenticatedUser(req) {
 
 
 // ============================================================
+// PASONG DJ APPLICATION REVIEW — admin-only routes
+// Uses the existing service-role Supabase client on the server.
+// Never expose the service-role key to the browser.
+// ============================================================
+async function isPasongAdminUser(user) {
+  if (!user) return false;
+  const appRoles = [user.app_metadata?.role, user.app_metadata?.user_role]
+    .map(v => String(v || "").toLowerCase());
+  if (appRoles.some(v => ["admin", "super_admin"].includes(v))) return true;
+
+  // The PASONG role registry is also checked server-side.
+  try {
+    const registry = await supabase.from("user_roles")
+      .select("role").eq("user_id", user.id).limit(10);
+    if (!registry.error && (registry.data || []).some(row =>
+      ["admin", "super_admin"].includes(String(row.role || "").toLowerCase())
+    )) return true;
+  } catch (e) {
+    // Continue to the other supported role sources if this table is unavailable.
+  }
+
+  // Match the profile/admin tables used by the existing PASONG Admin login check.
+  for (const table of ["profiles", "user_profiles", "admin_users"]) {
+    try {
+      const roleResult = await supabase.from(table)
+        .select("role").eq("id", user.id).maybeSingle();
+      if (!roleResult.error && ["admin", "super_admin"].includes(
+        String(roleResult.data?.role || "").toLowerCase()
+      )) return true;
+    } catch (e) {
+      // A table may not exist in this deployment; continue to the next known role source.
+    }
+  }
+  return false;
+}
+
+async function requirePasongAdmin(req, res) {
+  const user = await getAuthenticatedUser(req);
+  if (!user) {
+    res.status(401).json({ error: "Please sign in with your PASONG administrator account." });
+    return null;
+  }
+  if (!(await isPasongAdminUser(user))) {
+    res.status(403).json({ error: "Administrator access is required for DJ verification." });
+    return null;
+  }
+  return user;
+}
+
+app.get("/api/admin/djs", async (req, res) => {
+  try {
+    const adminUser = await requirePasongAdmin(req, res);
+    if (!adminUser) return;
+    const status = String(req.query.status || "pending").toLowerCase();
+    let query = supabase.from("djs")
+      .select("id,user_id,display_name,bio,avatar_url,location,account_status,verification_status,created_at,updated_at")
+      .order("created_at", { ascending: false }).limit(200);
+    if (["pending", "active"].includes(status)) query = query.eq("account_status", status);
+    else if (status !== "all") return res.status(400).json({ error: "Invalid DJ account filter." });
+    const result = await query;
+    if (result.error) {
+      console.error("Admin DJ list query failed:", result.error);
+      return res.status(500).json({ error: "Unable to load DJ applications." });
+    }
+    return res.json({ success: true, djs: result.data || [] });
+  } catch (error) {
+    console.error("Admin DJ list error:", error);
+    return res.status(500).json({ error: "Unable to load DJ applications." });
+  }
+});
+
+app.post("/api/admin/djs/:id/review", async (req, res) => {
+  try {
+    const adminUser = await requirePasongAdmin(req, res);
+    if (!adminUser) return;
+    if (!validUuid(req.params.id)) return res.status(400).json({ error: "Invalid DJ account ID." });
+    const action = String(req.body?.action || "").toLowerCase();
+    let changes;
+    let message;
+    if (action === "approve") {
+      changes = { account_status: "active", verification_status: "verified", updated_at: new Date().toISOString() };
+      message = "DJ account activated and verified. The verified badge can now appear publicly.";
+    } else if (action === "reject") {
+      changes = { verification_status: "rejected", updated_at: new Date().toISOString() };
+      message = "DJ verification application rejected. The account has not been activated.";
+    } else {
+      return res.status(400).json({ error: "Choose approve or reject." });
+    }
+    const result = await supabase.from("djs").update(changes)
+      .eq("id", req.params.id)
+      .select("id,user_id,display_name,account_status,verification_status,updated_at")
+      .maybeSingle();
+    if (result.error) {
+      console.error("Admin DJ review update failed:", result.error);
+      return res.status(500).json({ error: "Could not save the DJ verification decision." });
+    }
+    if (!result.data) return res.status(404).json({ error: "DJ account not found." });
+    return res.json({ success: true, message, dj: result.data });
+  } catch (error) {
+    console.error("Admin DJ review error:", error);
+    return res.status(500).json({ error: "Could not process the DJ verification decision." });
+  }
+});
+
+
+// ============================================================
 // PASONG STUDIO FEATURE CHECKOUT PREPARATION
 // Authenticates the owner and returns server-authoritative package
 // details. This does NOT collect payment or activate a feature.
@@ -6930,137 +7036,6 @@ app.use(
     next();
   }
 );
-
-
-// ============================================================
-// PASONG DJ MIX CHECKOUT FOUNDATION
-// Creates authenticated pending orders now. Payment providers are
-// deliberately not called until the correct provider APIs are supplied.
-// DJ share = 70% (UGX 700); PASONG share = 30% (UGX 300).
-// ============================================================
-app.post("/api/dj-mixes/checkout", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ success: false, error: "Please sign in before buying a DJ mix.", code: "AUTH_REQUIRED" });
-
-    const mixId = String((req.body || {}).mix_id || "").trim();
-    const provider = String((req.body || {}).provider || "").trim().toLowerCase();
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(mixId)) {
-      return res.status(400).json({ success: false, error: "A valid DJ mix ID is required." });
-    }
-    if (!["pesapay", "airtel", "mtn"].includes(provider)) {
-      return res.status(400).json({ success: false, error: "Choose PesaPay, Airtel Money or MTN MoMo." });
-    }
-
-    const mixResult = await supabase.from("dj_mixes")
-      .select("id,dj_id,user_id,title,price_ugx,status,rights_status,storage_path")
-      .eq("id", mixId).maybeSingle();
-    if (mixResult.error) {
-      console.error("DJ mix checkout lookup failed:", mixResult.error);
-      return res.status(500).json({ success: false, error: "Could not load this DJ mix." });
-    }
-    const mix = mixResult.data;
-    if (!mix || mix.status !== "published" || mix.rights_status !== "cleared") {
-      return res.status(404).json({ success: false, error: "This DJ mix is not available for purchase." });
-    }
-    if (String(mix.user_id || "") === String(user.id)) {
-      return res.status(400).json({ success: false, error: "You cannot purchase your own DJ mix." });
-    }
-
-    const alreadyPaid = await supabase.from("dj_mix_purchases").select("id,status")
-      .eq("mix_id", mixId).eq("buyer_user_id", user.id).eq("status", "paid").maybeSingle();
-    if (alreadyPaid.error) throw alreadyPaid.error;
-    if (alreadyPaid.data) {
-      return res.status(409).json({ success: false, error: "You already own this DJ mix.", code: "ALREADY_PURCHASED", purchase_id: alreadyPaid.data.id });
-    }
-
-    // Reuse an existing pending order for this buyer/mix/provider to avoid duplicates.
-    const pending = await supabase.from("dj_mix_purchases").select("id,payment_reference,status")
-      .eq("mix_id", mixId).eq("buyer_user_id", user.id).eq("payment_provider", provider)
-      .eq("status", "pending").order("created_at", { ascending: false }).limit(1).maybeSingle();
-    if (pending.error) throw pending.error;
-    if (pending.data) {
-      return res.status(200).json({
-        success: true, order_created: true, payment_ready: false,
-        message: "Your order is saved. Payment will be enabled when the provider API is connected.",
-        purchase_id: pending.data.id, order_reference: pending.data.payment_reference,
-        amount_ugx: 1000, currency: "UGX", dj_share_ugx: 700, pasong_share_ugx: 300,
-        provider
-      });
-    }
-
-    const orderReference = "DJMIX-" + crypto.randomUUID();
-    const inserted = await supabase.from("dj_mix_purchases").insert({
-      mix_id: mix.id,
-      dj_id: mix.dj_id,
-      buyer_user_id: user.id,
-      amount_ugx: 1000,
-      dj_share_ugx: 700,
-      pasong_share_ugx: 300,
-      currency: "UGX",
-      payment_provider: provider,
-      payment_reference: orderReference,
-      status: "pending"
-    }).select("id,payment_reference,status").single();
-    if (inserted.error) {
-      console.error("DJ mix pending order insert failed:", inserted.error);
-      throw inserted.error;
-    }
-
-    return res.status(201).json({
-      success: true, order_created: true, payment_ready: false,
-      message: "Your DJ mix order has been saved. No payment has been taken yet. The selected payment API will be connected before payment testing.",
-      purchase_id: inserted.data.id, order_reference: inserted.data.payment_reference,
-      amount_ugx: 1000, currency: "UGX", dj_share_ugx: 700, pasong_share_ugx: 300,
-      provider
-    });
-  } catch (error) {
-    console.error("DJ mix checkout error:", error);
-    return res.status(500).json({ success: false, error: "Could not create DJ mix order. No payment has been taken." });
-  }
-});
-
-app.get("/api/dj-mixes/purchases/:purchaseId", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ success: false, error: "Please sign in." });
-    const result = await supabase.from("dj_mix_purchases")
-      .select("id,mix_id,status,amount_ugx,currency,payment_provider,created_at,paid_at")
-      .eq("id", req.params.purchaseId).eq("buyer_user_id", user.id).maybeSingle();
-    if (result.error) throw result.error;
-    if (!result.data) return res.status(404).json({ success: false, error: "Purchase not found." });
-    return res.json({ success: true, purchase: result.data });
-  } catch (error) {
-    console.error("DJ mix purchase status error:", error);
-    return res.status(500).json({ success: false, error: "Could not check purchase status." });
-  }
-});
-
-// Private audio is only signed for the authenticated buyer after a paid order.
-app.get("/api/dj-mixes/purchases/:purchaseId/access", async (req, res) => {
-  try {
-    const user = await getAuthenticatedUser(req);
-    if (!user) return res.status(401).json({ success: false, error: "Please sign in." });
-    const purchaseResult = await supabase.from("dj_mix_purchases")
-      .select("id,mix_id,status").eq("id", req.params.purchaseId)
-      .eq("buyer_user_id", user.id).eq("status", "paid").maybeSingle();
-    if (purchaseResult.error) throw purchaseResult.error;
-    if (!purchaseResult.data) return res.status(403).json({ success: false, error: "A verified paid purchase is required." });
-    const mixResult = await supabase.from("dj_mixes")
-      .select("id,storage_path,status,rights_status").eq("id", purchaseResult.data.mix_id).maybeSingle();
-    if (mixResult.error) throw mixResult.error;
-    const mix = mixResult.data;
-    if (!mix || mix.status !== "published" || mix.rights_status !== "cleared" || !mix.storage_path) {
-      return res.status(403).json({ success: false, error: "This mix is not currently available." });
-    }
-    const signed = await supabase.storage.from("dj-mixes").createSignedUrl(mix.storage_path, 300);
-    if (signed.error || !signed.data?.signedUrl) throw signed.error || new Error("Could not create secure audio link.");
-    return res.json({ success: true, audio_url: signed.data.signedUrl, expires_in: 300 });
-  } catch (error) {
-    console.error("DJ mix secure access error:", error);
-    return res.status(500).json({ success: false, error: "Could not unlock this DJ mix." });
-  }
-});
 
 app.use(
   (req, res) => {
