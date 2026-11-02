@@ -7003,6 +7003,119 @@ app.get("/api/advertising/pesapal/ipn", async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// PASONG DJ BOOKINGS — fixed UGX 5,000 request fee.
+// Checkout remains deliberately disabled until the approved PesaPay merchant
+// and server-to-server transaction verification API are configured.
+// NEVER set payment_status='paid' from a browser callback or request body.
+// ---------------------------------------------------------------------------
+app.post("/api/dj-bookings", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const djId = String(body.dj_id || "").trim();
+    const customerName = String(body.customer_name || "").trim();
+    const customerPhone = String(body.customer_phone || "").trim();
+    const eventType = String(body.event_type || "").trim();
+    const eventDate = String(body.event_date || "").trim();
+    const eventLocation = String(body.event_location || "").trim();
+    const eventHours = String(body.event_hours || "Not sure").trim();
+    const budget = String(body.budget || "Not specified").trim();
+    const musicStyle = body.music_style == null ? null : String(body.music_style).trim().slice(0, 180);
+    const message = body.message == null ? null : String(body.message).trim().slice(0, 1500);
+
+    if (!djId || !customerName || !customerPhone || !eventType || !eventDate || !eventLocation) {
+      return res.status(400).json({ error: "Please complete all required booking fields." });
+    }
+    if (customerName.length > 100 || customerPhone.length > 30 || eventType.length > 80 || eventLocation.length > 180) {
+      return res.status(400).json({ error: "One or more booking fields are too long." });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate) || Number.isNaN(Date.parse(eventDate)) || eventDate < new Date().toISOString().slice(0, 10)) {
+      return res.status(400).json({ error: "Choose a valid event date that is today or later." });
+    }
+
+    const { data: dj, error: djError } = await supabase
+      .from("djs")
+      .select("id,user_id,display_name,account_status")
+      .eq("id", djId)
+      .maybeSingle();
+    if (djError) throw djError;
+    if (!dj || String(dj.account_status || "").toLowerCase() !== "active") {
+      return res.status(404).json({ error: "This DJ profile is unavailable for bookings." });
+    }
+
+    const paymentReference = `DJBOOK-${crypto.randomUUID()}`;
+    const { data: booking, error: insertError } = await supabase
+      .from("dj_bookings")
+      .insert({
+        dj_id: dj.id,
+        dj_user_id: dj.user_id,
+        customer_name: customerName,
+        customer_phone: customerPhone,
+        event_type: eventType,
+        event_date: eventDate,
+        event_location: eventLocation,
+        event_hours: eventHours.slice(0, 40),
+        budget: budget.slice(0, 80),
+        music_style: musicStyle || null,
+        message: message || null,
+        booking_fee_amount: 5000,
+        booking_fee_currency: "UGX",
+        payment_provider: "pesapay",
+        payment_status: "pending",
+        payment_reference,
+        status: "pending",
+      })
+      .select("id,payment_reference,booking_fee_amount,booking_fee_currency,payment_status")
+      .single();
+    if (insertError) throw insertError;
+
+    return res.status(201).json({
+      booking_id: booking.id,
+      payment_reference: booking.payment_reference,
+      amount: booking.booking_fee_amount,
+      currency: booking.booking_fee_currency,
+      payment_status: booking.payment_status,
+      next_step: "checkout",
+    });
+  } catch (error) {
+    console.error("Create DJ booking failed:", error);
+    return res.status(500).json({ error: "Could not save the DJ booking request." });
+  }
+});
+
+app.post("/api/dj-bookings/:bookingId/checkout", async (req, res) => {
+  // Fail closed until the PesaPay domain, merchant and verification API are ready.
+  // No checkout URL is fabricated, and the booking remains unpaid/invisible to DJs.
+  return res.status(503).json({
+    error: "PASONG DJ booking payments are not enabled yet. No payment was taken.",
+    payment_status: "pending",
+    amount: 5000,
+    currency: "UGX",
+  });
+});
+
+app.get("/api/dj-bookings/:bookingId/payment-status", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("dj_bookings")
+      .select("id,payment_status,booking_fee_amount,booking_fee_currency,payment_verified_at")
+      .eq("id", String(req.params.bookingId || ""))
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: "Booking not found." });
+    return res.json({
+      booking_id: data.id,
+      payment_status: data.payment_status,
+      amount: data.booking_fee_amount,
+      currency: data.booking_fee_currency,
+      verified_at: data.payment_verified_at,
+    });
+  } catch (error) {
+    console.error("Read DJ booking payment status failed:", error);
+    return res.status(500).json({ error: "Could not check booking payment status." });
+  }
+});
+
 app.use(
   (error, req, res, next) => {
     if (
