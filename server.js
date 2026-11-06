@@ -623,6 +623,130 @@ app.post("/api/premium/checkout", async (req, res) => {
   }
 });
 
+// ============================================================
+// PASONG STREAMING ROYALTY FOUNDATION — song sessions (V1)
+// The browser sends media position, never a trusted listened-seconds total.
+// The database RPC validates realistic progress and qualifies once at 60s.
+// DJ-mix segment sessions are enabled after the deployed dj_mix_tracks columns
+// are confirmed and the server can verify each track-to-song relationship.
+// ============================================================
+app.post("/api/streaming/session/start", async (req, res) => {
+  try {
+    const songId = String(req.body?.song_id || "").trim();
+    if (!validUuid(songId)) {
+      return res.status(400).json({ success: false, error: "A valid song ID is required." });
+    }
+
+    const sourceType = String(req.body?.source_type || "song").trim().toLowerCase();
+    if (sourceType !== "song") {
+      return res.status(400).json({
+        success: false,
+        error: "DJ mix royalty tracking will be enabled after PASONG verifies the deployed DJ mix track schema.",
+      });
+    }
+
+    const songResult = await supabase.from("songs")
+      .select("id,status")
+      .eq("id", songId)
+      .maybeSingle();
+    if (songResult.error) {
+      console.error("Streaming song lookup failed:", songResult.error);
+      return res.status(500).json({ success: false, error: "Unable to verify this song." });
+    }
+    if (!songResult.data || songResult.data.status !== "approved") {
+      return res.status(404).json({ success: false, error: "This song is not available for streaming." });
+    }
+
+    const user = await getAuthenticatedUser(req);
+    let premiumSubscription = null;
+    if (user) {
+      const nowIso = new Date().toISOString();
+      const premiumResult = await supabase.from("premium_subscriptions")
+        .select("id,user_id,status,started_at,expires_at")
+        .eq("user_id", user.id)
+        .eq("status", "active")
+        .lte("started_at", nowIso)
+        .gt("expires_at", nowIso)
+        .order("expires_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (premiumResult.error) {
+        console.error("Streaming Premium entitlement lookup failed:", premiumResult.error);
+        return res.status(500).json({ success: false, error: "Unable to verify Premium eligibility." });
+      }
+      premiumSubscription = premiumResult.data || null;
+    }
+
+    const sessionResult = await supabase.from("pasong_stream_sessions").insert({
+      listener_user_id: user?.id || null,
+      song_id: songId,
+      source_type: "song",
+      source_id: songId,
+      premium_subscription_id: premiumSubscription?.id || null,
+      started_at: new Date().toISOString(),
+      last_heartbeat_at: new Date().toISOString(),
+      last_media_position_seconds: 0,
+      listened_seconds: 0,
+      status: "active",
+    }).select("id,song_id,source_type,started_at,status").single();
+
+    if (sessionResult.error) {
+      console.error("Streaming session creation failed:", sessionResult.error);
+      return res.status(500).json({ success: false, error: "Unable to start the listening session." });
+    }
+
+    return res.status(201).json({
+      success: true,
+      session: sessionResult.data,
+      premium_eligible_at_start: Boolean(premiumSubscription),
+      royalty_qualification_seconds: 60,
+    });
+  } catch (error) {
+    console.error("Streaming session start error:", error);
+    return res.status(500).json({ success: false, error: "Unable to start streaming session." });
+  }
+});
+
+app.post("/api/streaming/session/heartbeat", async (req, res) => {
+  try {
+    const sessionId = String(req.body?.session_id || "").trim();
+    const mediaPosition = Number(req.body?.media_position_seconds);
+    const isPlaying = req.body?.is_playing === true;
+    if (!validUuid(sessionId) || !Number.isFinite(mediaPosition) || mediaPosition < 0 || mediaPosition > 86400) {
+      return res.status(400).json({ success: false, error: "Invalid listening progress." });
+    }
+
+    const user = await getAuthenticatedUser(req);
+    const sessionResult = await supabase.from("pasong_stream_sessions")
+      .select("id,listener_user_id,status")
+      .eq("id", sessionId)
+      .maybeSingle();
+    if (sessionResult.error) {
+      console.error("Streaming session lookup failed:", sessionResult.error);
+      return res.status(500).json({ success: false, error: "Unable to verify listening session." });
+    }
+    if (!sessionResult.data) return res.status(404).json({ success: false, error: "Listening session not found." });
+    if (sessionResult.data.listener_user_id && (!user || user.id !== sessionResult.data.listener_user_id)) {
+      return res.status(403).json({ success: false, error: "This listening session belongs to another account." });
+    }
+
+    const heartbeat = await supabase.rpc("pasong_stream_heartbeat", {
+      p_session_id: sessionId,
+      p_media_position_seconds: mediaPosition,
+      p_is_playing: isPlaying,
+    });
+    if (heartbeat.error) {
+      console.error("Streaming heartbeat rejected:", heartbeat.error);
+      return res.status(400).json({ success: false, error: "Listening progress could not be verified." });
+    }
+
+    return res.json(heartbeat.data || { success: true, qualified: false });
+  } catch (error) {
+    console.error("Streaming heartbeat error:", error);
+    return res.status(500).json({ success: false, error: "Unable to record listening progress." });
+  }
+});
+
 // Public read-only event listings. Supabase credentials remain on the server (Render).
 app.get("/api/events", async (req, res) => {
   try {
@@ -7010,6 +7134,7 @@ app.get("/api/advertising/pesapal/ipn", async (req, res) => {
 // NEVER set payment_status='paid' from a browser callback or request body.
 // ---------------------------------------------------------------------------
 app.post("/api/dj-bookings", async (req, res) => {
+  let bookingStep = "validate request";
   try {
     const body = req.body || {};
     const djId = String(body.dj_id || "").trim();
@@ -7033,6 +7158,7 @@ app.post("/api/dj-bookings", async (req, res) => {
       return res.status(400).json({ error: "Choose a valid event date that is today or later." });
     }
 
+    bookingStep = "look up DJ profile";
     const { data: dj, error: djError } = await supabase
       .from("djs")
       .select("id,user_id,display_name,account_status")
@@ -7043,6 +7169,7 @@ app.post("/api/dj-bookings", async (req, res) => {
       return res.status(404).json({ error: "This DJ profile is unavailable for bookings." });
     }
 
+    bookingStep = "insert booking row";
     const paymentReference = `DJBOOK-${crypto.randomUUID()}`;
     const { data: booking, error: insertError } = await supabase
       .from("dj_bookings")
@@ -7078,8 +7205,24 @@ app.post("/api/dj-bookings", async (req, res) => {
       next_step: "checkout",
     });
   } catch (error) {
-    console.error("Create DJ booking failed:", error);
-    return res.status(500).json({ error: "Could not save the DJ booking request." });
+    // Temporary diagnostic response: exposes the database error, never secrets.
+    console.error("Create DJ booking failed:", {
+      step: bookingStep,
+      message: error?.message,
+      code: error?.code,
+      details: error?.details,
+      hint: error?.hint,
+    });
+    return res.status(500).json({
+      error: "Could not save the DJ booking request.",
+      diagnostic: {
+        step: bookingStep,
+        message: String(error?.message || "Unknown database error").slice(0, 500),
+        code: error?.code || null,
+        details: error?.details || null,
+        hint: error?.hint || null,
+      },
+    });
   }
 });
 
