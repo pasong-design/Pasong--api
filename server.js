@@ -1,459 +1,7514 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Player - PASONG</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:#0F0F14;color:#fff;font-family:sans-serif}
-header{padding:16px 5%;display:flex;justify-content:space-between;align-items:center;background:#0F0F14;border-bottom:1px solid #23233A;position:sticky;top:0;z-index:10}
-.hbtn{width:44px;height:44px;border-radius:12px;background:#1A1A28;border:1px solid #2A2A42;display:grid;place-items:center;cursor:pointer;font-size:22px;color:#fff}
-.main{padding:14px 5%}
-.cover{width:100%;max-width:380px;aspect-ratio:1/1;border-radius:20px;object-fit:cover;display:block;margin:0 auto;background:#1A1A28;border:1px solid #2A2A42}
-.title{font-size:28px;font-weight:900;margin-top:18px}
-.artist{font-size:17px;color:#A78BFA;margin-top:8px;font-weight:700}
-.meta{font-size:15px;color:#9CA3AF;margin-top:8px}
-.bar{height:8px;background:#1A1A28;border-radius:10px;margin-top:20px;border:1px solid #2A2A42;position:relative;cursor:pointer;overflow:visible}
-.fill{height:100%;background:linear-gradient(90deg,#7C4DFF,#8B5CF6);width:0%;border-radius:10px;position:relative}
-.dot{position:absolute;right:-6px;top:50%;transform:translateY(-50%);width:14px;height:14px;background:#fff;border-radius:50%;display:none;box-shadow:0 0 8px rgba(124,77,255,.8)}
-.bar:hover .dot{display:block}
-.time{display:flex;justify-content:space-between;font-size:14px;color:#9CA3AF;margin-top:8px;font-weight:600}
-.controls{display:flex;justify-content:center;gap:16px;margin-top:22px;align-items:center}
-.c{width:50px;height:50px;border-radius:16px;background:#1A1A28;border:1px solid #2A2A42;display:grid;place-items:center;cursor:pointer;color:#fff;font-size:18px}
-.c.play{width:74px;height:74px;background:#7C4DFF;color:#fff;font-size:32px;border:none;box-shadow:0 8px 24px rgba(124,77,255,.4)}
-.c.active{background:#7C4DFF;border-color:#7C4DFF;color:#fff}
-.actions{display:flex;gap:12px;margin-top:20px}
-.btn{flex:1;height:52px;border-radius:14px;background:#1A1A28;border:1px solid #2A2A42;display:grid;place-items:center;cursor:pointer;font-weight:800;color:#fff;font-size:15px}
-.btn.buy{background:#7C4DFF;border:none}
-.btn.active{background:#FF2D55}
-.share-row{display:flex;gap:10px;margin-top:14px}
-.share-btn{flex:1;height:44px;border-radius:12px;background:#1A1A28;border:1px solid #2A2A42;color:#fff;font-weight:700;font-size:13px;display:grid;place-items:center;cursor:pointer}
-.artist-box{margin:24px 5%;background:#1A1A28;border:1px solid #2A2A42;border-radius:20px;padding:18px;display:flex;gap:16px;align-items:center}
-.artist-box img{width:84px;height:84px;border-radius:50%;object-fit:cover;border:3px solid #7C4DFF;background:#23233A}
-.artist-box .name{font-size:20px;font-weight:900}
-.artist-box .sub{font-size:14px;color:#A0A0B8;margin-top:6px}
-.card-box{margin:16px 5%;background:#1A1A28;border:1px solid #2A2A42;border-radius:20px;padding:18px}
-.card-box h3{font-size:16px;font-weight:900;margin-bottom:12px}
-.lyrics{white-space:pre-wrap;font-size:15px;line-height:1.7;color:#D1D5DB}
-.section{margin-top:30px}
-.head{padding:0 5%;margin-bottom:14px}
-.head h2{font-size:19px;font-weight:800}
-.list{padding:0 5%;display:flex;flex-direction:column;gap:12px}
-.row{display:flex;align-items:center;gap:12px;background:#1A1A28;border:1px solid #2A2A42;border-radius:16px;padding:14px;cursor:pointer}
-.row .num{color:#7C4DFF;font-weight:900;width:22px}
-.row img{width:56px;height:56px;border-radius:10px;object-fit:cover}
-.row .rt{font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row .ra{font-size:13px;color:#9CA3AF;margin-top:3px}
-.grid{display:flex;gap:14px;overflow-x:auto;padding:0 5% 12px;scrollbar-width:none}
-.grid::-webkit-scrollbar{display:none}
-.card{flex:0 0 180px;background:#1A1A28;border:1px solid #2A2A42;border-radius:16px;overflow:hidden;cursor:pointer}
-.card img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block}
-.card-info{padding:10px 12px}
-.card .t{font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.card .a{font-size:13px;color:#9CA3AF;margin-top:2px}
-.comment-input{width:100%;height:48px;background:#0F0F14;border:1px solid #2A2A42;border-radius:12px;padding:0 14px;color:#fff;font-size:14px;margin-top:10px}
-.comment-row{padding:12px 0;border-bottom:1px solid #23233A;display:flex;gap:10px}
-.like-btn{font-size:12px;color:#9CA3AF;cursor:pointer;margin-top:6px;font-weight:700;display:flex;gap:12px}
-.like-btn span.liked{color:#FF2D55}
-.buy-modal{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;place-items:center;z-index:100;padding:20px}
-.buy-modal.open{display:grid}
-.buy-card{width:100%;max-width:400px;background:#1A1A28;border:1px solid #2A2A42;border-radius:20px;padding:20px}
-.license{padding:14px;border:1px solid #2A2A42;border-radius:12px;margin-top:12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center}
-.license:hover{border-color:#7C4DFF}
-.license.active{border-color:#7C4DFF;background:rgba(124,77,255,.15)}
-.emoji-bar{display:flex;gap:8px;margin-top:10px;overflow-x:auto}
-.emoji-bar span{cursor:pointer;font-size:20px;background:#0F0F14;border:1px solid #2A2A42;width:36px;height:36px;display:grid;place-items:center;border-radius:8px;flex-shrink:0}
-.time-ago{font-size:11px;color:#666;margin-left:8px}
-@media(max-width:700px){
-footer div[style*="grid-template-columns:repeat(4,1fr)"]{grid-template-columns:repeat(2,1fr)!important}
-}
-</style>
-</head>
-<body>
-<header>
-<div class="hbtn" onclick="history.back()">‹</div>
-<div style="font-size:13px;color:#9CA3AF;font-weight:800">PASONG</div>
-<div class="hbtn" onclick="shareLink()">↗</div>
-</header>
-<div class="main">
-<img id="cover" class="cover" alt="Song cover">
-<div id="title" class="title">Loading...</div>
-<div id="artistName" class="artist"></div>
-<div id="meta" class="meta">Loading plays...</div>
-<div class="bar" id="progressBar"><div id="fill" class="fill"><div class="dot"></div></div></div>
-<div class="time"><span id="cur">0:00</span><span id="dur">0:00</span></div>
-<div class="controls">
-<div class="c" id="shuffleBtn" onclick="toggleShuffle()" title="Shuffle">🔀</div>
-<div class="c" onclick="prev()">⏮</div>
-<div id="playBtn" class="c play" onclick="toggle()">▶</div>
-<div class="c" onclick="next()">⏭</div>
-<div class="c" id="repeatBtn" onclick="toggleRepeat()" title="Repeat">🔁</div>
-</div>
-<div class="actions">
-<div id="heart" class="btn" onclick="toggleFav()">♡ Favorite</div>
-<div class="btn buy" onclick="checkout()">+ Buy</div>
-</div>
-<div class="share-row">
-<div class="share-btn" onclick="shareWA()">WhatsApp</div>
-<div class="share-btn" onclick="shareLink()">Copy Link</div>
-</div>
-<audio id="audio"></audio>
-<div id="nextUp" style="margin-top:16px;text-align:center;font-size:13px;color:#9CA3AF;display:none">Next: <b id="nextTitle" style="color:#fff"></b></div>
-</div>
-<div class="artist-box">
-<img id="artistImg" alt="Artist">
-<div><div id="artistBoxName" class="name"></div><div id="artistBoxMeta" class="sub"></div></div>
-</div>
-<div class="card-box"><h3>Lyrics</h3><div id="lyrics" class="lyrics">Lyrics not available yet.</div></div>
-<div class="section"><div class="head"><h2 id="popTitle">Popular</h2></div><div class="list" id="popularList"></div></div>
-<div class="section"><div class="head"><h2>Popular releases</h2></div><div class="grid" id="releaseGrid"></div></div>
-<div class="section"><div class="head"><h2>Recommended for you</h2></div><div class="grid" id="recommendedGrid"></div></div>
-<div class="section"><div class="head"><h2>Albums & EPs</h2></div><div class="grid" id="albumGrid"></div></div>
-<div class="section"><div class="head"><h2 id="fansTitle">Fans also like</h2></div><div class="grid" id="fansGrid"></div></div>
-<div class="card-box">
-<h3>Comments <span id="commentCount" style="color:#7C4DFF;font-size:13px"></span></h3>
-<input id="commentText" class="comment-input" placeholder="Add a comment and press Enter...">
-<div class="emoji-bar">
-<span onclick="addEmoji('🔥')">🔥</span><span onclick="addEmoji('❤️')">❤️</span><span onclick="addEmoji('😍')">😍</span><span onclick="addEmoji('👏')">👏</span><span onclick="addEmoji('💯')">💯</span><span onclick="addEmoji('🎧')">🎧</span><span onclick="addEmoji('🎶')">🎶</span><span onclick="addEmoji('🙌')">🙌</span>
-</div>
-<div id="commentsList"></div>
-</div>
-<div id="buyModal" class="buy-modal" onclick="if(event.target===this)closeBuy()">
-<div class="buy-card">
-<div style="display:flex;justify-content:space-between;align-items:center"><h3 id="buyModalTitle" style="font-weight:900">Buy Song</h3><div onclick="closeBuy()" style="cursor:pointer;font-size:20px">✕</div></div>
-<div style="margin-top:12px;display:flex;gap:12px">
-<img id="buyCover" src="" alt="" style="width:70px;height:70px;border-radius:12px;object-fit:cover">
-<div><div id="buyTitle" style="font-weight:800"></div><div id="buyArtist" style="font-size:13px;color:#9CA3AF;margin-top:4px"></div></div>
-</div>
-<div class="license active" data-price="10" onclick="selectLicense(this)"><div><b>MP3 License</b><div style="font-size:12px;color:#9CA3AF">MP3 + Social rights</div></div><b>$10</b></div>
-<div class="license" data-price="30" onclick="selectLicense(this)"><div><b>WAV License</b><div style="font-size:12px;color:#9CA3AF">MP3 + WAV + Unlimited</div></div><b>$30</b></div>
-<div class="license" data-price="80" onclick="selectLicense(this)"><div><b>Stems / Trackout</b><div style="font-size:12px;color:#9CA3AF">All files + Stems</div></div><b>$80</b></div>
-<button onclick="checkout()" style="width:100%;height:52px;background:#7C4DFF;border:none;border-radius:14px;color:#fff;font-weight:900;margin-top:16px;font-size:16px;cursor:pointer">Buy Now • <span id="buyPrice">$10</span></button>
-<div style="text-align:center;font-size:12px;color:#666;margin-top:10px">Secure payment via Mobile Money / Card</div>
-</div></div>
-<footer style="background:#080810;border-top:1px solid #23233A;padding:32px 5% 90px;font-family:Arial;margin-top:30px">
-<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:28px;max-width:1200px;margin:0 auto">
-<div><div style="font-weight:900;font-size:22px;margin-bottom:18px">◈ <span style="color:#c084fc">PASONG</span></div><div style="font-weight:800;font-size:14px;color:#fff;margin-bottom:12px">Company</div>
-<a href="about.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">About</a><a href="jobs.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">Jobs</a><a href="for-the-record.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">For the Record</a></div>
-<div><div style="font-weight:800;font-size:14px;color:#fff;margin-bottom:12px">Communities</div>
-<a href="for-artists.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">For Artists</a><a href="for-creators.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">For Creators</a><a href="for-authors.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">For Authors</a><a href="developers.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">Developers</a><a href="advertising.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">Advertising</a><a href="investors.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">Investors</a><a href="vendors.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">Vendors</a></div>
-<div><div style="font-weight:800;font-size:14px;color:#fff;margin-bottom:12px">Useful links</div>
-<a href="support.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">Support</a><a href="free-mobile-app.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">Free Mobile App</a><a href="popular-by-country.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">Popular by Country</a><a href="top-song-lyrics.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">Top Song Lyrics</a><a href="import-your-music.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">Import your music</a></div>
-<div><div style="font-weight:800;font-size:14px;color:#fff;margin-bottom:12px">PASONG Plans</div><a href="store.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">Music Store</a><a href="charts.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">Charts</a><a href="beats.html" style="display:block;color:#9CA3AF;font-size:14px;padding:6px 0;text-decoration:none">Beats</a></div>
-</div><div style="max-width:1200px;margin:40px auto 0;padding-top:24px;border-top:1px solid #1A1A2E;display:flex;justify-content:center;color:#666;font-size:12px"><span>© 2026 PASONG</span></div>
-</footer>
-<script>
-const SUPABASE_URL="https://mtufczmjlkvycarxylgh.supabase.co";
-const SUPABASE_KEY="sb_publishable_XDIZ0_nd4PAYJy2Oz4VaxQ_R4Trs3VP";
-const PASONG_API="https://pasong-api.onrender.com";
-const db=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
-let list=[],idx=0,current=null,isShuffle=false,isRepeat=false,selectedPrice=10,playCounted=false,playedSeconds=0,lastPlaybackTime=null,playRecordInFlight=false;
-let streamSessionId=null,streamSessionSongId=null,streamHeartbeatTimer=null,streamSessionStarting=false,streamSessionGeneration=0;
-const audio=document.getElementById("audio");
+const express = require("express");
+const cors = require("cors");
+const crypto = require("crypto");
+const { createClient } = require("@supabase/supabase-js");
+const { v2: cloudinary } = require("cloudinary");
+const multer = require("multer");
+const { Readable } = require("stream");
 
-/* Protected audio URL renewal state. */
-let audioRefreshTimer=null;
-let audioSourceGeneration=0;
-let audioSourceError="";
+const app = express();
+const PORT = process.env.PORT || 10000;
 
-function clearAudioRefresh(){
-  if(audioRefreshTimer){clearTimeout(audioRefreshTimer);audioRefreshTimer=null;}
-}
-function qs(k){return new URLSearchParams(location.search).get(k);}
-function formatTime(t){if(!t||isNaN(t))return "0:00";return Math.floor(t/60)+":"+String(Math.floor(t%60)).padStart(2,"0");}
-function timeAgo(d){let diff=Math.floor((Date.now()-new Date(d))/1000);if(diff<60)return diff+"s ago";if(diff<3600)return Math.floor(diff/60)+"m ago";if(diff<86400)return Math.floor(diff/3600)+"h ago";return Math.floor(diff/86400)+"d ago";}
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SERVICE_KEY;
 
-async function getProtectedSongUrl(songId){
-  const response=await fetch(PASONG_API+"/api/songs/"+encodeURIComponent(songId)+"/playback-url",{method:"GET",cache:"no-store"});
-  const result=await response.json().catch(()=>({}));
-  if(!response.ok||!result.success||!result.url){
-    throw new Error(result.message||result.error||("Protected playback unavailable (HTTP "+response.status+")."));
-  }
-  return result.url;
+const CLOUDINARY_CLOUD_NAME =
+  process.env.CLOUDINARY_CLOUD_NAME;
+const CLOUDINARY_API_KEY =
+  process.env.CLOUDINARY_API_KEY;
+const CLOUDINARY_API_SECRET =
+  process.env.CLOUDINARY_API_SECRET;
+const PASONG_PAYMENT_SECRET =
+  process.env.PASONG_PAYMENT_SECRET;
+
+// Pesapal API 3.0 credentials. Keep secrets in Render environment variables.
+const PESAPAL_CONSUMER_KEY = process.env.PESAPAL_CONSUMER_KEY || "";
+const PESAPAL_CONSUMER_SECRET = process.env.PESAPAL_CONSUMER_SECRET || "";
+const PESAPAL_ENVIRONMENT = String(process.env.PESAPAL_ENVIRONMENT || "sandbox").toLowerCase();
+const PESAPAL_IPN_ID = process.env.PESAPAL_IPN_ID || "";
+const PESAPAL_BEATS_IPN_ID = process.env.PESAPAL_BEATS_IPN_ID || PESAPAL_IPN_ID;
+const PESAPAL_ADVERTISING_IPN_ID = process.env.PESAPAL_ADVERTISING_IPN_ID || "";
+const PESAPAL_BASE_URL = PESAPAL_ENVIRONMENT === "live"
+  ? "https://pay.pesapal.com/v3"
+  : "https://cybqa.pesapal.com/pesapalv3";
+
+const PASONG_FRONTEND_URL =
+  process.env.PASONG_FRONTEND_URL ||
+  "https://pasong-frontend.vercel.app";
+
+const PASONG_API_PUBLIC_URL =
+  process.env.PASONG_API_PUBLIC_URL ||
+  "https://pasong-api.vercel.app";
+
+const CORS_ORIGIN =
+  process.env.CORS_ORIGIN || "";
+
+if (
+  !SUPABASE_URL ||
+  !SUPABASE_SERVICE_ROLE_KEY
+) {
+  console.error(
+    "Missing Supabase environment variables"
+  );
+  process.exit(1);
 }
-function scheduleAudioRefresh(songId,generation){
-  clearAudioRefresh();
-  audioRefreshTimer=setTimeout(async()=>{
-    if(generation!==audioSourceGeneration||!current||String(current.id)!==String(songId)||current._pasong_type!=="song")return;
-    const wasPlaying=!audio.paused;
-    const position=audio.currentTime||0;
-    const sessionId=streamSessionId;
-    try{
-      const freshUrl=await getProtectedSongUrl(songId);
-      if(generation!==audioSourceGeneration||!current||String(current.id)!==String(songId))return;
-      audio.pause();
-      audio.src=freshUrl;
-      audio.load();
-      await new Promise((resolve,reject)=>{
-        const onReady=()=>{cleanup();resolve();};
-        const onError=()=>{cleanup();reject(new Error("Could not refresh protected audio."));};
-        const cleanup=()=>{audio.removeEventListener("loadedmetadata",onReady);audio.removeEventListener("error",onError);};
-        audio.addEventListener("loadedmetadata",onReady,{once:true});
-        audio.addEventListener("error",onError,{once:true});
-      });
-      if(generation!==audioSourceGeneration||!current||String(current.id)!==String(songId))return;
-      if(Number.isFinite(audio.duration)&&position>0)audio.currentTime=Math.min(position,Math.max(0,audio.duration-0.25));
-      if(wasPlaying){
-        await audio.play();
-        if(sessionId)await sendPasongHeartbeat(true,sessionId);
+
+if (
+  !CLOUDINARY_CLOUD_NAME ||
+  !CLOUDINARY_API_KEY ||
+  !CLOUDINARY_API_SECRET
+) {
+  console.error(
+    "Missing Cloudinary environment variables"
+  );
+  process.exit(1);
+}
+
+if (!PASONG_PAYMENT_SECRET) {
+  console.error(
+    "Missing PASONG_PAYMENT_SECRET"
+  );
+  process.exit(1);
+}
+
+if (!CORS_ORIGIN.trim()) {
+  console.error(
+    "Missing CORS_ORIGIN"
+  );
+  process.exit(1);
+}
+
+const allowedOrigins = CORS_ORIGIN
+  .split(",")
+  .map((v) => v.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) {
+        return callback(null, true);
       }
-      scheduleAudioRefresh(songId,generation);
-    }catch(error){
-      console.warn("PASONG protected audio refresh failed:",error);
-      const meta=document.getElementById("meta");
-      if(meta&&!meta.textContent.includes("Audio link refresh failed"))meta.textContent+=" • Audio link refresh failed";
-    }
-  },10*60*1000);
-}
 
-/* PREMIUM STREAMING SESSION */
-async function getStreamAuthHeaders(){
-  const result=await db.auth.getSession();
-  const token=result.data?.session?.access_token;
-  return {"Content-Type":"application/json",...(token?{Authorization:"Bearer "+token}:{})};
-}
-async function sendPasongHeartbeat(isPlaying,sessionId){
-  const id=sessionId||streamSessionId;if(!id)return;
-  try{
-    const headers=await getStreamAuthHeaders();
-    const response=await fetch(PASONG_API+"/api/streaming/session/heartbeat",{method:"POST",headers,body:JSON.stringify({session_id:id,media_position_seconds:Number(audio.currentTime||0),is_playing:Boolean(isPlaying&&!audio.paused)})});
-    if(!response.ok){const message=await response.text().catch(()=>"");console.warn("PASONG heartbeat rejected:",response.status,message);}
-  }catch(error){console.warn("PASONG heartbeat failed:",error);}
-}
-async function startPasongStreamSession(song){
-  if(!song||song._pasong_type!=="song")return;
-  if(!current||String(current.id)!==String(song.id))return;
-  if(streamSessionId&&String(streamSessionSongId)===String(song.id))return;
-  if(streamSessionStarting)return;
-  streamSessionStarting=true;const generation=++streamSessionGeneration;
-  try{
-    const headers=await getStreamAuthHeaders();
-    const response=await fetch(PASONG_API+"/api/streaming/session/start",{method:"POST",headers,body:JSON.stringify({song_id:song.id,source_type:"song"})});
-    const result=await response.json().catch(()=>({}));
-    if(!response.ok||!result.success||!result.session?.id)throw new Error(result.message||"Could not start Premium streaming session");
-    const newSessionId=result.session.id;
-    if(generation!==streamSessionGeneration||!current||String(current.id)!==String(song.id)||audio.paused){await sendPasongHeartbeat(false,newSessionId);return;}
-    streamSessionId=newSessionId;streamSessionSongId=song.id;clearInterval(streamHeartbeatTimer);
-    streamHeartbeatTimer=setInterval(()=>{if(streamSessionId)sendPasongHeartbeat(!audio.paused);},15000);
-    await sendPasongHeartbeat(true,streamSessionId);
-    console.log("PASONG streaming session started:",streamSessionId,"Premium eligible:",!!result.premium_eligible_at_start);
-  }catch(error){console.warn("PASONG streaming session:",error.message);}
-  finally{if(generation===streamSessionGeneration)streamSessionStarting=false;}
-}
-async function stopPasongStreamSession(){
-  const oldSessionId=streamSessionId;streamSessionGeneration++;clearInterval(streamHeartbeatTimer);streamHeartbeatTimer=null;streamSessionId=null;streamSessionSongId=null;streamSessionStarting=false;
-  if(oldSessionId)await sendPasongHeartbeat(false,oldSessionId);
-}
-audio.addEventListener("play",()=>{if(current&&current._pasong_type==="song")startPasongStreamSession(current);});
-audio.addEventListener("pause",()=>{if(streamSessionId)sendPasongHeartbeat(false);});
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
 
-async function init(){
-  const id=qs("id"),type=qs("type");
-  const [b,s]=await Promise.all([db.from("beats").select("*").order("created_at",{ascending:false}).limit(80),db.from("songs").select("*").order("created_at",{ascending:false}).limit(80)]);
-  if(b.error)console.error("Could not load beats:",b.error);if(s.error)console.error("Could not load songs:",s.error);
-  list=[...(b.data||[]).map(x=>({...x,_pasong_type:"beat"})),...(s.data||[]).map(x=>({...x,_pasong_type:"song"}))];
-  if(id){
-    let f=list.findIndex(x=>String(x.id)===String(id)&&(type==="beat"?x._pasong_type==="beat":type==="song"?x._pasong_type==="song":true));
-    if(f<0&&type!=="song"){const one=await db.from("beats").select("*").eq("id",id).maybeSingle();if(one.data){list.unshift({...one.data,_pasong_type:"beat"});f=0;}}
-    if(f<0&&type!=="beat"){const one=await db.from("songs").select("*").eq("id",id).maybeSingle();if(one.data){list.unshift({...one.data,_pasong_type:"song"});f=0;}}
-    if(f>=0)idx=f;
-  }
-  if(list.length)await load(idx);else document.getElementById("title").textContent="No music found";
-}
-async function getRealPlays(id){
-  try{const {data,error}=await db.rpc("get_song_play_count",{p_song_id:id});if(error)throw error;return Number(data||0);}
-  catch(error){console.error("Could not fetch live song plays:",error);return null;}
-}
-async function refreshPlayCount(id){
-  const count=await getRealPlays(id);if(count===null)return;
-  const item=list.find(x=>String(x.id)===String(id)&&x._pasong_type==="song");if(item)item.plays=count;
-  if(current&&String(current.id)===String(id)&&current._pasong_type==="song")document.getElementById("meta").textContent=count.toLocaleString()+" plays"+(current.genre?" • "+current.genre:"");
-  return count;
-}
+      return callback(
+        new Error("CORS not allowed")
+      );
+    },
+  })
+);
 
-async function load(i){
-  await stopPasongStreamSession();
-  clearAudioRefresh();
-  const generation=++audioSourceGeneration;
-  idx=i;current=list[i];if(!current)return;
-  playCounted=false;playedSeconds=0;lastPlaybackTime=null;playRecordInFlight=false;audioSourceError="";
-  const isBeat=current._pasong_type==="beat";
-  document.getElementById("cover").src=current.cover_url||"";
-  document.getElementById("title").textContent=current.title||"Untitled";
-  audio.pause();audio.removeAttribute("src");audio.load();
-  document.getElementById("fill").style.width="0%";document.getElementById("cur").textContent="0:00";document.getElementById("dur").textContent="0:00";document.getElementById("playBtn").textContent="▶";
+app.use(
+  express.json({
+    limit: "2mb",
+  })
+);
 
-  /* Songs MUST use the protected backend URL. Never fall back to public audio_url. Beats retain their existing playback source. */
-  try{
-    if(isBeat){
-      const beatUrl=current.audio_url||current.preview_url||current.stream_url||"";
-      if(!beatUrl)throw new Error("Beat audio is not available.");
-      audio.src=beatUrl;
-    }else{
-      const protectedUrl=await getProtectedSongUrl(current.id);
-      if(generation!==audioSourceGeneration)return;
-      audio.src=protectedUrl;
-      scheduleAudioRefresh(current.id,generation);
-    }
-    audio.load();
-  }catch(error){
-    if(generation!==audioSourceGeneration)return;
-    audioSourceError=error.message||"Protected playback unavailable.";
-    console.error("PASONG audio source error:",audioSourceError);
-  }
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: "2mb",
+  })
+);
 
-  let name="PASONG",img=current.cover_url||"",bio="",verified=false,genre=current.genre||"",realPlays=0;
-  if(!isBeat){const count=await getRealPlays(current.id);realPlays=count===null?Number(current.plays||0):count;}
-  else realPlays=Number(current.plays||0);
+const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY
+);
 
-  if(isBeat&&current.producer_id){
-    const [p,ap]=await Promise.all([db.from("profiles").select("*").eq("id",current.producer_id).maybeSingle(),db.from("artist_profiles").select("*").eq("user_id",current.producer_id).maybeSingle()]);
-    if(p.data){name=p.data.full_name||p.data.username||name;bio=p.data.bio||"";img=p.data.avatar_url||img;}
-    if(ap.data){name=ap.data.artist_name||ap.data.stage_name||name;bio=ap.data.bio||bio;verified=!!ap.data.verified;img=ap.data.profile_image_url||ap.data.profile_photo_url||img;}
-  }else if(current.artist_id){
-    const ap=await db.from("artist_profiles").select("*").eq("id",current.artist_id).maybeSingle();
-    if(ap.data){name=ap.data.artist_name||ap.data.stage_name||name;bio=ap.data.bio||"";verified=!!ap.data.verified;img=ap.data.profile_image_url||ap.data.profile_photo_url||img;}
-  }
-  document.getElementById("meta").textContent=realPlays.toLocaleString()+" plays"+(genre?" • "+genre:"")+(audioSourceError?" • "+audioSourceError:"");
-  document.getElementById("artistName").textContent=name;
-  document.getElementById("artistBoxName").textContent=name+(verified?" ✓":"");
-  document.getElementById("artistImg").src=img||"";
-  document.getElementById("artistBoxMeta").textContent=(bio||genre).slice(0,120);
-  document.getElementById("lyrics").textContent=current.lyrics||"Lyrics not available yet.";
-  document.getElementById("popTitle").textContent="Popular by "+name;
-  document.getElementById("fansTitle").textContent="Fans of "+name+" also like";
-
-  let same=isBeat?list.filter(x=>x.producer_id===current.producer_id):list.filter(x=>x.artist_id===current.artist_id);
-  if(same.length<2)same=list;
-  let pop="";
-  for(let j=0;j<Math.min(6,same.length);j++){
-    const x=same[j];let rp=Number(x.plays||0);
-    if(x._pasong_type==="song"){const fresh=await getRealPlays(x.id);if(fresh!==null)rp=fresh;}
-    pop+=`<div class="row" onclick="openPlayer('${x._pasong_type||"song"}','${x.id}')"><div class="num">${j+1}</div><img src="${x.cover_url||""}" alt=""><div style="flex:1;overflow:hidden"><div class="rt">${escapeHTML(x.title||"Untitled")}</div><div class="ra">${rp.toLocaleString()} plays</div></div></div>`;
-  }
-  document.getElementById("popularList").innerHTML=pop;
-  const alb=await db.from("albums").select("*").order("created_at",{ascending:false}).limit(20);
-  let releaseHtml="";
-  if((alb.data||[]).length){alb.data.slice(0,10).forEach(a=>{releaseHtml+=`<div class="card" onclick="location.href='album.html?id=${encodeURIComponent(a.id)}'"><img src="${a.cover_url||current.cover_url||""}" alt=""><div class="card-info"><div class="t">${escapeHTML(a.title||a.name||"Album")}</div><div class="a">${escapeHTML(String(a.release_year||"Release"))}</div></div></div>`;});}
-  else{same.slice(0,8).forEach(x=>{releaseHtml+=`<div class="card" onclick="openPlayer('${x._pasong_type||"song"}','${x.id}')"><img src="${x.cover_url||""}" alt=""><div class="card-info"><div class="t">${escapeHTML(x.title||"Untitled")}</div><div class="a">Single</div></div></div>`;});}
-  document.getElementById("releaseGrid").innerHTML=releaseHtml;
-  let albumHtml="";
-  if((alb.data||[]).length){alb.data.forEach(a=>{albumHtml+=`<div class="card" onclick="location.href='album.html?id=${encodeURIComponent(a.id)}'"><img src="${a.cover_url||current.cover_url||""}" alt=""><div class="card-info"><div class="t">${escapeHTML(a.title||a.name||"Album")}</div><div class="a">${escapeHTML(String(a.release_year||"Album"))}</div></div></div>`;});}
-  else albumHtml='<div style="padding:20px;color:#666;font-size:14px">No albums yet from this artist</div>';
-  document.getElementById("albumGrid").innerHTML=albumHtml;
-  let rec=list.filter(x=>x.id!==current.id).sort(()=>0.5-Math.random()).slice(0,12),recHtml="";
-  rec.forEach(x=>{recHtml+=`<div class="card" onclick="openPlayer('${x._pasong_type||"song"}','${x.id}')"><img src="${x.cover_url||""}" alt=""><div class="card-info"><div class="t">${escapeHTML(x.title||"Untitled")}</div><div class="a">${escapeHTML(x.genre||"Recommended")}</div></div></div>`;});
-  document.getElementById("recommendedGrid").innerHTML=recHtml;
-  let fansList=list.filter(x=>x.genre===current.genre&&x.id!==current.id).slice(0,8);if(fansList.length<2)fansList=list.slice(0,8);
-  let fans="";fansList.forEach(x=>{fans+=`<div class="card" style="padding:14px;text-align:center" onclick="openPlayer('${x._pasong_type||"song"}','${x.id}')"><img src="${x.cover_url||""}" alt="" style="width:76px;height:76px;border-radius:50%;margin:0 auto;display:block;border:3px solid #7C4DFF"><div class="t" style="margin-top:10px">${escapeHTML((x.title||"Untitled").slice(0,18))}</div></div>`;});
-  document.getElementById("fansGrid").innerHTML=fans;
-  const nextIdx=(idx+1)%list.length;document.getElementById("nextUp").style.display=list.length>1?"block":"none";document.getElementById("nextTitle").textContent=list[nextIdx]?.title||"";
-  document.getElementById("buyCover").src=current.cover_url||"";document.getElementById("buyTitle").textContent=current.title||"";document.getElementById("buyArtist").textContent=name;
-  await checkFav();await loadComments();
-}
-function escapeHTML(value){return String(value).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
-function openPlayer(type,id){location.href="player.html?type="+encodeURIComponent(type)+"&id="+encodeURIComponent(id);}
-async function checkFav(){
-  if(!current)return;const b=document.getElementById("heart");
-  if(current._pasong_type!=="song"){b.classList.remove("active");b.textContent="♡ Favorite";return;}
-  try{const auth=await db.auth.getUser(),u=auth.data?.user;if(!u){b.classList.remove("active");b.textContent="♡ Favorite";return;}
-    const {data,error}=await db.from("favorites").select("id").eq("song_id",current.id).eq("user_id",u.id).limit(1);if(error)throw error;
-    if(data&&data.length){b.classList.add("active");b.textContent="♥ Favorited";}else{b.classList.remove("active");b.textContent="♡ Favorite";}
-  }catch(e){console.error("Favorite check failed:",e);}
-}
-async function toggleFav(){
-  if(!current)return;if(current._pasong_type!=="song"){alert("Favorites are currently available for songs.");return;}
-  const result=await db.auth.getUser(),u=result.data?.user;if(!u){alert("Login to favorite");return;}
-  const {data,error}=await db.from("favorites").select("id").eq("song_id",current.id).eq("user_id",u.id).limit(1);
-  if(error){alert(error.message);return;}
-  if(data&&data.length){const del=await db.from("favorites").delete().eq("id",data[0].id).eq("user_id",u.id);if(del.error){alert(del.error.message);return;}}
-  else{const ins=await db.from("favorites").insert({song_id:current.id,user_id:u.id});if(ins.error){alert(ins.error.message);return;}}
-  await checkFav();
-}
-function toggle(){
-  if(audio.paused){
-    if(!audio.src){alert(audioSourceError||"Protected audio is not available for this song yet.");return;}
-    audio.play().then(()=>document.getElementById("playBtn").textContent="⏸").catch(error=>{console.error("Audio playback failed:",error);alert("This audio could not be played. Please try again.");});
-  }else{audio.pause();document.getElementById("playBtn").textContent="▶";}
-}
-
-/* Public play counter: 60 seconds of valid playback. */
-function getPlayThreshold(){return 60;}
-async function recordQualifiedPlay(){
-  if(!current||current._pasong_type!=="song"||playCounted||playRecordInFlight)return;
-  playCounted=true;playRecordInFlight=true;
-  try{await addRealPlay(current.id);}catch(error){playCounted=false;console.error("Could not record PASONG play:",error);}
-  finally{playRecordInFlight=false;}
-}
-audio.ontimeupdate=()=>{
-  const duration=audio.duration||1;document.getElementById("fill").style.width=(audio.currentTime/duration*100)+"%";document.getElementById("cur").textContent=formatTime(audio.currentTime);
-  if(!audio.paused&&!audio.seeking&&current&&current._pasong_type==="song"){
-    if(lastPlaybackTime!==null){const delta=audio.currentTime-lastPlaybackTime;if(delta>0&&delta<=2.5)playedSeconds+=delta;}
-    lastPlaybackTime=audio.currentTime;if(playedSeconds>=getPlayThreshold())recordQualifiedPlay();
-  }
-};
-audio.addEventListener("play",()=>{document.getElementById("playBtn").textContent="⏸";lastPlaybackTime=audio.currentTime;});
-audio.addEventListener("pause",()=>{lastPlaybackTime=null;document.getElementById("playBtn").textContent="▶";});
-audio.addEventListener("seeking",()=>{lastPlaybackTime=null;});
-audio.addEventListener("seeked",()=>{lastPlaybackTime=audio.currentTime;});
-audio.onloadedmetadata=()=>{document.getElementById("dur").textContent=formatTime(audio.duration);};
-audio.onended=async()=>{
-  const finished=current;if(finished&&finished._pasong_type==="song"&&!playCounted&&playedSeconds>=getPlayThreshold())await recordQualifiedPlay();
-  if(isRepeat){playCounted=false;playedSeconds=0;lastPlaybackTime=null;audio.currentTime=0;try{await audio.play();}catch(error){console.error("Replay failed:",error);}}
-  else{await stopPasongStreamSession();await next();}
-};
-async function addRealPlay(songId){
-  if(!songId)return;const {data,error}=await db.rpc("record_song_play",{p_song_id:songId});if(error){console.error("PASONG play counter failed:",error);throw error;}
-  const count=Number(data),item=list.find(x=>String(x.id)===String(songId)&&x._pasong_type==="song");if(item)item.plays=count;
-  if(current&&String(current.id)===String(songId)&&current._pasong_type==="song")document.getElementById("meta").textContent=count.toLocaleString()+" plays"+(current.genre?" • "+current.genre:"");
-  console.log("PASONG public play recorded. Total:",count);return count;
-}
-async function next(){if(!list.length)return;idx=isShuffle?Math.floor(Math.random()*list.length):(idx+1)%list.length;await load(idx);try{await audio.play();document.getElementById("playBtn").textContent="⏸";}catch(e){document.getElementById("playBtn").textContent="▶";}}
-async function prev(){if(!list.length)return;idx=isShuffle?Math.floor(Math.random()*list.length):(idx-1+list.length)%list.length;await load(idx);try{await audio.play();document.getElementById("playBtn").textContent="⏸";}catch(e){document.getElementById("playBtn").textContent="▶";}}
-function toggleShuffle(){isShuffle=!isShuffle;document.getElementById("shuffleBtn").classList.toggle("active",isShuffle);}
-function toggleRepeat(){isRepeat=!isRepeat;document.getElementById("repeatBtn").classList.toggle("active",isRepeat);}
-function buy(){checkout();}
-function openBuy(){if(!current){alert("Choose a song or beat first.");return;}const isBeat=current._pasong_type==="beat";document.getElementById("buyModalTitle").textContent=isBeat?"Buy Producer Beat":"Buy Song";document.querySelectorAll(".license").forEach(el=>{el.style.display=isBeat?"none":"flex";});document.getElementById("buyModal").classList.add("open");}
-function closeBuy(){document.getElementById("buyModal").classList.remove("open");}
-function selectLicense(el){document.querySelectorAll(".license").forEach(l=>l.classList.remove("active"));el.classList.add("active");selectedPrice=Number(el.dataset.price);document.getElementById("buyPrice").textContent="$"+selectedPrice;}
-function checkout(){if(!current||!current.id){alert("No item is selected.");return;}const id=encodeURIComponent(current.id),isBeat=current._pasong_type==="beat";closeBuy();if(isBeat){location.href="beat-checkout.html?beat="+id;return;}location.href="pasong_checkout.html?id="+id;}
-async function shareLink(){try{if(navigator.clipboard&&navigator.clipboard.writeText){await navigator.clipboard.writeText(location.href);alert("Link copied!");}else prompt("Copy this link:",location.href);}catch(e){prompt("Copy this link:",location.href);}}
-function shareWA(){window.open("https://wa.me/?text="+encodeURIComponent(location.href),"_blank");}
-/* Download control intentionally absent. */
-document.getElementById("progressBar").addEventListener("click",e=>{const r=e.currentTarget.getBoundingClientRect(),p=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));if(audio.duration)audio.currentTime=p*audio.duration;});
-function addEmoji(em){const inp=document.getElementById("commentText");inp.value+=em;inp.focus();}
-async function loadComments(){
-  if(!current)return;
-  try{
-    const r=await db.from("comments").select("*").eq("song_id",current.id).order("created_at",{ascending:false}).limit(50);if(r.error)throw r.error;
-    const data=r.data||[];document.getElementById("commentCount").textContent="("+data.length+")";
-    if(!data.length){document.getElementById("commentsList").innerHTML="<div style='color:#666;font-size:13px;padding:10px 0'>No comments yet. Be first!</div>";return;}
-    let h="";data.forEach(c=>{const name=c.username||c.user_name||"User",txt=c.text||c.comment||c.content||"",likes=c.likes||c.likes_count||0,liked=localStorage.getItem("liked_"+c.id)?"liked":"",ago=c.created_at?timeAgo(c.created_at):"";
-      h+=`<div class="comment-row"><div style="width:32px;height:32px;background:#7C4DFF;border-radius:50%;display:grid;place-items:center;font-weight:900;flex-shrink:0">${escapeHTML(String(name)[0].toUpperCase())}</div><div style="flex:1"><b style="font-size:14px">${escapeHTML(name)}</b><span class="time-ago">${escapeHTML(ago)}</span><p style="font-size:13px;color:#D1D5DB;margin-top:4px">${escapeHTML(txt)}</p><div class="like-btn"><span class="${liked}" onclick="likeComment('${c.id}',${likes})">♥ ${likes} likes</span><span onclick="replyComment('${escapeHTML(name)}')">↩ Reply</span></div></div></div>`;
-    });
-    document.getElementById("commentsList").innerHTML=h;
-  }catch(e){console.error("Comments failed to load:",e);}
-}
-async function likeComment(id,cur){
-  if(localStorage.getItem("liked_"+id)){alert("Already liked");return;}
-  try{const {error}=await db.from("comments").update({likes:cur+1,likes_count:cur+1}).eq("id",id);if(error)throw error;localStorage.setItem("liked_"+id,"1");await loadComments();}
-  catch(err){alert(err.message);}
-}
-function replyComment(name){const inp=document.getElementById("commentText");inp.value="@"+name+" ";inp.focus();}
-document.getElementById("commentText").addEventListener("keydown",async e=>{
-  if(e.key!=="Enter")return;const t=e.target.value.trim();if(!t||!current)return;
-  const input=e.target;input.disabled=true;input.placeholder="Posting...";
-  try{
-    const ud=await db.auth.getUser(),user=ud.data?.user;
-    const uname=user?(user.user_metadata?.full_name||user.email?.split("@")[0]||"User"):"Guest"+Math.floor(Math.random()*900);
-    const obj={song_id:current.id,text:t,comment:t,content:t,username:uname,user_name:uname,likes:0,likes_count:0};if(user)obj.user_id=user.id;
-    const res=await db.from("comments").insert(obj);if(res.error)throw res.error;e.target.value="";await loadComments();
-  }catch(err){alert(err.message);}
-  input.disabled=false;input.placeholder="Add a comment and press Enter...";
+cloudinary.config({
+  cloud_name: CLOUDINARY_CLOUD_NAME,
+  api_key: CLOUDINARY_API_KEY,
+  api_secret: CLOUDINARY_API_SECRET,
 });
-init();
-</script>
-</body>
-</html>
+
+const coverUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+  fileFilter: (req, file, cb) => {
+    const allowed = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/webp",
+    ];
+
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(
+        new Error(
+          "Only JPG, JPEG, PNG and WEBP images are allowed"
+        )
+      );
+    }
+  },
+});
+
+app.get("/", (req, res) => {
+  res.json({
+    PASONG: "LIVE",
+    upload: "READY",
+    producer_marketplace: "READY",
+    beats: "READY",
+  });
+});
+
+
+
+// ============================================================
+// PASONG PREMIUM
+// Global Premium plan with localized currency display.
+// Payment activation is intentionally NOT granted by the client;
+// a verified payment webhook/admin completion must activate it.
+// ============================================================
+
+const PREMIUM_PLANS = {
+  monthly: {
+    id: "premium_monthly",
+    interval: "month",
+    days: 30,
+    prices: {
+      UG: { amount: 10000, currency: "UGX", label: "UGX 10,000" },
+      KE: { amount: 399, currency: "KES", label: "KES 399" },
+      TZ: { amount: 7500, currency: "TZS", label: "TZS 7,500" },
+      RW: { amount: 3500, currency: "RWF", label: "RWF 3,500" },
+      NG: { amount: 5000, currency: "NGN", label: "NGN 5,000" },
+      GH: { amount: 45, currency: "GHS", label: "GHS 45" },
+      ZA: { amount: 59, currency: "ZAR", label: "ZAR 59" },
+      GB: { amount: 2.49, currency: "GBP", label: "£2.49" },
+      EU: { amount: 2.99, currency: "EUR", label: "€2.99" },
+      US: { amount: 2.99, currency: "USD", label: "$2.99" },
+      CA: { amount: 4.09, currency: "CAD", label: "CA$4.09" },
+      AU: { amount: 4.49, currency: "AUD", label: "A$4.49" },
+      DEFAULT: { amount: 2.99, currency: "USD", label: "$2.99" },
+    },
+  },
+  yearly: {
+    id: "premium_yearly",
+    interval: "year",
+    days: 365,
+    prices: {
+      UG: { amount: 100000, currency: "UGX", label: "UGX 100,000" },
+      KE: { amount: 3990, currency: "KES", label: "KES 3,990" },
+      TZ: { amount: 75000, currency: "TZS", label: "TZS 75,000" },
+      RW: { amount: 35000, currency: "RWF", label: "RWF 35,000" },
+      NG: { amount: 50000, currency: "NGN", label: "NGN 50,000" },
+      GH: { amount: 450, currency: "GHS", label: "GHS 450" },
+      ZA: { amount: 590, currency: "ZAR", label: "ZAR 590" },
+      GB: { amount: 24.90, currency: "GBP", label: "£24.90" },
+      EU: { amount: 29.90, currency: "EUR", label: "€29.90" },
+      US: { amount: 29.90, currency: "USD", label: "$29.90" },
+      CA: { amount: 40.90, currency: "CAD", label: "CA$40.90" },
+      AU: { amount: 44.90, currency: "AUD", label: "A$44.90" },
+      DEFAULT: { amount: 29.90, currency: "USD", label: "$29.90" },
+    },
+  },
+};
+
+const PREMIUM_FEATURES = [
+  "Premium badge",
+  "Ad-free listening",
+  "Higher-quality audio",
+  "Offline listening for eligible content",
+  "Premium-exclusive releases",
+  "Early access to selected releases",
+  "Premium-only playlists",
+];
+
+function getPremiumCountry(req) {
+  return getCountry(req) || "US";
+}
+
+function getPremiumPrice(req, planKey = "monthly") {
+  const plan = PREMIUM_PLANS[planKey] || PREMIUM_PLANS.monthly;
+  const country = getPremiumCountry(req);
+  return {
+    plan: plan.id,
+    interval: plan.interval,
+    days: plan.days,
+    country,
+    ...(plan.prices[country] || plan.prices.DEFAULT),
+  };
+}
+
+app.get("/api/premium/pricing", (req, res) => {
+  const monthly = getPremiumPrice(req, "monthly");
+  const yearly = getPremiumPrice(req, "yearly");
+  res.json({
+    success: true,
+    country: monthly.country,
+    currency: monthly.currency,
+    monthly,
+    yearly,
+    features: PREMIUM_FEATURES,
+    pricing_note: "PASONG uses fixed regional price points. IP/country detection is for display; the payment provider must confirm the billing country before charging.",
+  });
+});
+
+app.get("/api/premium/status", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.json({
+        success: true,
+        authenticated: false,
+        premium: false,
+        status: "free",
+      });
+    }
+
+    const result = await supabase
+      .from("premium_subscriptions")
+      .select("id,user_id,plan,status,started_at,expires_at,currency,amount,payment_reference")
+      .eq("user_id", user.id)
+      .order("expires_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (result.error) {
+      console.error("Premium status lookup failed:", result.error);
+      return res.status(500).json({ success: false, error: "Unable to load Premium status." });
+    }
+
+    const subscription = result.data || null;
+    const active = !!subscription &&
+      subscription.status === "active" &&
+      (!subscription.expires_at || new Date(subscription.expires_at).getTime() > Date.now());
+
+    res.json({
+      success: true,
+      authenticated: true,
+      premium: active,
+      status: active ? "active" : (subscription?.status || "free"),
+      subscription,
+    });
+  } catch (error) {
+    console.error("Premium status error:", error);
+    res.status(500).json({ success: false, error: "Unable to load Premium status." });
+  }
+});
+
+
+// TEMPORARY PASONG PREMIUM TEST ACTIVATION
+// Only enabled when both environment variables are configured in the backend.
+// Restricted to PREMIUM_TEST_EMAIL and requires a separate secret header.
+// This creates a clearly identifiable zero-value test record, NOT a real payment.
+app.post("/api/premium/test-activate", async (req, res) => {
+  try {
+    const allowedEmail = String(process.env.PREMIUM_TEST_EMAIL || "").trim().toLowerCase();
+    const configuredSecret = String(process.env.PREMIUM_TEST_SECRET || "");
+    const suppliedSecret = String(req.headers["x-premium-test-secret"] || "");
+
+    // Fail closed: the route is unavailable until explicitly enabled by the owner.
+    if (!allowedEmail || !configuredSecret) {
+      return res.status(404).json({ success: false, error: "Premium test activation is disabled." });
+    }
+    if (!safeSecretCompare(suppliedSecret, configuredSecret)) {
+      return res.status(401).json({ success: false, error: "Unauthorized test activation." });
+    }
+
+    const user = await getAuthenticatedUser(req);
+    if (!user || String(user.email || "").trim().toLowerCase() !== allowedEmail) {
+      return res.status(403).json({ success: false, error: "This test is restricted to the configured test account." });
+    }
+
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const testReference = "TEST-PREMIUM-" + crypto.randomBytes(6).toString("hex").toUpperCase();
+
+    // Reuse an existing test row for this user to avoid accumulating duplicates.
+    const existingResult = await supabase
+      .from("premium_subscriptions")
+      .select("id")
+      .eq("user_id", user.id)
+      .like("payment_reference", "TEST-PREMIUM-%")
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingResult.error) {
+      console.error("Premium test subscription lookup failed:", existingResult.error);
+      return res.status(500).json({ success: false, error: "Unable to check the existing test subscription." });
+    }
+
+    const testData = {
+      plan: "premium_monthly",
+      status: "active",
+      started_at: now.toISOString(),
+      expires_at: expiresAt,
+      currency: "TEST",
+      amount: 0,
+    };
+
+    let saved;
+    if (existingResult.data) {
+      saved = await supabase
+        .from("premium_subscriptions")
+        .update(testData)
+        .eq("id", existingResult.data.id)
+        .select("id,user_id,plan,status,started_at,expires_at,currency,amount,payment_reference")
+        .single();
+    } else {
+      saved = await supabase
+        .from("premium_subscriptions")
+        .insert({ user_id: user.id, ...testData, payment_reference: testReference })
+        .select("id,user_id,plan,status,started_at,expires_at,currency,amount,payment_reference")
+        .single();
+    }
+
+    if (saved.error) {
+      console.error("Premium test activation save failed:", saved.error);
+      return res.status(500).json({ success: false, error: "Unable to save the Premium test subscription." });
+    }
+
+    return res.status(201).json({
+      success: true,
+      test_mode: true,
+      payment_taken: false,
+      subscription: saved.data,
+      message: "Seven-day Premium test subscription activated. No payment was taken.",
+    });
+  } catch (error) {
+    console.error("Premium test activation error:", error);
+    return res.status(500).json({ success: false, error: "Premium test activation failed." });
+  }
+});
+
+app.post("/api/premium/complete", async (req, res) => {
+  try {
+    // This endpoint is for the payment provider/webhook only.
+    // Never call it directly from premium.html with a public secret.
+    const secret = String(req.headers["x-pasong-payment-secret"] || "");
+
+    if (!PASONG_PAYMENT_SECRET || !safeSecretCompare(secret, PASONG_PAYMENT_SECRET)) {
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized payment completion.",
+      });
+    }
+
+    const { payment_reference, payment_status, provider_reference } = req.body || {};
+
+    if (!payment_reference || payment_status !== "paid") {
+      return res.status(400).json({
+        success: false,
+        error: "A paid Premium payment is required.",
+      });
+    }
+
+    const paymentResult = await supabase
+      .from("premium_payments")
+      .select("*")
+      .eq("payment_reference", String(payment_reference).trim())
+      .maybeSingle();
+
+    if (paymentResult.error) {
+      console.error("Premium payment lookup failed:", paymentResult.error);
+      return res.status(500).json({
+        success: false,
+        error: "Unable to verify Premium payment.",
+      });
+    }
+
+    if (!paymentResult.data) {
+      return res.status(404).json({
+        success: false,
+        error: "Premium payment not found.",
+      });
+    }
+
+    const payment = paymentResult.data;
+
+    // Idempotency: a webhook/provider may retry the same notification.
+    if (payment.status === "paid") {
+      const existing = await supabase
+        .from("premium_subscriptions")
+        .select("*")
+        .eq("payment_reference", payment.payment_reference)
+        .maybeSingle();
+
+      return res.json({
+        success: true,
+        already_completed: true,
+        premium: true,
+        subscription: existing.data || null,
+        payment,
+      });
+    }
+
+    if (payment.status !== "pending") {
+      return res.status(409).json({
+        success: false,
+        error: `Premium payment is already ${payment.status}.`,
+      });
+    }
+
+    const days = payment.plan === "premium_yearly" ? 365 : 30;
+    const now = new Date();
+
+    // If the user already has an active Premium subscription, extend it
+    // from the current expiry rather than creating overlapping subscriptions.
+    const activeResult = await supabase
+      .from("premium_subscriptions")
+      .select("*")
+      .eq("user_id", payment.user_id)
+      .eq("status", "active")
+      .gt("expires_at", now.toISOString())
+      .order("expires_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (activeResult.error) {
+      console.error("Active Premium lookup failed:", activeResult.error);
+      return res.status(500).json({
+        success: false,
+        error: "Unable to check existing Premium subscription.",
+      });
+    }
+
+    const currentExpiry = activeResult.data
+      ? new Date(activeResult.data.expires_at)
+      : now;
+
+    const start = activeResult.data
+      ? activeResult.data.started_at
+      : now.toISOString();
+
+    const expires = new Date(
+      Math.max(currentExpiry.getTime(), now.getTime()) + days * 86400000
+    ).toISOString();
+
+    let subscriptionData;
+
+    if (activeResult.data) {
+      const updatedSubscription = await supabase
+        .from("premium_subscriptions")
+        .update({
+          expires_at: expires,
+          plan: payment.plan,
+          currency: payment.currency,
+          amount: payment.amount,
+        })
+        .eq("id", activeResult.data.id)
+        .select()
+        .single();
+
+      if (updatedSubscription.error) {
+        console.error(
+          "Premium subscription extension failed:",
+          updatedSubscription.error
+        );
+        return res.status(500).json({
+          success: false,
+          error: "Premium activation failed.",
+        });
+      }
+
+      subscriptionData = updatedSubscription.data;
+    } else {
+      const insertedSubscription = await supabase
+        .from("premium_subscriptions")
+        .insert({
+          user_id: payment.user_id,
+          plan: payment.plan,
+          status: "active",
+          started_at: start,
+          expires_at: expires,
+          currency: payment.currency,
+          amount: payment.amount,
+          payment_reference: payment.payment_reference,
+        })
+        .select()
+        .single();
+
+      if (insertedSubscription.error) {
+        console.error(
+          "Premium subscription activation failed:",
+          insertedSubscription.error
+        );
+        return res.status(500).json({
+          success: false,
+          error: "Premium activation failed.",
+        });
+      }
+
+      subscriptionData = insertedSubscription.data;
+    }
+
+    const updatedPayment = await supabase
+      .from("premium_payments")
+      .update({
+        status: "paid",
+        provider_reference: provider_reference || null,
+        paid_at: now.toISOString(),
+      })
+      .eq("id", payment.id)
+      .eq("status", "pending")
+      .select()
+      .maybeSingle();
+
+    if (updatedPayment.error) {
+      console.error("Premium payment update failed:", updatedPayment.error);
+      return res.status(500).json({
+        success: false,
+        error: "Premium payment status update failed.",
+      });
+    }
+
+    res.json({
+      success: true,
+      premium: true,
+      subscription: subscriptionData,
+      payment: updatedPayment.data || payment,
+    });
+  } catch (error) {
+    console.error("Premium completion error:", error);
+    res.status(500).json({
+      success: false,
+      error: "Premium payment completion failed.",
+    });
+  }
+});
+
+app.post("/api/premium/checkout", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({ success: false, error: "You must be logged in to subscribe to PASONG Premium." });
+    }
+
+    const planKey = req.body?.plan === "yearly" ? "yearly" : "monthly";
+    const pricing = getPremiumPrice(req, planKey);
+
+    // A checkout record is created, but Premium is NOT activated here.
+    // Your payment provider/webhook must verify the payment first.
+    const reference = "PREM-" + crypto.randomBytes(10).toString("hex").toUpperCase();
+
+    const result = await supabase
+      .from("premium_payments")
+      .insert({
+        user_id: user.id,
+        plan: pricing.plan,
+        amount: pricing.amount,
+        currency: pricing.currency,
+        country: pricing.country,
+        status: "pending",
+        payment_reference: reference,
+      })
+      .select()
+      .single();
+
+    if (result.error) {
+      console.error("Premium checkout creation failed:", result.error);
+      return res.status(500).json({ success: false, error: "Unable to start Premium checkout." });
+    }
+
+    res.status(201).json({
+      success: true,
+      payment: result.data,
+      pricing,
+      message: "Premium checkout created. Complete payment through the configured payment provider before Premium is activated.",
+    });
+  } catch (error) {
+    console.error("Premium checkout error:", error);
+    res.status(500).json({ success: false, error: "Unable to start Premium checkout." });
+  }
+});
+
+// ============================================================
+// PASONG PRIVATE SONG PLAYBACK — Cloudinary authenticated audio
+// Full-song URLs are never sent directly to the browser. The player first
+// requests a short-lived PASONG URL; this server proxies Cloudinary with
+// byte-range support so seeking works without exposing Cloudinary credentials.
+// Before using this, migrate existing song assets to Cloudinary type=authenticated
+// using the admin migration endpoint below, and update player.html to use this API.
+// ============================================================
+function parsePasongCloudinaryAudioUrl(rawUrl) {
+  try {
+    const url = new URL(String(rawUrl || ""));
+    if (url.protocol !== "https:" || url.hostname !== "res.cloudinary.com") return null;
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (parts.length < 5 || parts[0] !== CLOUDINARY_CLOUD_NAME || parts[1] !== "video") return null;
+    const deliveryType = parts[2];
+    if (!["upload", "authenticated", "private"].includes(deliveryType)) return null;
+    let assetParts = parts.slice(3);
+    if (assetParts[0] && /^v\d+$/.test(assetParts[0])) assetParts = assetParts.slice(1);
+    if (!assetParts.length) return null;
+    const filename = assetParts[assetParts.length - 1];
+    const dot = filename.lastIndexOf(".");
+    if (dot <= 0) return null;
+    const format = filename.slice(dot + 1).toLowerCase();
+    if (!/^(mp3|m4a|wav|flac|aac|ogg)$/.test(format)) return null;
+    assetParts[assetParts.length - 1] = filename.slice(0, dot);
+    const publicId = assetParts.join("/");
+    if (!publicId || publicId.includes("..")) return null;
+    return { publicId, format, deliveryType };
+  } catch {
+    return null;
+  }
+}
+
+function signPasongAudioToken(songId, expires) {
+  return crypto.createHmac("sha256", AUDIO_STREAM_SIGNING_SECRET)
+    .update(`${songId}.${expires}`)
+    .digest("hex");
+}
+
+function safeAudioSignatureEqual(a, b) {
+  const aa = Buffer.from(String(a || ""), "hex");
+  const bb = Buffer.from(String(b || ""), "hex");
+  return aa.length === bb.length && aa.length > 0 && crypto.timingSafeEqual(aa, bb);
+}
+
+app.get("/api/songs/:id/playback-url", async (req, res) => {
+  try {
+    const songId = String(req.params.id || "").trim();
+    if (!validUuid(songId)) return res.status(400).json({ success: false, error: "Invalid song ID." });
+
+    const songResult = await supabase.from("songs")
+      .select("id,status,audio_url")
+      .eq("id", songId)
+      .maybeSingle();
+    if (songResult.error) {
+      console.error("Song playback lookup failed:", songResult.error);
+      return res.status(500).json({ success: false, error: "Unable to load this song." });
+    }
+    const song = songResult.data;
+    if (!song || song.status !== "approved") {
+      return res.status(404).json({ success: false, error: "This song is not available." });
+    }
+    const parsed = parsePasongCloudinaryAudioUrl(song.audio_url);
+    if (!parsed) return res.status(409).json({ success: false, error: "This song audio is not stored in the supported Cloudinary format." });
+    if (parsed.deliveryType !== "authenticated") {
+      return res.status(409).json({ success: false, error: "This song has not yet been secured. Complete the Cloudinary audio migration first." });
+    }
+
+    const expires = Math.floor(Date.now() / 1000) + 15 * 60;
+    const signature = signPasongAudioToken(songId, expires);
+    const base = `https://${req.get("host")}`;
+    return res.json({
+      success: true,
+      url: `${base}/api/songs/${songId}/audio?expires=${expires}&signature=${signature}`,
+      expires_at: new Date(expires * 1000).toISOString(),
+    });
+  } catch (error) {
+    console.error("Song playback URL error:", error);
+    return res.status(500).json({ success: false, error: "Unable to prepare song playback." });
+  }
+});
+
+app.get("/api/songs/:id/audio", async (req, res) => {
+  try {
+    const songId = String(req.params.id || "").trim();
+    const expires = Number(req.query.expires);
+    const signature = String(req.query.signature || "");
+    if (!validUuid(songId) || !Number.isInteger(expires) || expires < Math.floor(Date.now() / 1000) || expires > Math.floor(Date.now() / 1000) + 16 * 60) {
+      return res.status(403).json({ success: false, error: "Playback link expired. Request a new link." });
+    }
+    if (!safeAudioSignatureEqual(signature, signPasongAudioToken(songId, expires))) {
+      return res.status(403).json({ success: false, error: "Invalid playback link." });
+    }
+
+    const songResult = await supabase.from("songs")
+      .select("id,status,audio_url")
+      .eq("id", songId)
+      .maybeSingle();
+    if (songResult.error || !songResult.data || songResult.data.status !== "approved") {
+      return res.status(404).json({ success: false, error: "Song not found." });
+    }
+    const parsed = parsePasongCloudinaryAudioUrl(songResult.data.audio_url);
+    if (!parsed || parsed.deliveryType !== "authenticated") {
+      return res.status(409).json({ success: false, error: "Song audio is not secured yet." });
+    }
+
+    const cloudinaryUrl = cloudinary.url(parsed.publicId, {
+      resource_type: "video",
+      type: "authenticated",
+      format: parsed.format,
+      secure: true,
+      sign_url: true,
+    });
+    const headers = {};
+    if (req.headers.range) headers.Range = req.headers.range;
+    const upstream = await fetch(cloudinaryUrl, { method: req.method === "HEAD" ? "HEAD" : "GET", headers });
+    if (!upstream.ok && upstream.status !== 206) {
+      console.error("Cloudinary protected audio response:", upstream.status);
+      return res.status(upstream.status === 404 ? 404 : 502).json({ success: false, error: "Audio delivery is temporarily unavailable." });
+    }
+
+    res.status(upstream.status);
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || "audio/mpeg");
+    res.setHeader("Accept-Ranges", upstream.headers.get("accept-ranges") || "bytes");
+    res.setHeader("Cache-Control", "private, no-store, max-age=0");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    for (const name of ["content-length", "content-range", "last-modified", "etag"]) {
+      const value = upstream.headers.get(name);
+      if (value) res.setHeader(name, value);
+    }
+    if (req.method === "HEAD" || !upstream.body) return res.end();
+    Readable.fromWeb(upstream.body).on("error", (error) => {
+      console.error("Protected audio stream error:", error);
+      if (!res.headersSent) res.status(502);
+      res.end();
+    }).pipe(res);
+  } catch (error) {
+    console.error("Protected song audio error:", error);
+    if (!res.headersSent) return res.status(502).json({ success: false, error: "Audio delivery failed." });
+    return res.end();
+  }
+});
+
+// One-time migration: converts each existing songs.audio_url Cloudinary asset
+// from public upload delivery to authenticated delivery. Run only after all
+// PASONG pages that play full audio have been switched to the protected API.
+app.post("/api/admin/cloudinary/secure-song-audio", async (req, res) => {
+  try {
+    const adminUser = await requirePasongAdmin(req, res);
+    if (!adminUser) return;
+    if (String(req.body?.confirm || "") !== "SECURE_ALL_SONG_AUDIO") {
+      return res.status(400).json({ success: false, error: "Send confirm: SECURE_ALL_SONG_AUDIO to run this migration." });
+    }
+    const songsResult = await supabase.from("songs")
+      .select("id,title,audio_url")
+      .not("audio_url", "is", null)
+      .limit(1000);
+    if (songsResult.error) {
+      console.error("Song audio migration lookup failed:", songsResult.error);
+      return res.status(500).json({ success: false, error: "Could not load song audio records." });
+    }
+
+    const results = [];
+    for (const song of songsResult.data || []) {
+      const parsed = parsePasongCloudinaryAudioUrl(song.audio_url);
+      if (!parsed) {
+        results.push({ id: song.id, title: song.title, status: "skipped_non_cloudinary_or_unsupported" });
+        continue;
+      }
+      if (parsed.deliveryType === "authenticated") {
+        results.push({ id: song.id, title: song.title, status: "already_authenticated" });
+        continue;
+      }
+      try {
+        const renamed = await cloudinary.uploader.rename(
+          parsed.publicId,
+          parsed.publicId,
+          { resource_type: "video", type: parsed.deliveryType, to_type: "authenticated", invalidate: true }
+        );
+        const protectedUrl = renamed.secure_url || cloudinary.url(parsed.publicId, {
+          resource_type: "video", type: "authenticated", format: parsed.format, secure: true,
+        });
+        const update = await supabase.from("songs").update({ audio_url: protectedUrl }).eq("id", song.id);
+        if (update.error) throw update.error;
+        results.push({ id: song.id, title: song.title, status: "secured" });
+      } catch (error) {
+        console.error("Cloudinary song migration failed:", song.id, error);
+        results.push({ id: song.id, title: song.title, status: "failed", error: String(error?.message || error).slice(0, 250) });
+      }
+    }
+    return res.json({ success: true, total: results.length, secured: results.filter(x => x.status === "secured").length, results });
+  } catch (error) {
+    console.error("Cloudinary song audio migration error:", error);
+    return res.status(500).json({ success: false, error: "Cloudinary audio migration failed." });
+  }
+});
+
+// ============================================================
+// PASONG STREAMING ROYALTY FOUNDATION — song sessions (V1)
+// The browser sends media position, never a trusted listened-seconds total.
+// The database RPC validates realistic progress and qualifies once at 60s.
+// DJ-mix segment sessions are enabled after the deployed dj_mix_tracks columns
+// are confirmed and the server can verify each track-to-song relationship.
+// ============================================================
+app.post("/api/streaming/session/start", async (req, res) => {
+  try {
+    const songId = String(req.body?.song_id || "").trim();
+    if (!validUuid(songId)) {
+      return res.status(400).json({ success: false, error: "A valid song ID is required." });
+    }
+
+    const sourceType = String(req.body?.source_type || "song").trim().toLowerCase();
+    if (sourceType !== "song") {
+      return res.status(400).json({
+        success: false,
+        error: "DJ mix royalty tracking will be enabled after PASONG verifies the deployed DJ mix track schema.",
+      });
+    }
+
+    const songResult = await supabase.from("songs")
+      .select("id,status")
+      .eq("id", songId)
+      .maybeSingle();
+    if (songResult.error) {
+      console.error("Streaming song lookup failed:", songResult.error);
+      return res.status(500).json({ success: false, error: "Unable to verify this song." });
+    }
+    if (!songResult.data || songResult.data.status !== "approved") {
+      return res.status(404).json({ success: false, error: "This song is not available for streaming." });
+    }
+
+    const user = await getAuthenticatedUser(req);
+    let premiumSubscription = null;
+    if (user) {
+      const nowIso = new Date().toISOString();
+      const premiumResult = await supabase.from("premium_subscriptions")
+        .select("id,user_id,status,started_at,expires_at")
+        .eq("user_id", user.id)
+        .eq("status", "active")
+        .lte("started_at", nowIso)
+        .gt("expires_at", nowIso)
+        .order("expires_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (premiumResult.error) {
+        console.error("Streaming Premium entitlement lookup failed:", premiumResult.error);
+        return res.status(500).json({ success: false, error: "Unable to verify Premium eligibility." });
+      }
+      premiumSubscription = premiumResult.data || null;
+    }
+
+    const sessionResult = await supabase.from("pasong_stream_sessions").insert({
+      listener_user_id: user?.id || null,
+      song_id: songId,
+      source_type: "song",
+      source_id: songId,
+      premium_subscription_id: premiumSubscription?.id || null,
+      started_at: new Date().toISOString(),
+      last_heartbeat_at: new Date().toISOString(),
+      last_media_position_seconds: 0,
+      listened_seconds: 0,
+      status: "active",
+    }).select("id,song_id,source_type,started_at,status").single();
+
+    if (sessionResult.error) {
+      console.error("Streaming session creation failed:", sessionResult.error);
+      return res.status(500).json({ success: false, error: "Unable to start the listening session." });
+    }
+
+    return res.status(201).json({
+      success: true,
+      session: sessionResult.data,
+      premium_eligible_at_start: Boolean(premiumSubscription),
+      royalty_qualification_seconds: 60,
+    });
+  } catch (error) {
+    console.error("Streaming session start error:", error);
+    return res.status(500).json({ success: false, error: "Unable to start streaming session." });
+  }
+});
+
+app.post("/api/streaming/session/heartbeat", async (req, res) => {
+  try {
+    const sessionId = String(req.body?.session_id || "").trim();
+    const mediaPosition = Number(req.body?.media_position_seconds);
+    const isPlaying = req.body?.is_playing === true;
+    if (!validUuid(sessionId) || !Number.isFinite(mediaPosition) || mediaPosition < 0 || mediaPosition > 86400) {
+      return res.status(400).json({ success: false, error: "Invalid listening progress." });
+    }
+
+    const user = await getAuthenticatedUser(req);
+    const sessionResult = await supabase.from("pasong_stream_sessions")
+      .select("id,listener_user_id,status")
+      .eq("id", sessionId)
+      .maybeSingle();
+    if (sessionResult.error) {
+      console.error("Streaming session lookup failed:", sessionResult.error);
+      return res.status(500).json({ success: false, error: "Unable to verify listening session." });
+    }
+    if (!sessionResult.data) return res.status(404).json({ success: false, error: "Listening session not found." });
+    if (sessionResult.data.listener_user_id && (!user || user.id !== sessionResult.data.listener_user_id)) {
+      return res.status(403).json({ success: false, error: "This listening session belongs to another account." });
+    }
+
+    const heartbeat = await supabase.rpc("pasong_stream_heartbeat", {
+      p_session_id: sessionId,
+      p_media_position_seconds: mediaPosition,
+      p_is_playing: isPlaying,
+    });
+    if (heartbeat.error) {
+      console.error("Streaming heartbeat rejected:", heartbeat.error);
+      return res.status(400).json({ success: false, error: "Listening progress could not be verified." });
+    }
+
+    return res.json(heartbeat.data || { success: true, qualified: false });
+  } catch (error) {
+    console.error("Streaming heartbeat error:", error);
+    return res.status(500).json({ success: false, error: "Unable to record listening progress." });
+  }
+});
+
+// Public read-only event listings. Supabase credentials remain on the server (Render).
+app.get("/api/events", async (req, res) => {
+  try {
+    const now = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const result = await supabase
+      .from("events")
+      .select("id,title,description,category,cover_url,venue_name,address,city,country,starts_at,currency,status,event_ticket_types(id,name,price,currency,is_active,quantity_total,quantity_sold)")
+      .eq("status", "approved")
+      .gte("starts_at", now)
+      .order("starts_at", { ascending: true });
+
+    if (result.error) {
+      console.error("Public events query failed:", result.error.message);
+      return res.status(500).json({ success: false, error: "Unable to load events right now." });
+    }
+
+    return res.json({ success: true, events: Array.isArray(result.data) ? result.data : [] });
+  } catch (error) {
+    console.error("Public events endpoint error:", error);
+    return res.status(500).json({ success: false, error: "Unable to load events right now." });
+  }
+});
+
+app.get("/health", (req, res) => {
+  res.json({
+    status: "ok",
+  });
+});
+
+async function getAuthenticatedUser(req) {
+  try {
+    const header =
+      req.headers.authorization || "";
+
+    if (!header.startsWith("Bearer ")) {
+      return null;
+    }
+
+    const token = header
+      .substring(7)
+      .trim();
+
+    if (!token) {
+      return null;
+    }
+
+    const result =
+      await supabase.auth.getUser(token);
+
+    if (
+      result.error ||
+      !result.data ||
+      !result.data.user
+    ) {
+      return null;
+    }
+
+    return result.data.user;
+  } catch {
+    return null;
+  }
+}
+
+
+// ============================================================
+// PASONG DJ APPLICATION REVIEW — admin-only routes
+// Uses the existing service-role Supabase client on the server.
+// Never expose the service-role key to the browser.
+// ============================================================
+async function isPasongAdminUser(user) {
+  if (!user) return false;
+  const appRoles = [user.app_metadata?.role, user.app_metadata?.user_role]
+    .map(v => String(v || "").toLowerCase());
+  if (appRoles.some(v => ["admin", "super_admin"].includes(v))) return true;
+
+  // The PASONG role registry is also checked server-side.
+  try {
+    const registry = await supabase.from("user_roles")
+      .select("role").eq("user_id", user.id).limit(10);
+    if (!registry.error && (registry.data || []).some(row =>
+      ["admin", "super_admin"].includes(String(row.role || "").toLowerCase())
+    )) return true;
+  } catch (e) {
+    // Continue to the other supported role sources if this table is unavailable.
+  }
+
+  // Match the profile/admin tables used by the existing PASONG Admin login check.
+  for (const table of ["profiles", "user_profiles", "admin_users"]) {
+    try {
+      const roleResult = await supabase.from(table)
+        .select("role").eq("id", user.id).maybeSingle();
+      if (!roleResult.error && ["admin", "super_admin"].includes(
+        String(roleResult.data?.role || "").toLowerCase()
+      )) return true;
+    } catch (e) {
+      // A table may not exist in this deployment; continue to the next known role source.
+    }
+  }
+  return false;
+}
+
+async function requirePasongAdmin(req, res) {
+  const user = await getAuthenticatedUser(req);
+  if (!user) {
+    res.status(401).json({ error: "Please sign in with your PASONG administrator account." });
+    return null;
+  }
+  if (!(await isPasongAdminUser(user))) {
+    res.status(403).json({ error: "Administrator access is required for DJ verification." });
+    return null;
+  }
+  return user;
+}
+
+app.get("/api/admin/djs", async (req, res) => {
+  try {
+    const adminUser = await requirePasongAdmin(req, res);
+    if (!adminUser) return;
+    const status = String(req.query.status || "pending").toLowerCase();
+    let query = supabase.from("djs")
+      .select("id,user_id,display_name,bio,avatar_url,location,account_status,verification_status,created_at,updated_at")
+      .order("created_at", { ascending: false }).limit(200);
+    if (["pending", "active"].includes(status)) query = query.eq("account_status", status);
+    else if (status !== "all") return res.status(400).json({ error: "Invalid DJ account filter." });
+    const result = await query;
+    if (result.error) {
+      console.error("Admin DJ list query failed:", result.error);
+      return res.status(500).json({ error: "Unable to load DJ applications." });
+    }
+    return res.json({ success: true, djs: result.data || [] });
+  } catch (error) {
+    console.error("Admin DJ list error:", error);
+    return res.status(500).json({ error: "Unable to load DJ applications." });
+  }
+});
+
+app.post("/api/admin/djs/:id/review", async (req, res) => {
+  try {
+    const adminUser = await requirePasongAdmin(req, res);
+    if (!adminUser) return;
+    if (!validUuid(req.params.id)) return res.status(400).json({ error: "Invalid DJ account ID." });
+    const action = String(req.body?.action || "").toLowerCase();
+    let changes;
+    let message;
+    if (action === "approve") {
+      changes = { account_status: "active", verification_status: "verified", updated_at: new Date().toISOString() };
+      message = "DJ account activated and verified. The verified badge can now appear publicly.";
+    } else if (action === "reject") {
+      changes = { verification_status: "rejected", updated_at: new Date().toISOString() };
+      message = "DJ verification application rejected. The account has not been activated.";
+    } else {
+      return res.status(400).json({ error: "Choose approve or reject." });
+    }
+    const result = await supabase.from("djs").update(changes)
+      .eq("id", req.params.id)
+      .select("id,user_id,display_name,account_status,verification_status,updated_at")
+      .maybeSingle();
+    if (result.error) {
+      console.error("Admin DJ review update failed:", result.error);
+      return res.status(500).json({ error: "Could not save the DJ verification decision." });
+    }
+    if (!result.data) return res.status(404).json({ error: "DJ account not found." });
+    return res.json({ success: true, message, dj: result.data });
+  } catch (error) {
+    console.error("Admin DJ review error:", error);
+    return res.status(500).json({ error: "Could not process the DJ verification decision." });
+  }
+});
+
+
+// ============================================================
+// PASONG STUDIO FEATURE CHECKOUT PREPARATION
+// Authenticates the owner and returns server-authoritative package
+// details. This does NOT collect payment or activate a feature.
+// ============================================================
+app.get("/api/studio-registration/checkout", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: "Please sign in to the PASONG account that registered this studio.",
+        code: "AUTH_REQUIRED",
+      });
+    }
+
+    const studioId = String(req.query.studio_id || "").trim();
+    const packageKey = String(req.query.package || "").trim().toLowerCase();
+    const packages = {
+      starter: { label: "Starter Feature", amount: 25000, currency: "UGX", days: 7 },
+      pro: { label: "Pro Feature", amount: 60000, currency: "UGX", days: 14 },
+      premium: { label: "Premium Feature", amount: 120000, currency: "UGX", days: 30 },
+    };
+    const selectedPackage = packages[packageKey];
+
+    if (!studioId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(studioId)) {
+      return res.status(400).json({ success: false, error: "A valid studio ID is required." });
+    }
+    if (!selectedPackage) {
+      return res.status(400).json({ success: false, error: "Choose a valid studio feature package." });
+    }
+
+    const result = await supabase
+      .from("producer_studios")
+      .select("id,studio_name,owner_id,status,country,city")
+      .eq("id", studioId)
+      .eq("owner_id", user.id)
+      .maybeSingle();
+
+    if (result.error) {
+      console.error("Studio feature checkout lookup failed:", result.error);
+      return res.status(500).json({ success: false, error: "Unable to verify this studio registration." });
+    }
+    if (!result.data) {
+      return res.status(404).json({ success: false, error: "This studio was not found under your signed-in account." });
+    }
+
+    return res.json({
+      success: true,
+      payment_enabled: false,
+      studio: {
+        id: result.data.id,
+        studio_name: result.data.studio_name,
+        status: result.data.status,
+        country: result.data.country,
+        city: result.data.city,
+      },
+      package: { key: packageKey, ...selectedPackage },
+      message: "Studio registration checkout verified. Payment is not connected yet; no money has been taken.",
+    });
+  } catch (error) {
+    console.error("Studio registration checkout preparation error:", error);
+    return res.status(500).json({ success: false, error: "Unable to prepare studio registration checkout." });
+  }
+});
+
+function getCountry(req) {
+  return String(
+    req.headers["x-vercel-ip-country"] ||
+      req.headers["cf-ipcountry"] ||
+      ""
+  )
+    .trim()
+    .toUpperCase();
+}
+
+function getPricing(req) {
+  const country = getCountry(req);
+
+  if (country === "UG") {
+    return {
+      amount: 700,
+      currency: "UGX",
+      label: "UGX 700",
+    };
+  }
+
+  const eastAfrica = [
+    "KE",
+    "TZ",
+    "RW",
+    "BI",
+    "SS",
+    "ET",
+  ];
+
+  if (eastAfrica.includes(country)) {
+    return {
+      amount: 1000,
+      currency: "UGX",
+      label: "UGX 1,000",
+    };
+  }
+
+  const africa = [
+    "NG",
+    "GH",
+    "ZA",
+    "ZM",
+    "ZW",
+    "MW",
+    "MZ",
+    "BW",
+    "NA",
+    "CM",
+    "SN",
+    "CI",
+    "SL",
+    "LR",
+    "GM",
+    "GN",
+    "EG",
+    "MA",
+    "DZ",
+    "TN",
+  ];
+
+  if (africa.includes(country)) {
+    return {
+      amount: 0.57,
+      currency: "USD",
+      label: "$0.57",
+    };
+  }
+
+  if (country === "GB") {
+    return {
+      amount: 1,
+      currency: "GBP",
+      label: "£1",
+    };
+  }
+
+  return {
+    amount: 1,
+    currency: "USD",
+    label: "$1",
+  };
+}
+
+function getCoverDesignPrice(req) {
+  if (getCountry(req) === "UG") {
+    return {
+      amount: 10000,
+      currency: "UGX",
+      label: "UGX 10,000",
+    };
+  }
+
+  return {
+    amount: 10,
+    currency: "USD",
+    label: "$10",
+  };
+}
+
+function safeSecretCompare(a, b) {
+  const first = Buffer.from(
+    String(a || "")
+  );
+
+  const second = Buffer.from(
+    String(b || "")
+  );
+
+  if (first.length !== second.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(
+    first,
+    second
+  );
+}
+
+function validUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(value || "")
+  );
+}
+
+// ============================================================
+// PASONG BUY 3 GET 1 - authenticated promotion APIs
+// Paid purchases remain in the existing orders/downloads tables.
+// Promotional grants are stored separately and never create royalties.
+// ============================================================
+const PASONG_PROMO_BEAT_PACKAGES = new Set(["mp3", "wav", "stems"]);
+
+async function promoGetOwnedItem(userId, itemType, itemId) {
+  if (itemType === "song") {
+    const songResult = await supabase.from("songs")
+      .select("id,artist_user_id,producer_user_id,artist_id")
+      .eq("id", itemId).maybeSingle();
+    if (songResult.error || !songResult.data) return { ok: false, error: "Song not found." };
+    const song = songResult.data;
+    let owned = song.artist_user_id === userId || song.producer_user_id === userId;
+    if (!owned && song.artist_id) {
+      const profile = await supabase.from("artist_profiles").select("user_id")
+        .eq("id", song.artist_id).maybeSingle();
+      owned = Boolean(profile.data && profile.data.user_id === userId);
+    }
+    if (!owned) {
+      const collaboration = await supabase.from("song_artists").select("song_id")
+        .eq("song_id", itemId).eq("artist_user_id", userId).maybeSingle();
+      owned = Boolean(collaboration.data);
+    }
+    return owned ? { ok: true, item: song } : { ok: false, error: "You do not own or manage this song." };
+  }
+  if (itemType === "beat") {
+    const beatResult = await supabase.from("beats").select("id,producer_id")
+      .eq("id", itemId).maybeSingle();
+    if (beatResult.error || !beatResult.data) return { ok: false, error: "Beat not found." };
+    const profile = await supabase.from("artist_profiles").select("user_id")
+      .eq("id", beatResult.data.producer_id).maybeSingle();
+    if (!profile.data || profile.data.user_id !== userId) return { ok: false, error: "You do not own this beat." };
+    return { ok: true, item: beatResult.data };
+  }
+  return { ok: false, error: "Invalid item type." };
+}
+
+app.get("/api/buy3/owned-items", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in." });
+    const type = String(req.query.type || "song").toLowerCase();
+    let items = [];
+    if (type === "song") {
+      const profile = await supabase.from("artist_profiles").select("id").eq("user_id", user.id);
+      const ors = [`artist_user_id.eq.${user.id}`, `producer_user_id.eq.${user.id}`];
+      (profile.data || []).forEach(x => ors.push(`artist_id.eq.${x.id}`));
+      const result = await supabase.from("songs").select("*")
+        .or(ors.join(",")).order("created_at", { ascending: false }).limit(100);
+      if (result.error) return res.status(500).json({ error: "Could not load your songs." });
+      items = (result.data || []).map(x => ({ id: x.id, title: x.title || "Song", cover_url: x.cover_url || x.cover_image_url || null, status: x.status || "approved" }));
+    } else if (type === "beat") {
+      const profile = await supabase.from("artist_profiles").select("id").eq("user_id", user.id).maybeSingle();
+      if (!profile.data) return res.json({ items: [] });
+      const result = await supabase.from("beats").select("*")
+        .eq("producer_id", profile.data.id).order("created_at", { ascending: false }).limit(100);
+      if (result.error) return res.status(500).json({ error: "Could not load your beats." });
+      items = (result.data || []).map(x => ({ id: x.id, title: x.title || "Beat", cover_url: x.cover_url || x.cover_image_url || null, status: x.status || "approved" }));
+    } else return res.status(400).json({ error: "Choose song or beat." });
+    const ids = items.map(x => x.id);
+    let permissions = [];
+    if (ids.length) {
+      const p = await supabase.from("pasong_promo_item_permissions").select("item_id,enabled,beat_package_type")
+        .eq("owner_user_id", user.id).eq("item_type", type).in("item_id", ids);
+      if (!p.error) permissions = p.data || [];
+    }
+    const map = new Map(permissions.map(x => [x.item_id, x]));
+    return res.json({ items: items.map(x => ({ ...x, promo_enabled: !!map.get(x.id)?.enabled,
+      beat_package_type: map.get(x.id)?.beat_package_type || null })) });
+  } catch (e) { console.error("Buy3 owned items error", e); return res.status(500).json({ error: "Unable to load your items." }); }
+});
+
+app.post("/api/buy3/opt-in", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in." });
+    const type = String(req.body?.item_type || "").toLowerCase();
+    const id = String(req.body?.item_id || "");
+    const enabled = req.body?.enabled === true;
+    const packageType = req.body?.beat_package_type ? String(req.body.beat_package_type).toLowerCase() : null;
+    if (!validUuid(id) || !["song", "beat"].includes(type)) return res.status(400).json({ error: "Invalid item." });
+    if (type === "beat" && enabled && !PASONG_PROMO_BEAT_PACKAGES.has(packageType))
+      return res.status(400).json({ error: "Choose the exact beat licence package for this promotion." });
+    if (type === "song" && packageType) return res.status(400).json({ error: "Songs do not use beat licence packages." });
+    const owned = await promoGetOwnedItem(user.id, type, id);
+    if (!owned.ok) return res.status(403).json({ error: owned.error });
+    const saved = await supabase.from("pasong_promo_item_permissions").upsert({
+      item_type: type, item_id: id, owner_user_id: user.id, enabled,
+      beat_package_type: type === "beat" ? (enabled ? packageType : null) : null,
+      updated_at: new Date().toISOString()
+    }, { onConflict: "item_type,item_id,owner_user_id" }).select("id,enabled,beat_package_type").single();
+    if (saved.error) { console.error("Buy3 opt-in save failed", saved.error); return res.status(500).json({ error: "Could not save promotion permission." }); }
+    return res.json({ success: true, permission: saved.data });
+  } catch (e) { console.error("Buy3 opt-in error", e); return res.status(500).json({ error: "Could not update promotion permission." }); }
+});
+
+app.get("/api/buy3/catalog", async (req, res) => {
+  try {
+    const type = String(req.query.type || "song").toLowerCase();
+    if (!["song", "beat"].includes(type)) return res.status(400).json({ error: "Choose song or beat." });
+    const permissions = await supabase.from("pasong_promo_item_permissions")
+      .select("item_id,beat_package_type").eq("item_type", type).eq("enabled", true).limit(200);
+    if (permissions.error) return res.status(500).json({ error: "Could not load promotion catalogue." });
+    const ids = (permissions.data || []).map(x => x.item_id);
+    if (!ids.length) return res.json({ items: [] });
+    const source = type === "song" ? "songs" : "beats";
+    const fields = type === "song" ? "id,title,cover_url,artist_name,status" : "id,title,cover_url,producer_id,status";
+    const query = await supabase.from(source).select("*").in("id", ids).limit(200);
+    if (query.error) return res.status(500).json({ error: "Could not load promotion items." });
+    const permissionMap = new Map((permissions.data || []).map(x => [x.item_id, x]));
+    const items = (query.data || []).filter(x => !x.status || x.status === "approved").map(x => ({
+      id: x.id, title: x.title || (type === "song" ? "Song" : "Beat"),
+      cover_url: x.cover_url || x.cover_image_url || null, item_type: type,
+      beat_package_type: permissionMap.get(x.id)?.beat_package_type || null
+    }));
+    return res.json({ items });
+  } catch (e) { console.error("Buy3 catalog error", e); return res.status(500).json({ error: "Could not load promotion catalogue." }); }
+});
+
+app.get("/api/buy3/my-purchases", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in." });
+    const type = String(req.query.type || "song").toLowerCase();
+    if (!["song", "beat"].includes(type)) return res.status(400).json({ error: "Choose song or beat." });
+    const table = type === "song" ? "downloads" : "beat_downloads";
+    const idField = type === "song" ? "song_id" : "beat_id";
+    // The PASONG songs downloads table has no package_type column.
+    // beat_downloads does store package_type, so select it only for beats.
+    const purchaseFields = type === "beat"
+      ? `${idField},order_id,package_type`
+      : `${idField},order_id`;
+    const downloads = await supabase.from(table).select(purchaseFields)
+      .eq("user_id", user.id).order("created_at", { ascending: false }).limit(200);
+    if (downloads.error) {
+      console.error("Buy3 purchase history query failed", { type, code: downloads.error.code, message: downloads.error.message });
+      return res.status(500).json({ error: "Could not load purchase history." });
+    }
+    const unique = new Map();
+    for (const d of downloads.data || []) if (d[idField] && d.order_id && !unique.has(d[idField])) unique.set(d[idField], d);
+    const items = [];
+    for (const [id, d] of unique) {
+      let title = "", cover = null, currency = "", amount = 0, valid = false;
+      if (type === "song") {
+        const [order, song, payment, oi] = await Promise.all([
+          supabase.from("orders").select("id,buyer_id,status,currency,total_amount").eq("id", d.order_id).eq("buyer_id", user.id).eq("status", "paid").maybeSingle(),
+          supabase.from("songs").select("*").eq("id", id).maybeSingle(),
+          supabase.from("payments").select("status,amount,currency").eq("order_id", d.order_id).eq("user_id", user.id).eq("status", "successful").maybeSingle(),
+          supabase.from("order_items").select("song_id,price,currency").eq("order_id", d.order_id).eq("song_id", id).maybeSingle()
+        ]);
+        valid = !!(order.data && song.data && payment.data && oi.data);
+        if (valid) { title = song.data.title || "Song"; cover = song.data.cover_url || song.data.cover_image_url || null; currency = payment.data.currency || oi.data.currency || order.data.currency || ""; amount = Number(payment.data.amount || oi.data.price || 0); }
+      } else {
+        const [order, beat] = await Promise.all([
+          supabase.from("beat_orders").select("id,buyer_id,status,price,currency,package_type").eq("id", d.order_id).eq("buyer_id", user.id).eq("status", "paid").maybeSingle(),
+          supabase.from("beats").select("*").eq("id", id).maybeSingle()
+        ]);
+        valid = !!(order.data && beat.data);
+        if (valid) { title = beat.data.title || "Beat"; cover = beat.data.cover_url || beat.data.cover_image_url || null; currency = order.data.currency || ""; amount = Number(order.data.price || 0); }
+      }
+      if (valid) items.push({ id, title, cover_url: cover, currency: String(currency).toUpperCase(), amount, package_type: d.package_type || null });
+    }
+    return res.json({ items });
+  } catch (e) { console.error("Buy3 purchase list error", e); return res.status(500).json({ error: "Could not load paid purchases." }); }
+});
+
+app.post("/api/buy3/qualify", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in." });
+    const type = String(req.body?.promotion_type || "").toLowerCase();
+    const ids = Array.isArray(req.body?.paid_item_ids) ? req.body.paid_item_ids.map(String) : [];
+    if (!["song", "beat"].includes(type) || ids.length !== 3 || ids.some(x => !validUuid(x)) || new Set(ids).size !== 3)
+      return res.status(400).json({ error: "Choose exactly three different paid songs or three different paid beats." });
+    let total = 0, currency = "", verifiedRows = [];
+    if (type === "song") {
+      for (const id of ids) {
+        const d = await supabase.from("downloads").select("id,order_id,song_id")
+          .eq("user_id", user.id).eq("song_id", id).limit(1).maybeSingle();
+        if (d.error || !d.data?.order_id) return res.status(400).json({ error: "All three songs must already be purchased by this account." });
+        const o = await supabase.from("orders").select("id,buyer_id,total_amount,currency,status")
+          .eq("id", d.data.order_id).eq("buyer_id", user.id).eq("status", "paid").maybeSingle();
+        if (o.error || !o.data) return res.status(400).json({ error: "A song purchase could not be verified." });
+        const oi = await supabase.from("order_items").select("song_id,price,currency").eq("order_id", o.data.id).eq("song_id", id).maybeSingle();
+        if (oi.error || !oi.data) return res.status(400).json({ error: "A song purchase record is incomplete." });
+        const pay = await supabase.from("payments").select("status,external_reference,amount,currency")
+          .eq("order_id", o.data.id).eq("user_id", user.id).eq("status", "successful").maybeSingle();
+        if (pay.error || !pay.data) return res.status(400).json({ error: "A song payment could not be verified." });
+        const rowCurrency = String(pay.data.currency || oi.data.currency || o.data.currency || "").toUpperCase();
+        if (!rowCurrency || (currency && currency !== rowCurrency)) return res.status(400).json({ error: "All three purchases must use the same currency." });
+        currency = rowCurrency; total += Number(pay.data.amount || oi.data.price || 0); verifiedRows.push(id);
+      }
+    } else {
+      for (const id of ids) {
+        const d = await supabase.from("beat_downloads").select("id,order_id,beat_id,package_type")
+          .eq("user_id", user.id).eq("beat_id", id).limit(1).maybeSingle();
+        if (d.error || !d.data?.order_id) return res.status(400).json({ error: "All three beats must already be purchased by this account." });
+        const o = await supabase.from("beat_orders").select("id,buyer_id,price,currency,status")
+          .eq("id", d.data.order_id).eq("buyer_id", user.id).eq("status", "paid").maybeSingle();
+        if (o.error || !o.data) return res.status(400).json({ error: "A beat purchase could not be verified." });
+        const rowCurrency = String(o.data.currency || "").toUpperCase();
+        if (!rowCurrency || (currency && currency !== rowCurrency)) return res.status(400).json({ error: "All three purchases must use the same currency." });
+        currency = rowCurrency; total += Number(o.data.price || 0); verifiedRows.push(id);
+      }
+    }
+    const paymentReference = `BUY3-${type.toUpperCase()}-${user.id}-${crypto.randomBytes(8).toString("hex")}`;
+    const rpc = await supabase.rpc("pasong_create_buy3_qualification", {
+      p_buyer_user_id: user.id, p_promotion_type: type, p_paid_item_ids: verifiedRows,
+      p_currency: currency, p_amount_paid: Number(total.toFixed(2)), p_payment_reference: paymentReference
+    });
+    if (rpc.error) {
+      const message = /duplicate|unique/i.test(rpc.error.message || "")
+        ? "One or more paid items have already been used for this promotion. Choose three other paid items."
+        : "Could not create your promotion qualification.";
+      console.error("Buy3 qualification RPC failed", rpc.error);
+      return res.status(409).json({ error: message });
+    }
+    return res.json({ success: true, qualification_id: rpc.data, promotion_type: type, status: "awaiting_claim" });
+  } catch (e) { console.error("Buy3 qualification error", e); return res.status(500).json({ error: "Could not verify promotion purchases." }); }
+});
+
+app.get("/api/buy3/my-qualifications", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in." });
+    const [q, e] = await Promise.all([
+      supabase.from("pasong_promo_qualifications").select("id,promotion_type,paid_item_ids,currency,amount_paid,status,created_at,claimed_at")
+        .eq("buyer_user_id", user.id).order("created_at", { ascending: false }),
+      supabase.from("pasong_promo_free_entitlements").select("id,item_type,free_item_id,beat_package_type,created_at")
+        .eq("buyer_user_id", user.id).order("created_at", { ascending: false })
+    ]);
+    if (q.error || e.error) return res.status(500).json({ error: "Could not load your promotion history." });
+    return res.json({ qualifications: q.data || [], entitlements: e.data || [] });
+  } catch (e) { console.error("Buy3 history error", e); return res.status(500).json({ error: "Could not load promotion history." }); }
+});
+
+app.post("/api/buy3/claim", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in." });
+    const qualificationId = String(req.body?.qualification_id || "");
+    const type = String(req.body?.item_type || "").toLowerCase();
+    const itemId = String(req.body?.free_item_id || "");
+    const packageType = req.body?.beat_package_type ? String(req.body.beat_package_type).toLowerCase() : null;
+    if (!validUuid(qualificationId) || !validUuid(itemId) || !["song", "beat"].includes(type))
+      return res.status(400).json({ error: "Invalid promotion claim." });
+    if (type === "beat" && !PASONG_PROMO_BEAT_PACKAGES.has(packageType))
+      return res.status(400).json({ error: "A valid beat licence package is required." });
+    const rpc = await supabase.rpc("pasong_claim_buy3_free_item", {
+      p_qualification_id: qualificationId, p_buyer_user_id: user.id,
+      p_item_type: type, p_free_item_id: itemId, p_beat_package_type: packageType
+    });
+    if (rpc.error) {
+      console.error("Buy3 claim RPC failed", rpc.error);
+      return res.status(400).json({ error: rpc.error.message || "Could not claim this free item." });
+    }
+    return res.json({ success: true, entitlement_id: rpc.data, message: "Free promotional item claimed." });
+  } catch (e) { console.error("Buy3 claim error", e); return res.status(500).json({ error: "Could not complete your free-item claim." }); }
+});
+
+function validPositiveNumber(value) {
+  const number = Number(value);
+
+  return (
+    Number.isFinite(number) &&
+    number > 0
+  );
+}
+
+function allowedPaymentProvider(provider) {
+  return [
+    "MTN",
+    "AIRTEL",
+    "MTN MOMO",
+    "AIRTEL MONEY",
+    "PESAPAL",
+  ].includes(
+    String(provider || "")
+      .trim()
+      .toUpperCase()
+  );
+}
+
+function normalizeProvider(provider) {
+  const value = String(provider || "")
+    .trim()
+    .toUpperCase();
+
+  if (value === "MTN MOMO") {
+    return "MTN";
+  }
+
+  if (value === "AIRTEL MONEY") {
+    return "AIRTEL";
+  }
+
+  return value;
+}
+
+function cleanText(value, maxLength) {
+  const text = String(value || "").trim();
+
+  if (
+    maxLength &&
+    text.length > maxLength
+  ) {
+    return null;
+  }
+
+  return text;
+}
+
+function isSameAmount(a, b) {
+  return Number(a) === Number(b);
+}
+
+function validUrl(value) {
+  try {
+    const url = new URL(
+      String(value || "").trim()
+    );
+
+    return (
+      url.protocol === "https:" ||
+      url.protocol === "http:"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isSameUrl(a, b) {
+  return (
+    String(a || "").trim() ===
+    String(b || "").trim()
+  );
+}
+
+app.get("/api/pricing", (req, res) => {
+  const pricing = getPricing(req);
+
+  res.json({
+    country: getCountry(req),
+    price: pricing.amount,
+    currency: pricing.currency,
+    label: pricing.label,
+  });
+});
+
+app.get(
+  "/api/cover-design-price",
+  (req, res) => {
+    const pricing =
+      getCoverDesignPrice(req);
+
+    res.json({
+      country: getCountry(req),
+      price: pricing.amount,
+      currency: pricing.currency,
+      label: pricing.label,
+    });
+  }
+);
+
+app.get("/api/tip-split", (req, res) => {
+  res.json({
+    artist_percent: 70,
+    pasong_percent: 30,
+  });
+});
+
+app.post(
+  "/api/upload/cover",
+  coverUpload.single("file"),
+  async (req, res) => {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Auth",
+        });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({
+          error: "No cover",
+        });
+      }
+
+      const result = await new Promise(
+        (resolve, reject) => {
+          const stream =
+            cloudinary.uploader.upload_stream(
+              {
+                folder:
+                  "pasong/covers",
+                resource_type:
+                  "image",
+              },
+              (error, uploaded) => {
+                if (error) {
+                  reject(error);
+                } else {
+                  resolve(uploaded);
+                }
+              }
+            );
+
+          stream.end(req.file.buffer);
+        }
+      );
+
+      res.json({
+        success: true,
+        secure_url:
+          result.secure_url,
+        public_id:
+          result.public_id,
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Cover upload failed",
+      });
+    }
+  }
+);
+
+function allowedCloudinaryFolder(
+  folder
+) {
+  const value = String(
+    folder || ""
+  ).trim();
+
+  if (
+    [
+      "pasong-songs",
+      "pasong/songs",
+      "pasong/covers",
+      "pasong/studios",
+      "pasong-beats/audio",
+      "pasong-beats/covers",
+      "pasong-producers/profile",
+      "pasong/ads",
+      "pasong-ads",
+    ].includes(value)
+  ) {
+    return true;
+  }
+
+  if (
+    /^pasong-beats\/deliveries\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function createCloudinarySignature(
+  folder,
+  timestamp,
+  deliveryType = "upload"
+) {
+  const type = String(deliveryType || "upload").trim().toLowerCase();
+  const signedParams = type === "authenticated"
+    ? `folder=${folder}&timestamp=${timestamp}&type=authenticated`
+    : `folder=${folder}&timestamp=${timestamp}`;
+  return crypto
+    .createHash("sha1")
+    .update(`${signedParams}${CLOUDINARY_API_SECRET}`)
+    .digest("hex");
+}
+
+app.post(
+  "/api/cloudinary/signature",
+  async (req, res) => {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Auth",
+        });
+      }
+
+      const folder = String(
+        req.body.folder ||
+          "pasong-songs"
+      ).trim();
+
+      if (
+        !allowedCloudinaryFolder(
+          folder
+        )
+      ) {
+        return res.status(403).json({
+          error:
+            "Invalid upload folder",
+        });
+      }
+
+      const requestedType = String(req.body?.type || "upload").trim().toLowerCase();
+      const isSongAudioFolder = ["pasong-songs", "pasong/songs"].includes(folder);
+      if (requestedType === "authenticated" && !isSongAudioFolder) {
+        return res.status(403).json({ error: "Authenticated delivery is only enabled for full song audio uploads." });
+      }
+      if (!["upload", "authenticated"].includes(requestedType)) {
+        return res.status(400).json({ error: "Invalid Cloudinary delivery type." });
+      }
+
+      const timestamp = Math.floor(Date.now() / 1000);
+      res.json({
+        cloud_name: CLOUDINARY_CLOUD_NAME,
+        api_key: CLOUDINARY_API_KEY,
+        timestamp,
+        signature: createCloudinarySignature(folder, timestamp, requestedType),
+        folder,
+        type: requestedType,
+      });
+    } catch {
+      res.status(500).json({
+        error: "Signature error",
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/cloudinary/signature",
+  async (req, res) => {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Auth",
+        });
+      }
+
+      const folder = String(
+        req.query.folder ||
+          "pasong-songs"
+      ).trim();
+
+      if (
+        !allowedCloudinaryFolder(
+          folder
+        )
+      ) {
+        return res.status(403).json({
+          error:
+            "Invalid upload folder",
+        });
+      }
+
+      const timestamp = Math.floor(
+        Date.now() / 1000
+      );
+
+      res.json({
+        cloud_name:
+          CLOUDINARY_CLOUD_NAME,
+        api_key:
+          CLOUDINARY_API_KEY,
+        timestamp,
+        signature:
+          createCloudinarySignature(
+            folder,
+            timestamp
+          ),
+        folder,
+      });
+    } catch {
+      res.status(500).json({
+        error: "Signature error",
+      });
+    }
+  }
+);
+
+async function validateUserId(userId) {
+  if (!validUuid(userId)) {
+    return null;
+  }
+
+  const result =
+    await supabase.auth.admin.getUserById(
+      userId
+    );
+
+  if (
+    result.error ||
+    !result.data ||
+    !result.data.user
+  ) {
+    return null;
+  }
+
+  return result.data.user;
+}
+
+async function getArtistProfile(userId) {
+  const result = await supabase
+    .from("artist_profiles")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (result.error) {
+    return null;
+  }
+
+  return result.data || null;
+}
+
+function normalizeArtistIds(
+  body,
+  loggedInUserId
+) {
+  let ids = [];
+
+  if (
+    Array.isArray(
+      body.artist_user_ids
+    )
+  ) {
+    ids = body.artist_user_ids
+      .map((id) =>
+        String(id || "").trim()
+      )
+      .filter(validUuid);
+  }
+
+  if (
+    ids.length === 0 &&
+    typeof body.artist_user_ids ===
+      "string"
+  ) {
+    ids = body.artist_user_ids
+      .split(",")
+      .map((id) =>
+        String(id || "").trim()
+      )
+      .filter(validUuid);
+  }
+
+  if (
+    ids.length === 0 &&
+    body.artist_user_id &&
+    validUuid(body.artist_user_id)
+  ) {
+    ids = [
+      String(
+        body.artist_user_id
+      ).trim(),
+    ];
+  }
+
+  if (ids.length === 0) {
+    ids = [loggedInUserId];
+  }
+
+  return Array.from(
+    new Set(ids)
+  );
+}
+
+function calculateArtistShares(
+  artistIds,
+  hasWriter
+) {
+  const totalArtistPercent =
+    hasWriter ? 31.875 : 37.5;
+
+  if (!artistIds.length) {
+    return [];
+  }
+
+  const shares = [];
+  let used = 0;
+
+  for (
+    let i = 0;
+    i < artistIds.length;
+    i++
+  ) {
+    if (
+      i ===
+      artistIds.length - 1
+    ) {
+      shares.push(
+        Number(
+          (
+            totalArtistPercent -
+            used
+          ).toFixed(4)
+        )
+      );
+    } else {
+      const share = Number(
+        (
+          totalArtistPercent /
+          artistIds.length
+        ).toFixed(4)
+      );
+
+      shares.push(share);
+
+      used = Number(
+        (used + share).toFixed(4)
+      );
+    }
+  }
+
+  return shares;
+}
+
+function buildRoyaltyRow({
+  recipientUserId,
+  recipientType,
+  songId,
+  beatId,
+  orderId,
+  saleReference,
+  saleAmount,
+  currency,
+  percentage,
+  amount,
+}) {
+  const row = {
+    recipient_type:
+      recipientType,
+    order_id: orderId,
+    sale_reference:
+      saleReference,
+    sale_amount:
+      saleAmount,
+    currency,
+    percentage,
+    amount,
+    entry_type: "credit",
+    status: "available",
+  };
+
+  if (validUuid(recipientUserId)) {
+    row.recipient_user_id =
+      recipientUserId;
+  }
+
+  if (validUuid(songId)) {
+    row.song_id = songId;
+  }
+
+  if (validUuid(beatId)) {
+    row.beat_id = beatId;
+  }
+
+  return row;
+}
+
+app.post(
+  "/api/songs/create",
+  async (req, res) => {
+    try {
+      const loggedInUser =
+        await getAuthenticatedUser(req);
+
+      if (!loggedInUser) {
+        return res.status(401).json({
+          error: "Auth",
+        });
+      }
+
+      const body = req.body || {};
+
+      const title = cleanText(
+        body.title,
+        200
+      );
+
+      const audioUrl = cleanText(
+        body.audio_url,
+        2000
+      );
+
+      const previewUrl = cleanText(
+        body.preview_url,
+        2000
+      );
+
+      const coverUrl = cleanText(
+        body.cover_url,
+        2000
+      );
+
+      if (
+        !title ||
+        !audioUrl ||
+        !previewUrl ||
+        !coverUrl
+      ) {
+        return res.status(400).json({
+          error:
+            "Title + audio + cover + preview required",
+        });
+      }
+
+      if (
+        !validUrl(audioUrl) ||
+        !validUrl(previewUrl) ||
+        !validUrl(coverUrl)
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid audio, preview or cover URL",
+        });
+      }
+
+      if (
+        isSameUrl(
+          audioUrl,
+          previewUrl
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Preview must be different from full audio",
+        });
+      }
+
+      const artistIds =
+        normalizeArtistIds(
+          body,
+          loggedInUser.id
+        );
+
+      const artistUsers = [];
+
+      for (const id of artistIds) {
+        const user =
+          await validateUserId(id);
+
+        if (!user) {
+          return res.status(400).json({
+            error:
+              "Artist not found",
+          });
+        }
+
+        const profile =
+          await getArtistProfile(id);
+
+        if (!profile) {
+          return res.status(400).json({
+            error:
+              "Artist profile missing",
+          });
+        }
+
+        artistUsers.push({
+          user,
+          profile,
+        });
+      }
+
+      const producerUserId =
+        body.producer_user_id
+          ? String(
+              body.producer_user_id
+            ).trim()
+          : null;
+
+      if (
+        !producerUserId ||
+        !validUuid(
+          producerUserId
+        )
+      ) {
+        return res.status(400).json({
+          error: "Producer required",
+        });
+      }
+
+      const producer =
+        await validateUserId(
+          producerUserId
+        );
+
+      if (!producer) {
+        return res.status(400).json({
+          error:
+            "Producer not found",
+        });
+      }
+
+      const writerUserId =
+        body.writer_user_id
+          ? String(
+              body.writer_user_id
+            ).trim()
+          : null;
+
+      if (
+        writerUserId &&
+        !validUuid(writerUserId)
+      ) {
+        return res.status(400).json({
+          error: "Invalid writer",
+        });
+      }
+
+      if (writerUserId) {
+        const writer =
+          await validateUserId(
+            writerUserId
+          );
+
+        if (!writer) {
+          return res.status(400).json({
+            error:
+              "Writer not found",
+          });
+        }
+      }
+
+      const pricing = getPricing(req);
+
+      const songResult =
+        await supabase
+          .from("songs")
+          .insert({
+            artist_id:
+              artistUsers[0]
+                .profile.id,
+            artist_user_id:
+              artistIds[0],
+            uploader_user_id:
+              loggedInUser.id,
+            producer_user_id:
+              producerUserId,
+            writer_user_id:
+              writerUserId,
+            label_name:
+              cleanText(
+                body.label_name,
+                200
+              ) || null,
+            title,
+            price:
+              pricing.amount,
+            currency:
+              pricing.currency,
+            status: "approved",
+            cover_url: coverUrl,
+            audio_url: audioUrl,
+            preview_url:
+              previewUrl,
+            artist_count:
+              artistIds.length,
+          })
+          .select()
+          .single();
+
+      if (songResult.error) {
+        return res.status(500).json({
+          error:
+            "Song creation failed",
+        });
+      }
+
+      const artistShares =
+        calculateArtistShares(
+          artistIds,
+          Boolean(writerUserId)
+        );
+
+      const rows = artistIds.map(
+        (id, index) => ({
+          song_id:
+            songResult.data.id,
+          artist_user_id: id,
+          artist_order:
+            index + 1,
+          artist_share_percent:
+            artistShares[index],
+        })
+      );
+
+      const artistRows =
+        await supabase
+          .from("song_artists")
+          .insert(rows);
+
+      if (artistRows.error) {
+        await supabase
+          .from("songs")
+          .delete()
+          .eq(
+            "id",
+            songResult.data.id
+          );
+
+        return res.status(500).json({
+          error:
+            "Artist setup failed",
+        });
+      }
+
+      res.status(201).json({
+        success: true,
+        song:
+          songResult.data,
+        royalty_split: {
+          pasong_percent: 25,
+          producer_percent:
+            37.5,
+          artist_percent:
+            writerUserId
+              ? 31.875
+              : 37.5,
+          writer_percent:
+            writerUserId
+              ? 5.625
+              : 0,
+        },
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Song creation failed",
+      });
+    }
+  }
+);
+
+function publicSong(song) {
+  if (!song) {
+    return null;
+  }
+
+  const safeSong = {
+    ...song,
+  };
+
+  // PASONG supports free public streaming. Some older songs were
+  // uploaded before preview_url was stored. In that case, use the
+  // existing audio_url as the public streaming source.
+  const publicStreamUrl =
+    song.preview_url ||
+    song.audio_url ||
+    null;
+
+  // Never expose the original field separately.
+  delete safeSong.audio_url;
+
+  // Keep both fields for compatibility with existing PASONG pages.
+  safeSong.preview_url =
+    publicStreamUrl;
+
+  safeSong.audio_url =
+    publicStreamUrl;
+
+  return safeSong;
+}
+
+async function getPublicArtistProfile(
+  artistProfileId,
+  artistUserId
+) {
+  let profile = null;
+
+  if (
+    validUuid(
+      artistProfileId
+    )
+  ) {
+    const result =
+      await supabase
+        .from(
+          "artist_profiles"
+        )
+        .select(
+          "id,user_id,artist_name,stage_name,performing_name,profile_image_url,bio,location"
+        )
+        .eq(
+          "id",
+          artistProfileId
+        )
+        .maybeSingle();
+
+    if (
+      result.error
+    ) {
+      throw result.error;
+    }
+
+    profile =
+      result.data || null;
+  }
+
+  if (
+    !profile &&
+    validUuid(artistUserId)
+  ) {
+    const result =
+      await supabase
+        .from(
+          "artist_profiles"
+        )
+        .select(
+          "id,user_id,artist_name,stage_name,performing_name,profile_image_url,bio,location"
+        )
+        .eq(
+          "user_id",
+          artistUserId
+        )
+        .maybeSingle();
+
+    if (
+      result.error
+    ) {
+      throw result.error;
+    }
+
+    profile =
+      result.data || null;
+  }
+
+  if (!profile) {
+    return null;
+  }
+
+  return {
+    id:
+      profile.id,
+    user_id:
+      profile.user_id || null,
+    artist_name:
+      profile.artist_name ||
+      null,
+    stage_name:
+      profile.stage_name ||
+      null,
+    performing_name:
+      profile.performing_name ||
+      null,
+    profile_image_url:
+      profile.profile_image_url ||
+      null,
+    bio:
+      profile.bio ||
+      null,
+    location:
+      profile.location ||
+      null,
+  };
+}
+
+async function getSongPlayCount(
+  songId
+) {
+  if (!validUuid(songId)) {
+    return 0;
+  }
+
+  const result =
+    await supabase.rpc(
+      "get_song_play_count",
+      {
+        p_song_id:
+          songId,
+      }
+    );
+
+  if (result.error) {
+    console.error(
+      "Song play count error:",
+      result.error
+    );
+
+    return 0;
+  }
+
+  return Number(
+    result.data || 0
+  );
+}
+
+app.get(
+  "/api/songs",
+  async (req, res) => {
+    try {
+      const result =
+        await supabase
+          .from("songs")
+          .select("*")
+          .eq(
+            "status",
+            "approved"
+          )
+          .not(
+            "cover_url",
+            "is",
+            null
+          )
+          .order("created_at", {
+            ascending: false,
+          });
+
+      if (result.error) {
+        return res.status(500).json({
+          error:
+            "Unable to load songs",
+        });
+      }
+
+      const songs =
+        result.data || [];
+
+      const profileIds =
+        Array.from(
+          new Set(
+            songs
+              .map(
+                (song) =>
+                  song.artist_id
+              )
+              .filter(validUuid)
+          )
+        );
+
+      const userIds =
+        Array.from(
+          new Set(
+            songs
+              .map(
+                (song) =>
+                  song.artist_user_id
+              )
+              .filter(validUuid)
+          )
+        );
+
+      let profiles = [];
+
+      if (
+        profileIds.length > 0
+      ) {
+        const profileResult =
+          await supabase
+            .from(
+              "artist_profiles"
+            )
+            .select(
+              "id,user_id,artist_name,stage_name,performing_name,profile_image_url,bio,location"
+            )
+            .in(
+              "id",
+              profileIds
+            );
+
+        if (
+          profileResult.error
+        ) {
+          return res.status(500).json({
+            error:
+              "Unable to load artist profiles",
+          });
+        }
+
+        profiles =
+          profileResult.data || [];
+      }
+
+      const foundProfileUserIds =
+        new Set(
+          profiles
+            .map(
+              (profile) =>
+                profile.user_id
+            )
+            .filter(validUuid)
+        );
+
+      const missingUserIds =
+        userIds.filter(
+          (id) =>
+            !foundProfileUserIds.has(
+              id
+            )
+        );
+
+      if (
+        missingUserIds.length > 0
+      ) {
+        const fallbackResult =
+          await supabase
+            .from(
+              "artist_profiles"
+            )
+            .select(
+              "id,user_id,artist_name,stage_name,performing_name,profile_image_url,bio,location"
+            )
+            .in(
+              "user_id",
+              missingUserIds
+            );
+
+        if (
+          fallbackResult.error
+        ) {
+          return res.status(500).json({
+            error:
+              "Unable to load artist profiles",
+          });
+        }
+
+        profiles = [
+          ...profiles,
+          ...(fallbackResult.data ||
+            []),
+        ];
+      }
+
+      const profileById =
+        new Map();
+
+      const profileByUserId =
+        new Map();
+
+      profiles.forEach(
+        (profile) => {
+          profileById.set(
+            profile.id,
+            profile
+          );
+
+          if (
+            validUuid(
+              profile.user_id
+            )
+          ) {
+            profileByUserId.set(
+              profile.user_id,
+              profile
+            );
+          }
+        }
+      );
+
+      const publicSongs =
+        await Promise.all(
+          songs.map(async (song) => {
+            const profile =
+              profileById.get(
+                song.artist_id
+              ) ||
+              profileByUserId.get(
+                song.artist_user_id
+              ) ||
+              null;
+
+            const publicArtist =
+              profile
+                ? {
+                    id:
+                      profile.id,
+                    user_id:
+                      profile.user_id ||
+                      null,
+                    artist_name:
+                      profile.artist_name ||
+                      null,
+                    stage_name:
+                      profile.stage_name ||
+                      null,
+                    performing_name:
+                      profile.performing_name ||
+                      null,
+                    profile_image_url:
+                      profile.profile_image_url ||
+                      null,
+                    bio:
+                      profile.bio ||
+                      null,
+                    location:
+                      profile.location ||
+                      null,
+                  }
+                : null;
+
+            const safeSong =
+              publicSong(song);
+
+            safeSong.artist =
+              publicArtist;
+
+            safeSong.artist_profile =
+              publicArtist;
+
+            safeSong.artist_profiles =
+              publicArtist;
+
+            safeSong.play_count =
+              await getSongPlayCount(
+                song.id
+              );
+
+            return safeSong;
+          })
+        );
+
+      res.json({
+        songs:
+          publicSongs,
+        pricing:
+          getPricing(req),
+      });
+    } catch (error) {
+      console.error(
+        "Songs loading error:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Unable to load songs",
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/songs/:id",
+  async (req, res) => {
+    try {
+      if (
+        !validUuid(req.params.id)
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid song id",
+        });
+      }
+
+      const result =
+        await supabase
+          .from("songs")
+          .select("*")
+          .eq(
+            "id",
+            req.params.id
+          )
+          .eq(
+            "status",
+            "approved"
+          )
+          .maybeSingle();
+
+      if (
+        result.error ||
+        !result.data
+      ) {
+        return res.status(404).json({
+          error: "Not found",
+        });
+      }
+
+      const song =
+        result.data;
+
+      const publicArtist =
+        await getPublicArtistProfile(
+          song.artist_id,
+          song.artist_user_id
+        );
+
+      const safeSong =
+        publicSong(song);
+
+      safeSong.artist =
+        publicArtist;
+
+      safeSong.artist_profile =
+        publicArtist;
+
+      safeSong.artist_profiles =
+        publicArtist;
+
+      res.json({
+        song:
+          safeSong,
+      });
+    } catch (error) {
+      console.error(
+        "Song loading error:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Unable to load song",
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/songs/:id/deliver",
+  async (req, res) => {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Auth",
+        });
+      }
+
+      if (
+        !validUuid(req.params.id)
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid song id",
+        });
+      }
+
+      const download =
+        await supabase
+          .from("downloads")
+          .select(
+            "id,song_id,user_id,order_id"
+          )
+          .eq(
+            "song_id",
+            req.params.id
+          )
+          .eq(
+            "user_id",
+            user.id
+          )
+          .order("created_at", {
+            ascending: false,
+          })
+          .limit(1)
+          .maybeSingle();
+
+      let hasAccess = Boolean(download.data);
+      if (!hasAccess) {
+        const promo = await supabase.from("pasong_promo_free_entitlements")
+          .select("id").eq("buyer_user_id", user.id).eq("item_type", "song")
+          .eq("free_item_id", req.params.id).limit(1).maybeSingle();
+        hasAccess = Boolean(!promo.error && promo.data);
+      }
+      if (!hasAccess) {
+        return res.status(403).json({ error: "Not purchased or included in a PASONG promotion." });
+      }
+
+      const song =
+        await supabase
+          .from("songs")
+          .select(
+            "id,title,audio_url,preview_url"
+          )
+          .eq(
+            "id",
+            req.params.id
+          )
+          .eq(
+            "status",
+            "approved"
+          )
+          .maybeSingle();
+
+      if (
+        song.error ||
+        !song.data
+      ) {
+        return res.status(404).json({
+          error:
+            "Song not found",
+        });
+      }
+
+      if (!song.data.audio_url) {
+        return res.status(404).json({
+          error:
+            "Download file unavailable",
+        });
+      }
+
+      const upstream =
+        await fetch(
+          song.data.audio_url
+        );
+
+      if (
+        !upstream.ok ||
+        !upstream.body
+      ) {
+        return res.status(502).json({
+          error:
+            "Download file unavailable",
+        });
+      }
+
+      const safeTitle =
+        String(
+          song.data.title ||
+            "PASONG-Song"
+        )
+          .replace(
+            /[^a-z0-9-_]+/gi,
+            "_"
+          )
+          .replace(
+            /^_+|_+$/g,
+            ""
+          ) ||
+        "PASONG-Song";
+
+      res.setHeader(
+        "Content-Type",
+        upstream.headers.get(
+          "content-type"
+        ) ||
+          "audio/mpeg"
+      );
+
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${safeTitle}.mp3"`
+      );
+
+      const contentLength =
+        upstream.headers.get(
+          "content-length"
+        );
+
+      if (contentLength) {
+        res.setHeader(
+          "Content-Length",
+          contentLength
+        );
+      }
+
+      Readable.fromWeb(
+        upstream.body
+      ).pipe(res);
+    } catch (error) {
+      console.error(
+        "Song delivery error:",
+        error
+      );
+
+      if (!res.headersSent) {
+        return res.status(500).json({
+          error:
+            "Delivery failed",
+        });
+      }
+
+      res.end();
+    }
+  }
+);
+
+app.get(
+  "/api/earnings",
+  async (req, res) => {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Auth",
+        });
+      }
+
+      const result =
+        await supabase
+          .from(
+            "royalty_ledger"
+          )
+          .select("*")
+          .eq(
+            "recipient_user_id",
+            user.id
+          )
+          .order(
+            "created_at",
+            {
+              ascending: false,
+            }
+          );
+
+      if (result.error) {
+        return res.status(500).json({
+          error:
+            "Unable to load earnings",
+        });
+      }
+
+      let balance = 0;
+
+      (
+        result.data || []
+      ).forEach((entry) => {
+        if (
+          entry.entry_type ===
+            "credit" &&
+          entry.status ===
+            "available"
+        ) {
+          balance +=
+            Number(
+              entry.amount
+            ) || 0;
+        }
+
+        if (
+          entry.entry_type ===
+          "debit"
+        ) {
+          balance -=
+            Number(
+              entry.amount
+            ) || 0;
+        }
+      });
+
+      res.json({
+        available_balance:
+          Number(
+            balance.toFixed(2)
+          ),
+        entries:
+          result.data || [],
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Unable to load earnings",
+      });
+    }
+  }
+);
+
+// Multi-song cart checkout is routed through the existing PASONG Secure Checkout page
+// (pasong_checkout.html), which owns the MTN/Airtel demo payment flow.
+// Do not initiate a separate card transaction here; beat cards use Pesapal checkout.
+
+app.post(
+  "/api/payments/complete",
+  async (req, res) => {
+    try {
+      if (
+        !safeSecretCompare(
+          req.headers[
+            "x-pasong-payment-secret"
+          ],
+          PASONG_PAYMENT_SECRET
+        )
+      ) {
+        return res.status(401).json({
+          error: "Unauthorized",
+        });
+      }
+
+      const {
+        buyer_id,
+        song_id,
+        transaction_id,
+        external_reference,
+        provider,
+        amount,
+        currency,
+        payment_status,
+      } = req.body || {};
+
+      if (
+        !validUuid(buyer_id) ||
+        !validUuid(song_id)
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid buyer or song",
+        });
+      }
+
+      const transaction =
+        String(
+          transaction_id || ""
+        ).trim();
+
+      const reference =
+        String(
+          external_reference || ""
+        ).trim();
+
+      if (
+        !transaction ||
+        !reference
+      ) {
+        return res.status(400).json({
+          error:
+            "Transaction and reference required",
+        });
+      }
+
+      if (
+        payment_status !==
+        "SUCCESSFUL"
+      ) {
+        return res.status(400).json({
+          error:
+            "Not successful",
+        });
+      }
+
+      if (
+        !validPositiveNumber(
+          amount
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid payment amount",
+        });
+      }
+
+      const normalizedProvider =
+        normalizeProvider(
+          provider
+        );
+
+      if (
+        !allowedPaymentProvider(
+          normalizedProvider
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid payment provider",
+        });
+      }
+
+      const buyer =
+        await validateUserId(
+          buyer_id
+        );
+
+      if (!buyer) {
+        return res.status(400).json({
+          error:
+            "Buyer not found",
+        });
+      }
+
+      const songResult =
+        await supabase
+          .from("songs")
+          .select("*")
+          .eq("id", song_id)
+          .eq(
+            "status",
+            "approved"
+          )
+          .maybeSingle();
+
+      if (
+        songResult.error ||
+        !songResult.data
+      ) {
+        return res.status(404).json({
+          error:
+            "Song not found",
+        });
+      }
+
+      const song =
+        songResult.data;
+
+      const storedAmount =
+        Number(song.price);
+
+      const storedCurrency =
+        String(
+          song.currency || ""
+        ).toUpperCase();
+
+      const requestedCurrency =
+        String(
+          currency || ""
+        ).toUpperCase();
+
+      if (
+        !validPositiveNumber(
+          storedAmount
+        ) ||
+        !storedCurrency
+      ) {
+        return res.status(500).json({
+          error:
+            "Song price unavailable",
+        });
+      }
+
+      if (
+        requestedCurrency !==
+        storedCurrency
+      ) {
+        return res.status(400).json({
+          error:
+            "Payment currency does not match song currency",
+        });
+      }
+
+      const paidTotal =
+        Number(amount);
+
+      if (
+        paidTotal <
+        storedAmount
+      ) {
+        return res.status(400).json({
+          error:
+            "Payment amount is below song price",
+        });
+      }
+
+      const tipAmount =
+        Number(
+          (
+            paidTotal -
+            storedAmount
+          ).toFixed(2)
+        );
+
+      const existingTransaction =
+        await supabase
+          .from("payments")
+          .select(
+            "id,order_id,user_id,song_id"
+          )
+          .eq(
+            "transaction_id",
+            transaction
+          )
+          .maybeSingle();
+
+      if (
+        existingTransaction.error
+      ) {
+        return res.status(500).json({
+          error:
+            "Payment verification failed",
+        });
+      }
+
+      if (
+        existingTransaction.data
+      ) {
+        if (
+          existingTransaction.data
+            .user_id !== buyer_id ||
+          existingTransaction.data
+            .song_id !== song_id
+        ) {
+          return res.status(409).json({
+            error:
+              "Transaction already belongs to another purchase",
+          });
+        }
+
+        return res.json({
+          success: true,
+          already_completed:
+            true,
+          order_id:
+            existingTransaction
+              .data.order_id,
+        });
+      }
+
+      const existingReference =
+        await supabase
+          .from("payments")
+          .select(
+            "id,order_id,user_id,song_id"
+          )
+          .eq(
+            "external_reference",
+            reference
+          )
+          .maybeSingle();
+
+      if (
+        existingReference.error
+      ) {
+        return res.status(500).json({
+          error:
+            "Payment verification failed",
+        });
+      }
+
+      if (
+        existingReference.data
+      ) {
+        if (
+          existingReference.data
+            .user_id !== buyer_id ||
+          existingReference.data
+            .song_id !== song_id
+        ) {
+          return res.status(409).json({
+            error:
+              "Payment reference already belongs to another purchase",
+          });
+        }
+
+        return res.json({
+          success: true,
+          already_completed:
+            true,
+          order_id:
+            existingReference.data
+              .order_id,
+        });
+      }
+
+      const existingDownload =
+        await supabase
+          .from("downloads")
+          .select(
+            "id,order_id"
+          )
+          .eq(
+            "user_id",
+            buyer_id
+          )
+          .eq(
+            "song_id",
+            song_id
+          )
+          .order(
+            "created_at",
+            {
+              ascending: false,
+            }
+          )
+          .limit(1)
+          .maybeSingle();
+
+      if (
+        existingDownload.error
+      ) {
+        return res.status(500).json({
+          error:
+            "Purchase verification failed",
+        });
+      }
+
+      if (
+        existingDownload.data
+      ) {
+        return res.json({
+          success: true,
+          already_completed:
+            true,
+          order_id:
+            existingDownload.data
+              .order_id,
+        });
+      }
+
+      const order =
+        await supabase
+          .from("orders")
+          .insert({
+            buyer_id,
+            total_amount:
+              paidTotal,
+            currency:
+              storedCurrency,
+            status: "paid",
+          })
+          .select()
+          .single();
+
+      if (order.error) {
+        return res.status(500).json({
+          error:
+            "Order creation failed",
+        });
+      }
+
+      const orderItem =
+        await supabase
+          .from("order_items")
+          .insert({
+            order_id:
+              order.data.id,
+            song_id,
+            price:
+              storedAmount,
+            currency:
+              storedCurrency,
+          });
+
+      if (orderItem.error) {
+        await supabase
+          .from("orders")
+          .delete()
+          .eq(
+            "id",
+            order.data.id
+          );
+
+        return res.status(500).json({
+          error:
+            "Order item creation failed",
+        });
+      }
+
+      const payment =
+        await supabase
+          .from("payments")
+          .insert({
+            order_id:
+              order.data.id,
+            user_id:
+              buyer_id,
+            song_id,
+            provider:
+              normalizedProvider,
+            transaction_id:
+              transaction,
+            external_reference:
+              reference,
+            amount:
+              paidTotal,
+            currency:
+              storedCurrency,
+            status:
+              "successful",
+          });
+
+      if (payment.error) {
+        await supabase
+          .from("order_items")
+          .delete()
+          .eq(
+            "order_id",
+            order.data.id
+          );
+
+        await supabase
+          .from("orders")
+          .delete()
+          .eq(
+            "id",
+            order.data.id
+          );
+
+        return res.status(500).json({
+          error:
+            "Payment record failed",
+        });
+      }
+
+      const hasWriter =
+        Boolean(
+          song.writer_user_id
+        );
+
+      const pasongPercent = 25;
+      const producerPercent =
+        37.5;
+      const artistPercent =
+        hasWriter
+          ? 31.875
+          : 37.5;
+      const writerPercent =
+        hasWriter
+          ? 5.625
+          : 0;
+
+      const artistRows =
+        await supabase
+          .from("song_artists")
+          .select(
+            "artist_user_id,artist_order,artist_share_percent"
+          )
+          .eq(
+            "song_id",
+            song_id
+          )
+          .order(
+            "artist_order",
+            {
+              ascending: true,
+            }
+          );
+
+      if (artistRows.error) {
+        await supabase
+          .from(
+            "payments"
+          )
+          .delete()
+          .eq(
+            "id",
+            payment.data?.id ||
+              ""
+          );
+
+        await supabase
+          .from(
+            "order_items"
+          )
+          .delete()
+          .eq(
+            "order_id",
+            order.data.id
+          );
+
+        await supabase
+          .from("orders")
+          .delete()
+          .eq(
+            "id",
+            order.data.id
+          );
+
+        return res.status(500).json({
+          error:
+            "Artist royalty data unavailable",
+        });
+      }
+
+      let artistIds =
+        (
+          artistRows.data ||
+          []
+        )
+          .map(
+            (row) =>
+              row.artist_user_id
+          )
+          .filter(validUuid);
+
+      if (
+        artistIds.length === 0 &&
+        validUuid(
+          song.artist_user_id
+        )
+      ) {
+        artistIds = [
+          song.artist_user_id,
+        ];
+      }
+
+      if (
+        artistIds.length === 0
+      ) {
+        await supabase
+          .from(
+            "payments"
+          )
+          .delete()
+          .eq(
+            "id",
+            payment.data?.id ||
+              ""
+          );
+
+        await supabase
+          .from(
+            "order_items"
+          )
+          .delete()
+          .eq(
+            "order_id",
+            order.data.id
+          );
+
+        await supabase
+          .from("orders")
+          .delete()
+          .eq(
+            "id",
+            order.data.id
+          );
+
+        return res.status(500).json({
+          error:
+            "No valid artist found for royalty distribution",
+        });
+      }
+
+      const calculatedArtistShares =
+        calculateArtistShares(
+          artistIds,
+          hasWriter
+        );
+
+      const royaltyRows = [];
+
+      for (
+        let i = 0;
+        i < artistIds.length;
+        i++
+      ) {
+        const percent =
+          calculatedArtistShares[
+            i
+          ];
+
+        royaltyRows.push(
+          buildRoyaltyRow({
+            recipientUserId:
+              artistIds[i],
+            recipientType:
+              "artist",
+            songId:
+              song_id,
+            orderId:
+              order.data.id,
+            saleReference:
+              reference,
+            saleAmount:
+              storedAmount,
+            currency:
+              storedCurrency,
+            percentage:
+              percent,
+            amount:
+              Number(
+                (
+                  (storedAmount *
+                    percent) /
+                  100
+                ).toFixed(2)
+              ),
+          })
+        );
+      }
+
+      if (
+        validUuid(
+          song.producer_user_id
+        )
+      ) {
+        royaltyRows.push(
+          buildRoyaltyRow({
+            recipientUserId:
+              song.producer_user_id,
+            recipientType:
+              "producer",
+            songId:
+              song_id,
+            orderId:
+              order.data.id,
+            saleReference:
+              reference,
+            saleAmount:
+              storedAmount,
+            currency:
+              storedCurrency,
+            percentage:
+              producerPercent,
+            amount:
+              Number(
+                (
+                  (storedAmount *
+                    producerPercent) /
+                  100
+                ).toFixed(2)
+              ),
+          })
+        );
+      }
+
+      if (
+        hasWriter &&
+        validUuid(
+          song.writer_user_id
+        )
+      ) {
+        royaltyRows.push(
+          buildRoyaltyRow({
+            recipientUserId:
+              song.writer_user_id,
+            recipientType:
+              "writer",
+            songId:
+              song_id,
+            orderId:
+              order.data.id,
+            saleReference:
+              reference,
+            saleAmount:
+              storedAmount,
+            currency:
+              storedCurrency,
+            percentage:
+              writerPercent,
+            amount:
+              Number(
+                (
+                  (storedAmount *
+                    writerPercent) /
+                  100
+                ).toFixed(2)
+              ),
+          })
+        );
+      }
+
+      royaltyRows.push(
+        buildRoyaltyRow({
+          recipientType:
+            "pasong_song",
+          songId:
+            song_id,
+          orderId:
+            order.data.id,
+          saleReference:
+            reference,
+          saleAmount:
+            storedAmount,
+          currency:
+            storedCurrency,
+          percentage:
+            pasongPercent,
+          amount:
+            Number(
+              (
+                (storedAmount *
+                  pasongPercent) /
+                100
+              ).toFixed(2)
+            ),
+        })
+      );
+
+      if (tipAmount > 0) {
+        const artistTipTotal =
+          Number(
+            (
+              tipAmount * 0.70
+            ).toFixed(2)
+          );
+
+        const pasongTipAmount =
+          Number(
+            (
+              tipAmount * 0.30
+            ).toFixed(2)
+          );
+
+        let artistTipUsed = 0;
+
+        for (
+          let i = 0;
+          i < artistIds.length;
+          i++
+        ) {
+          const songArtistPercent =
+            Number(
+              calculatedArtistShares[
+                i
+              ]
+            );
+
+          let artistTipAmount =
+            Number(
+              (
+                artistTipTotal *
+                (
+                  songArtistPercent /
+                  artistPercent
+                )
+              ).toFixed(2)
+            );
+
+          if (
+            i ===
+            artistIds.length - 1
+          ) {
+            artistTipAmount =
+              Number(
+                (
+                  artistTipTotal -
+                  artistTipUsed
+                ).toFixed(2)
+              );
+          }
+
+          artistTipUsed =
+            Number(
+              (
+                artistTipUsed +
+                artistTipAmount
+              ).toFixed(2)
+            );
+
+          royaltyRows.push(
+            buildRoyaltyRow({
+              recipientUserId:
+                artistIds[i],
+              recipientType:
+                "artist_tip",
+              songId:
+                song_id,
+              orderId:
+                order.data.id,
+              saleReference:
+                reference,
+              saleAmount:
+                tipAmount,
+              currency:
+                storedCurrency,
+              percentage:
+                Number(
+                  (
+                    70 *
+                    (
+                      songArtistPercent /
+                      artistPercent
+                    )
+                  ).toFixed(4)
+                ),
+              amount:
+                artistTipAmount,
+            })
+          );
+        }
+
+        royaltyRows.push(
+          buildRoyaltyRow({
+            recipientType:
+              "pasong_tip",
+            songId:
+              song_id,
+            orderId:
+              order.data.id,
+            saleReference:
+              reference,
+            saleAmount:
+              tipAmount,
+            currency:
+              storedCurrency,
+            percentage: 30,
+            amount:
+              pasongTipAmount,
+          })
+        );
+      }
+
+      const royaltyResult =
+        await supabase
+          .from(
+            "royalty_ledger"
+          )
+          .insert(
+            royaltyRows
+          );
+
+      if (
+        royaltyResult.error
+      ) {
+        await supabase
+          .from(
+            "payments"
+          )
+          .delete()
+          .eq(
+            "id",
+            payment.data?.id ||
+              ""
+          );
+
+        await supabase
+          .from(
+            "order_items"
+          )
+          .delete()
+          .eq(
+            "order_id",
+            order.data.id
+          );
+
+        await supabase
+          .from("orders")
+          .delete()
+          .eq(
+            "id",
+            order.data.id
+          );
+
+        return res.status(500).json({
+          error:
+            "Royalty distribution failed",
+          details:
+            royaltyResult.error
+              .message || null,
+        });
+      }
+
+      const download =
+        await supabase
+          .from("downloads")
+          .insert({
+            user_id:
+              buyer_id,
+            song_id,
+            order_id:
+              order.data.id,
+          });
+
+      if (download.error) {
+        await supabase
+          .from(
+            "royalty_ledger"
+          )
+          .delete()
+          .eq(
+            "order_id",
+            order.data.id
+          );
+
+        await supabase
+          .from(
+            "payments"
+          )
+          .delete()
+          .eq(
+            "id",
+            payment.data?.id ||
+              ""
+          );
+
+        await supabase
+          .from(
+            "order_items"
+          )
+          .delete()
+          .eq(
+            "order_id",
+            order.data.id
+          );
+
+        await supabase
+          .from("orders")
+          .delete()
+          .eq(
+            "id",
+            order.data.id
+          );
+
+        return res.status(500).json({
+          error:
+            "Download record failed",
+        });
+      }
+
+      res.json({
+        success: true,
+        order_id:
+          order.data.id,
+        song_amount:
+          storedAmount,
+        tip_amount:
+          tipAmount,
+        total_paid:
+          paidTotal,
+        currency:
+          storedCurrency,
+        download_created:
+          true,
+        royalty_split: {
+          pasong_percent:
+            pasongPercent,
+          producer_percent:
+            producerPercent,
+          artist_percent:
+            artistPercent,
+          writer_percent:
+            writerPercent,
+          tip_artist_percent:
+            70,
+          tip_pasong_percent:
+            30,
+        },
+      });
+    } catch (error) {
+      console.error(
+        "Payment completion error:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Payment completion failed",
+      });
+    }
+  }
+);
+
+function publicBeat(beat) {
+  if (!beat) {
+    return null;
+  }
+
+  return {
+    id: beat.id,
+    producer_id:
+      beat.producer_id,
+    title: beat.title,
+    audio_url:
+      beat.audio_url || null,
+    preview_url:
+      beat.preview_url ||
+      beat.audio_url ||
+      null,
+    cover_url:
+      beat.cover_url || null,
+    bpm: beat.bpm || null,
+    musical_key:
+      beat.musical_key || null,
+    genre:
+      beat.genre || null,
+    description:
+      beat.description || null,
+    lease_mp3_price:
+      Number(
+        beat.lease_mp3_price
+      ) || 0,
+    lease_wav_price:
+      Number(
+        beat.lease_wav_price
+      ) || 0,
+    stems_price:
+      Number(
+        beat.stems_price
+      ) || 0,
+    exclusive_price:
+      Number(
+        beat.exclusive_price
+      ) || 0,
+    status:
+      beat.status,
+    is_exclusive_sold:
+      Boolean(
+        beat.is_exclusive_sold
+      ),
+    created_at:
+      beat.created_at,
+  };
+}
+
+app.post(
+  "/api/beats/create",
+  async (req, res) => {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Auth",
+        });
+      }
+
+      const body =
+        req.body || {};
+
+      const cleanTitle =
+        cleanText(
+          body.title,
+          200
+        );
+
+      const audioUrl =
+        cleanText(
+          body.audio_url,
+          2000
+        );
+
+      const previewUrl =
+        cleanText(
+          body.preview_url ||
+            body.audio_url,
+          2000
+        );
+
+      const coverUrl =
+        cleanText(
+          body.cover_url,
+          2000
+        );
+
+      const producerId =
+        cleanText(
+          body.producer_id,
+          100
+        );
+
+      const cleanGenre =
+        cleanText(
+          body.genre,
+          100
+        ) || "Afrobeat";
+
+      const cleanKey =
+        cleanText(
+          body.musical_key ||
+            body.key,
+          50
+        );
+
+      const cleanBpm =
+        body.bpm ===
+          undefined ||
+        body.bpm === null ||
+        body.bpm === ""
+          ? null
+          : Number(body.bpm);
+
+      const getPriceInput = (
+        ...values
+      ) => {
+        for (
+          const value of values
+        ) {
+          if (
+            value !==
+              undefined &&
+            value !== null &&
+            String(value).trim() !==
+              ""
+          ) {
+            return value;
+          }
+        }
+
+        return null;
+      };
+
+      const mp3PriceRaw =
+        getPriceInput(
+          body.lease_mp3_price,
+          body.mp3_price,
+          body.mp3_lease_price
+        );
+
+      const wavPriceRaw =
+        getPriceInput(
+          body.lease_wav_price,
+          body.wav_price,
+          body.lease_wav_price
+        );
+
+      const stemsPriceRaw =
+        getPriceInput(
+          body.stems_price,
+          body.trackout_price,
+          body.lease_stems_price,
+          body.stems_lease_price
+        );
+
+      const exclusivePriceRaw =
+        getPriceInput(
+          body.exclusive_price
+        );
+
+      const mp3Price =
+        mp3PriceRaw === null
+          ? 10000
+          : Number(
+              mp3PriceRaw
+            );
+
+      const wavPrice =
+        wavPriceRaw === null
+          ? 25000
+          : Number(
+              wavPriceRaw
+            );
+
+      const stemsPrice =
+        stemsPriceRaw === null
+          ? 50000
+          : Number(
+              stemsPriceRaw
+            );
+
+      const exclusivePrice =
+        exclusivePriceRaw === null
+          ? 500000
+          : Number(
+              exclusivePriceRaw
+            );
+
+      if (!cleanTitle) {
+        return res.status(400).json({
+          error:
+            "Beat title required",
+        });
+      }
+
+      if (!audioUrl) {
+        return res.status(400).json({
+          error:
+            "Audio file required",
+        });
+      }
+
+      if (!validUrl(audioUrl)) {
+        return res.status(400).json({
+          error:
+            "Invalid audio URL",
+        });
+      }
+
+      if (!previewUrl) {
+        return res.status(400).json({
+          error:
+            "Preview URL required",
+        });
+      }
+
+      if (
+        !validUrl(previewUrl)
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid preview URL",
+        });
+      }
+
+      if (
+        coverUrl &&
+        !validUrl(coverUrl)
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid cover URL",
+        });
+      }
+
+      if (
+        cleanBpm !== null &&
+        (
+          !Number.isFinite(
+            cleanBpm
+          ) ||
+          cleanBpm < 1 ||
+          cleanBpm > 400
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid BPM",
+        });
+      }
+
+      if (
+        !producerId ||
+        !validUuid(producerId)
+      ) {
+        return res.status(400).json({
+          error:
+            "Producer profile required",
+        });
+      }
+
+      if (
+        !Number.isFinite(
+          mp3Price
+        ) ||
+        mp3Price < 10000 ||
+        mp3Price > 1500000
+      ) {
+        return res.status(400).json({
+          error:
+            "MP3 lease price must be between UGX 10,000 and UGX 1,500,000",
+        });
+      }
+
+      if (
+        !Number.isFinite(
+          wavPrice
+        ) ||
+        wavPrice < 10000 ||
+        wavPrice > 1500000
+      ) {
+        return res.status(400).json({
+          error:
+            "WAV lease price must be between UGX 10,000 and UGX 1,500,000",
+        });
+      }
+
+      if (
+        !Number.isFinite(
+          stemsPrice
+        ) ||
+        stemsPrice < 10000 ||
+        stemsPrice > 1500000
+      ) {
+        return res.status(400).json({
+          error:
+            "Stems/Trackout price must be between UGX 10,000 and UGX 1,500,000",
+        });
+      }
+
+      if (
+        !Number.isFinite(
+          exclusivePrice
+        ) ||
+        exclusivePrice < 500000 ||
+        exclusivePrice > 10000000
+      ) {
+        return res.status(400).json({
+          error:
+            "Exclusive price must be between UGX 500,000 and UGX 10,000,000",
+        });
+      }
+
+      const producerProfile =
+        await supabase
+          .from(
+            "artist_profiles"
+          )
+          .select(
+            "id,user_id"
+          )
+          .eq(
+            "id",
+            producerId
+          )
+          .maybeSingle();
+
+      if (
+        producerProfile.error
+      ) {
+        return res.status(500).json({
+          error:
+            "Producer profile lookup failed",
+          details:
+            producerProfile.error
+              .message || null,
+        });
+      }
+
+      if (
+        !producerProfile.data
+      ) {
+        return res.status(400).json({
+          error:
+            "Producer profile not found",
+        });
+      }
+
+      if (
+        producerProfile.data
+          .user_id !== user.id
+      ) {
+        return res.status(403).json({
+          error:
+            "Producer profile does not belong to this account",
+        });
+      }
+
+      const beatResult =
+        await supabase
+          .from("beats")
+          .insert({
+            producer_id:
+              producerId,
+            title:
+              cleanTitle,
+            audio_url:
+              audioUrl,
+            preview_url:
+              previewUrl,
+            cover_url:
+              coverUrl || null,
+            genre:
+              cleanGenre,
+            bpm:
+              cleanBpm,
+            musical_key:
+              cleanKey || null,
+            lease_mp3_price:
+              mp3Price,
+            lease_wav_price:
+              wavPrice,
+            stems_price:
+              stemsPrice,
+            exclusive_price:
+              exclusivePrice,
+            status:
+              "approved",
+            is_exclusive_sold:
+              false,
+          })
+          .select()
+          .single();
+
+      if (beatResult.error) {
+        return res.status(500).json({
+          error:
+            "Beat creation failed",
+          details:
+            beatResult.error
+              .message || null,
+          code:
+            beatResult.error
+              .code || null,
+          hint:
+            beatResult.error
+              .hint || null,
+        });
+      }
+
+      res.status(201).json({
+        success: true,
+        beat: publicBeat(
+          beatResult.data
+        ),
+        prices: {
+          mp3: mp3Price,
+          wav: wavPrice,
+          stems: stemsPrice,
+          exclusive:
+            exclusivePrice,
+        },
+      });
+    } catch (error) {
+      res.status(500).json({
+        error:
+          "Beat creation failed",
+        details:
+          error &&
+          error.message
+            ? error.message
+            : null,
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/producers",
+  async (req, res) => {
+    try {
+      const profilesResult =
+        await supabase
+          .from(
+            "artist_profiles"
+          )
+          .select(`
+            id,
+            artist_name,
+            stage_name,
+            performing_name,
+            profile_image_url,
+            location,
+            bio
+          `)
+          .order(
+            "created_at",
+            {
+              ascending: false,
+            }
+          );
+
+      if (
+        profilesResult.error
+      ) {
+        return res.status(500).json({
+          error:
+            "Unable to load producers",
+          details:
+            profilesResult.error
+              .message || null,
+        });
+      }
+
+      const beatsResult =
+        await supabase
+          .from("beats")
+          .select("*")
+          .in("status", [
+            "approved",
+            "sold_exclusive",
+          ])
+          .order(
+            "created_at",
+            {
+              ascending: false,
+            }
+          );
+
+      if (beatsResult.error) {
+        return res.status(500).json({
+          error:
+            "Unable to load producer beats",
+          details:
+            beatsResult.error
+              .message || null,
+        });
+      }
+
+      const beats =
+        beatsResult.data || [];
+
+      const producerIds =
+        new Set(
+          beats
+            .map(
+              (beat) =>
+                beat.producer_id
+            )
+            .filter(Boolean)
+        );
+
+      const producers =
+        (
+          profilesResult.data ||
+          []
+        )
+          .filter(
+            (profile) =>
+              producerIds.has(
+                profile.id
+              )
+          )
+          .map((profile) => ({
+            id: profile.id,
+            artist_name:
+              profile.artist_name ||
+              null,
+            stage_name:
+              profile.stage_name ||
+              null,
+            performing_name:
+              profile.performing_name ||
+              null,
+            profile_image_url:
+              profile.profile_image_url ||
+              null,
+            location:
+              profile.location ||
+              null,
+            bio:
+              profile.bio ||
+              null,
+            beats: beats
+              .filter(
+                (beat) =>
+                  beat.producer_id ===
+                  profile.id
+              )
+              .map(publicBeat),
+          }));
+
+      res.json({
+        producers,
+      });
+    } catch (error) {
+      res.status(500).json({
+        error:
+          "Unable to load producers",
+        details:
+          error &&
+          error.message
+            ? error.message
+            : null,
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/beats",
+  async (req, res) => {
+    const result =
+      await supabase
+        .from("beats")
+        .select("*")
+        .in("status", [
+          "approved",
+          "sold_exclusive",
+        ])
+        .order(
+          "created_at",
+          {
+            ascending: false,
+          }
+        );
+
+    if (result.error) {
+      return res.status(500).json({
+        error:
+          "Unable to load beats",
+        details:
+          result.error.message ||
+          null,
+      });
+    }
+
+    res.json({
+      beats: (
+        result.data || []
+      ).map(publicBeat),
+    });
+  }
+);
+
+app.get(
+  "/api/beats/:id",
+  async (req, res) => {
+    if (
+      !validUuid(req.params.id)
+    ) {
+      return res.status(400).json({
+        error:
+          "Invalid beat id",
+      });
+    }
+
+    const result =
+      await supabase
+        .from("beats")
+        .select("*")
+        .eq(
+          "id",
+          req.params.id
+        )
+        .in("status", [
+          "approved",
+          "sold_exclusive",
+        ])
+        .maybeSingle();
+
+    if (
+      result.error ||
+      !result.data
+    ) {
+      return res.status(404).json({
+        error:
+          "Beat not found",
+      });
+    }
+
+    res.json({
+      beat: publicBeat(
+        result.data
+      ),
+    });
+  }
+);
+
+app.post(
+  "/api/beats/:id/pay",
+  async (req, res) => {
+    try {
+      const user =
+        await getAuthenticatedUser(
+          req
+        );
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Auth",
+        });
+      }
+
+      if (
+        !validUuid(
+          req.params.id
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid beat id",
+        });
+      }
+
+      const packageType =
+        String(
+          req.body.package_type ||
+            ""
+        ).trim();
+
+      const provider =
+        normalizeProvider(
+          req.body.provider
+        );
+
+      if (
+        ![
+          "mp3",
+          "wav",
+          "stems",
+          "exclusive",
+        ].includes(packageType)
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid package",
+        });
+      }
+
+      if (
+        !allowedPaymentProvider(
+          provider
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid payment provider",
+        });
+      }
+
+      const beatResult =
+        await supabase
+          .from("beats")
+          .select(
+            "id,producer_id,status,title,lease_mp3_price,lease_wav_price,stems_price,exclusive_price,is_exclusive_sold"
+          )
+          .eq(
+            "id",
+            req.params.id
+          )
+          .maybeSingle();
+
+      if (
+        beatResult.error ||
+        !beatResult.data
+      ) {
+        return res.status(404).json({
+          error:
+            "Beat not found",
+        });
+      }
+
+      const beat =
+        beatResult.data;
+
+      if (
+        beat.status !==
+          "approved" ||
+        beat.is_exclusive_sold
+      ) {
+        return res.status(400).json({
+          error:
+            "Beat is not available",
+        });
+      }
+
+      const producerProfile =
+        await supabase
+          .from(
+            "artist_profiles"
+          )
+          .select(
+            "id,user_id"
+          )
+          .eq(
+            "id",
+            beat.producer_id
+          )
+          .maybeSingle();
+
+      if (
+        producerProfile.error ||
+        !producerProfile.data
+      ) {
+        return res.status(404).json({
+          error:
+            "Producer profile not found",
+        });
+      }
+
+      if (
+        producerProfile.data
+          .user_id === user.id
+      ) {
+        return res.status(400).json({
+          error:
+            "You cannot purchase your own beat",
+        });
+      }
+
+      let packagePrice = 0;
+
+      if (
+        packageType === "mp3"
+      ) {
+        packagePrice =
+          Number(
+            beat.lease_mp3_price
+          );
+      }
+
+      if (
+        packageType === "wav"
+      ) {
+        packagePrice =
+          Number(
+            beat.lease_wav_price
+          );
+      }
+
+      if (
+        packageType === "stems"
+      ) {
+        packagePrice =
+          Number(
+            beat.stems_price
+          );
+      }
+
+      if (
+        packageType ===
+        "exclusive"
+      ) {
+        packagePrice =
+          Number(
+            beat.exclusive_price
+          );
+      }
+
+      if (
+        !Number.isFinite(
+          packagePrice
+        ) ||
+        packagePrice <= 0
+      ) {
+        return res.status(400).json({
+          error:
+            "Package price unavailable",
+        });
+      }
+
+      const existingPurchase =
+        await supabase
+          .from(
+            "beat_orders"
+          )
+          .select(
+            "id,status"
+          )
+          .eq(
+            "buyer_id",
+            user.id
+          )
+          .eq(
+            "beat_id",
+            req.params.id
+          )
+          .eq(
+            "package_type",
+            packageType
+          )
+          .eq(
+            "status",
+            "paid"
+          )
+          .limit(1)
+          .maybeSingle();
+
+      if (
+        existingPurchase.error
+      ) {
+        return res.status(500).json({
+          error:
+            "Purchase check failed",
+        });
+      }
+
+      if (
+        existingPurchase.data
+      ) {
+        return res.status(400).json({
+          error:
+            "You already purchased this package",
+        });
+      }
+
+      if (
+        packageType ===
+        "exclusive"
+      ) {
+        const exclusiveCheck =
+          await supabase
+            .from(
+              "beat_orders"
+            )
+            .select("id")
+            .eq(
+              "beat_id",
+              req.params.id
+            )
+            .eq(
+              "package_type",
+              "exclusive"
+            )
+            .eq(
+              "status",
+              "paid"
+            )
+            .limit(1)
+            .maybeSingle();
+
+        if (
+          exclusiveCheck.error
+        ) {
+          return res.status(500).json({
+            error:
+              "Exclusive availability check failed",
+          });
+        }
+
+        if (
+          exclusiveCheck.data
+        ) {
+          return res.status(400).json({
+            error:
+              "Exclusive already sold",
+          });
+        }
+      }
+
+      const externalReference =
+        `PASONG-BEAT-${Date.now()}-${crypto
+          .randomBytes(8)
+          .toString("hex")}`;
+
+      const orderResult =
+        await supabase
+          .from(
+            "beat_orders"
+          )
+          .insert({
+            buyer_id:
+              user.id,
+            beat_id:
+              req.params.id,
+            package_type:
+              packageType,
+            price:
+              packagePrice,
+            currency:
+              "UGX",
+            provider,
+            status:
+              "pending",
+            external_reference:
+              externalReference,
+          })
+          .select()
+          .single();
+
+      if (
+        orderResult.error
+      ) {
+        return res.status(500).json({
+          error:
+            "Beat order creation failed",
+          details:
+            orderResult.error
+              .message || null,
+        });
+      }
+
+      res.json({
+        success: true,
+        order:
+          orderResult.data,
+      });
+    } catch (error) {
+      res.status(500).json({
+        error:
+          "Beat payment setup failed",
+        details:
+          error &&
+          error.message
+            ? error.message
+            : null,
+      });
+    }
+  }
+);
+
+
+// ============================================================
+// PASONG BEAT CARD CHECKOUT - PESAPAL API 3.0
+// Hosted checkout; payment is verified server-to-server before
+// the existing protected beat-order completion route is called.
+// Required environment variables: PESAPAL_CONSUMER_KEY,
+// PESAPAL_CONSUMER_SECRET, PESAPAL_ENVIRONMENT, PESAPAL_BEATS_IPN_ID.
+// Register the IPN URL in Pesapal and set the returned notification ID.
+// ============================================================
+
+async function pesapalRequestToken() {
+  if (!PESAPAL_CONSUMER_KEY || !PESAPAL_CONSUMER_SECRET) {
+    throw new Error("Pesapal credentials are not configured.");
+  }
+  const response = await fetch(`${PESAPAL_BASE_URL}/api/Auth/RequestToken`, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      consumer_key: PESAPAL_CONSUMER_KEY,
+      consumer_secret: PESAPAL_CONSUMER_SECRET,
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.token) {
+    console.error("Pesapal authentication failed:", data);
+    throw new Error("Pesapal authentication failed.");
+  }
+  return data.token;
+}
+
+async function pesapalGetTransactionStatus(trackingId) {
+  if (!trackingId) throw new Error("Missing Pesapal tracking ID.");
+  const token = await pesapalRequestToken();
+  const url = `${PESAPAL_BASE_URL}/api/Transactions/GetTransactionStatus?orderTrackingId=${encodeURIComponent(trackingId)}`;
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    console.error("Pesapal transaction status lookup failed:", data);
+    throw new Error("Unable to verify Pesapal transaction status.");
+  }
+  return data;
+}
+
+function pesapalPaymentIsCompleted(payment) {
+  const status = String(
+    payment?.payment_status_description ||
+    payment?.status ||
+    payment?.payment_status ||
+    ""
+  ).trim().toLowerCase();
+  const code = Number(payment?.status_code ?? payment?.payment_status_code);
+  return status === "completed" || status === "successful" || code === 1;
+}
+
+async function completeVerifiedBeatPesapalPayment({ trackingId, merchantReference }) {
+  const txRef = String(merchantReference || "").trim();
+  if (!txRef || !trackingId) throw new Error("Missing Pesapal payment reference.");
+
+  const statusData = await pesapalGetTransactionStatus(trackingId);
+  const statusReference = String(
+    statusData?.merchant_reference || statusData?.OrderMerchantReference || ""
+  ).trim();
+
+  if (!pesapalPaymentIsCompleted(statusData)) {
+    return { paid: false, status: statusData };
+  }
+  if (statusReference && statusReference !== txRef) {
+    throw new Error("Pesapal merchant reference mismatch.");
+  }
+
+  const orderLookup = await supabase
+    .from("beat_orders")
+    .select("id,beat_id,package_type,price,currency,buyer_id,external_reference,status")
+    .eq("external_reference", txRef)
+    .maybeSingle();
+
+  if (orderLookup.error || !orderLookup.data) {
+    throw new Error("PASONG could not find this payment order.");
+  }
+  const order = orderLookup.data;
+  const verifiedAmount = Number(statusData?.amount);
+  const verifiedCurrency = String(statusData?.currency || "").trim().toUpperCase();
+  const expectedAmount = Number(order.price);
+  const expectedCurrency = String(order.currency || "").trim().toUpperCase();
+
+  if (
+    !Number.isFinite(verifiedAmount) ||
+    verifiedAmount <= 0 ||
+    !isSameAmount(verifiedAmount, expectedAmount) ||
+    verifiedCurrency !== expectedCurrency
+  ) {
+    console.error("Pesapal amount/currency mismatch:", {
+      verifiedAmount, expectedAmount, verifiedCurrency, expectedCurrency,
+    });
+    throw new Error("Pesapal payment amount or currency did not match the order.");
+  }
+
+  if (order.status === "paid") {
+    return { paid: true, alreadyCompleted: true, order };
+  }
+
+  const completeResponse = await fetch(
+    `http://127.0.0.1:${PORT}/api/beats/payments/complete`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-pasong-payment-secret": PASONG_PAYMENT_SECRET,
+      },
+      body: JSON.stringify({
+        order_id: order.id,
+        transaction_id: String(trackingId),
+        external_reference: txRef,
+        payment_status: "SUCCESSFUL",
+        amount: verifiedAmount,
+        currency: verifiedCurrency,
+      }),
+    }
+  );
+  const completeData = await completeResponse.json().catch(() => ({}));
+  if (!completeResponse.ok) {
+    console.error("PASONG beat payment completion failed:", completeData);
+    throw new Error(completeData.error || "PASONG could not finish the verified order.");
+  }
+  return { paid: true, order, completion: completeData };
+}
+
+app.post("/api/beats/:id/card-checkout", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Auth" });
+    if (!validUuid(req.params.id)) return res.status(400).json({ error: "Invalid beat id" });
+    if (!PESAPAL_CONSUMER_KEY || !PESAPAL_CONSUMER_SECRET || !PESAPAL_BEATS_IPN_ID) {
+      return res.status(503).json({
+        error: "Pesapal checkout is not configured. Set PESAPAL_CONSUMER_KEY, PESAPAL_CONSUMER_SECRET and PESAPAL_BEATS_IPN_ID in Render.",
+      });
+    }
+
+    const orderId = String(req.body?.order_id || "").trim();
+    const packageType = String(req.body?.package_type || "").trim();
+    if (!validUuid(orderId)) return res.status(400).json({ error: "Invalid order id" });
+    if (!["mp3", "wav", "stems", "exclusive"].includes(packageType)) {
+      return res.status(400).json({ error: "Invalid package" });
+    }
+
+    const orderResult = await supabase.from("beat_orders").select("*")
+      .eq("id", orderId).eq("buyer_id", user.id).eq("beat_id", req.params.id).maybeSingle();
+    if (orderResult.error || !orderResult.data) {
+      return res.status(404).json({ error: "Beat order not found" });
+    }
+    const order = orderResult.data;
+    if (order.status === "paid") return res.status(400).json({ error: "This order has already been paid" });
+    if (String(order.provider || "").trim().toUpperCase() !== "PESAPAL") {
+      return res.status(400).json({ error: "This order is not a Pesapal payment order. Create the order with provider PESAPAL." });
+    }
+    if (order.package_type !== packageType) return res.status(400).json({ error: "Package does not match the order" });
+
+    const beatResult = await supabase.from("beats")
+      .select("id,title,producer_id,status,is_exclusive_sold")
+      .eq("id", req.params.id).maybeSingle();
+    if (beatResult.error || !beatResult.data) return res.status(404).json({ error: "Beat not found" });
+    const beat = beatResult.data;
+    if (beat.status !== "approved" || beat.is_exclusive_sold) {
+      return res.status(400).json({ error: "Beat is no longer available" });
+    }
+
+    const amount = Number(order.price);
+    const currency = String(order.currency || "UGX").trim().toUpperCase();
+    if (!Number.isFinite(amount) || amount <= 0 || currency !== "UGX") {
+      return res.status(400).json({ error: "Invalid order amount or currency for Pesapal checkout" });
+    }
+    const merchantReference = String(order.external_reference || "").trim();
+    if (!merchantReference || !/^[A-Za-z0-9._:-]{1,50}$/.test(merchantReference)) {
+      return res.status(400).json({ error: "Invalid order payment reference" });
+    }
+
+    const customerName = String(
+      user.user_metadata?.full_name || user.user_metadata?.name ||
+      user.email?.split("@")[0] || "PASONG Customer"
+    ).trim();
+    const nameParts = customerName.split(/\s+/);
+    const callbackUrl = `${PASONG_API_PUBLIC_URL}/api/beats/pesapal/callback`;
+    const cancelUrl = `${PASONG_FRONTEND_URL}/beat-checkout.html?payment=cancelled`;
+
+    const token = await pesapalRequestToken();
+    const payload = {
+      id: merchantReference,
+      currency,
+      amount,
+      description: `${beat.title || "Beat"} - ${packageType} licence`.slice(0, 100),
+      callback_url: callbackUrl,
+      cancellation_url: cancelUrl,
+      notification_id: PESAPAL_BEATS_IPN_ID,
+      redirect_mode: "TOP_WINDOW",
+      billing_address: {
+        email_address: String(user.email || ""),
+        phone_number: String(req.body?.phone_number || "").trim() || undefined,
+        country_code: "UG",
+        first_name: nameParts[0] || "PASONG",
+        last_name: nameParts.slice(1).join(" ") || "Customer",
+      },
+    };
+    if (!payload.billing_address.email_address && !payload.billing_address.phone_number) {
+      return res.status(400).json({ error: "Your account must have an email address or provide a phone number for Pesapal checkout." });
+    }
+
+    const submitResponse = await fetch(`${PESAPAL_BASE_URL}/api/Transactions/SubmitOrderRequest`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    const submitData = await submitResponse.json().catch(() => ({}));
+    const checkoutUrl = String(submitData?.redirect_url || "").trim();
+    const trackingId = String(submitData?.order_tracking_id || "").trim();
+    if (!submitResponse.ok || !checkoutUrl || !trackingId) {
+      console.error("Pesapal checkout creation failed:", submitData);
+      return res.status(502).json({
+        error: "Pesapal could not create the checkout.",
+        details: submitData?.error?.message || submitData?.message || null,
+      });
+    }
+
+    return res.json({
+      success: true,
+      provider: "PESAPAL",
+      order_id: order.id,
+      external_reference: merchantReference,
+      order_tracking_id: trackingId,
+      checkout_url: checkoutUrl,
+    });
+  } catch (error) {
+    console.error("Pesapal beat checkout error:", error);
+    return res.status(500).json({ error: "Pesapal checkout setup failed", details: error?.message || null });
+  }
+});
+
+app.get("/api/beats/pesapal/callback", async (req, res) => {
+  const frontendUrl = PASONG_FRONTEND_URL.replace(/\/$/, "");
+  const trackingId = String(req.query.OrderTrackingId || "").trim();
+  const merchantReference = String(req.query.OrderMerchantReference || "").trim();
+  if (!trackingId || !merchantReference) {
+    return res.redirect(`${frontendUrl}/beat-checkout.html?payment=failed`);
+  }
+  try {
+    const result = await completeVerifiedBeatPesapalPayment({ trackingId, merchantReference });
+    if (!result.paid) {
+      return res.redirect(`${frontendUrl}/beat-checkout.html?payment=pending&tx_ref=${encodeURIComponent(merchantReference)}`);
+    }
+    return res.redirect(`${frontendUrl}/beat-checkout.html?payment=success&order_id=${encodeURIComponent(result.order.id)}&id=${encodeURIComponent(result.order.beat_id)}&package=${encodeURIComponent(result.order.package_type)}`);
+  } catch (error) {
+    console.error("Pesapal beat callback error:", error);
+    return res.redirect(`${frontendUrl}/beat-checkout.html?payment=error&message=${encodeURIComponent("Unable to verify the Pesapal payment.")}`);
+  }
+});
+
+app.get("/api/beats/pesapal/ipn", async (req, res) => {
+  const trackingId = String(req.query.OrderTrackingId || "").trim();
+  const merchantReference = String(req.query.OrderMerchantReference || "").trim();
+  const notificationType = String(req.query.OrderNotificationType || "IPNCHANGE").trim();
+  if (!trackingId || !merchantReference) {
+    return res.status(400).json({ error: "Missing Pesapal IPN parameters" });
+  }
+  try {
+    const result = await completeVerifiedBeatPesapalPayment({ trackingId, merchantReference });
+    return res.json({
+      orderNotificationType: notificationType,
+      orderTrackingId: trackingId,
+      orderMerchantReference: merchantReference,
+      status: result.paid ? "completed" : "pending",
+    });
+  } catch (error) {
+    console.error("Pesapal beat IPN processing error:", error);
+    return res.status(500).json({ error: "Pesapal IPN processing failed" });
+  }
+});
+
+
+app.post(
+  "/api/beats/payments/complete",
+  async (req, res) => {
+    try {
+      if (
+        !safeSecretCompare(
+          req.headers[
+            "x-pasong-payment-secret"
+          ],
+          PASONG_PAYMENT_SECRET
+        )
+      ) {
+        return res.status(401).json({
+          error: "Unauthorized",
+        });
+      }
+
+      const {
+        order_id,
+        transaction_id,
+        external_reference,
+        payment_status,
+        amount,
+        currency,
+      } = req.body || {};
+
+      if (
+        !validUuid(order_id)
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid order",
+        });
+      }
+
+      const transaction =
+        String(
+          transaction_id || ""
+        ).trim();
+
+      const reference =
+        String(
+          external_reference || ""
+        ).trim();
+
+      if (
+        !transaction ||
+        !reference
+      ) {
+        return res.status(400).json({
+          error:
+            "Transaction and reference required",
+        });
+      }
+
+      if (
+        payment_status !==
+        "SUCCESSFUL"
+      ) {
+        return res.status(400).json({
+          error:
+            "Not successful",
+        });
+      }
+
+      if (
+        !validPositiveNumber(
+          amount
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid amount",
+        });
+      }
+
+      const orderResult =
+        await supabase
+          .from("beat_orders")
+          .select("*")
+          .eq(
+            "id",
+            order_id
+          )
+          .maybeSingle();
+
+      if (
+        orderResult.error ||
+        !orderResult.data
+      ) {
+        return res.status(404).json({
+          error:
+            "Order not found",
+        });
+      }
+
+      const order =
+        orderResult.data;
+
+      if (
+        order.status ===
+        "paid"
+      ) {
+        return res.json({
+          success: true,
+          already_completed:
+            true,
+        });
+      }
+
+      if (
+        String(
+          order.external_reference ||
+            ""
+        ) !== reference
+      ) {
+        return res.status(400).json({
+          error:
+            "Payment reference does not match order",
+        });
+      }
+
+      const storedAmount =
+        Number(order.price);
+
+      const storedCurrency =
+        String(
+          order.currency || ""
+        ).toUpperCase();
+
+      const paidCurrency =
+        String(
+          currency || ""
+        ).toUpperCase();
+
+      if (
+        !isSameAmount(
+          amount,
+          storedAmount
+        ) ||
+        paidCurrency !==
+          storedCurrency
+      ) {
+        return res.status(400).json({
+          error:
+            "Payment amount or currency does not match order",
+        });
+      }
+
+      const beatResult =
+        await supabase
+          .from("beats")
+          .select("*")
+          .eq(
+            "id",
+            order.beat_id
+          )
+          .maybeSingle();
+
+      if (
+        beatResult.error ||
+        !beatResult.data
+      ) {
+        return res.status(404).json({
+          error:
+            "Beat not found",
+        });
+      }
+
+      const beat =
+        beatResult.data;
+
+      if (
+        order.package_type ===
+          "exclusive" &&
+        beat.is_exclusive_sold
+      ) {
+        return res.status(400).json({
+          error:
+            "Exclusive already sold",
+        });
+      }
+
+      const producerProfile =
+        await supabase
+          .from(
+            "artist_profiles"
+          )
+          .select(
+            "id,user_id"
+          )
+          .eq(
+            "id",
+            beat.producer_id
+          )
+          .maybeSingle();
+
+      if (
+        producerProfile.error ||
+        !producerProfile.data
+      ) {
+        return res.status(404).json({
+          error:
+            "Producer profile not found",
+        });
+      }
+
+      const producerUserId =
+        producerProfile.data
+          .user_id;
+
+      const existingTransaction =
+        await supabase
+          .from(
+            "beat_orders"
+          )
+          .select(
+            "id,status,buyer_id,beat_id,package_type"
+          )
+          .eq(
+            "transaction_id",
+            transaction
+          )
+          .neq(
+            "id",
+            order_id
+          )
+          .maybeSingle();
+
+      if (
+        existingTransaction.error
+      ) {
+        return res.status(500).json({
+          error:
+            "Transaction verification failed",
+        });
+      }
+
+      if (
+        existingTransaction.data
+      ) {
+        return res.status(400).json({
+          error:
+            "Transaction already used",
+        });
+      }
+
+      const existingReference =
+        await supabase
+          .from(
+            "beat_orders"
+          )
+          .select(
+            "id,status,buyer_id,beat_id,package_type"
+          )
+          .eq(
+            "external_reference",
+            reference
+          )
+          .neq(
+            "id",
+            order_id
+          )
+          .maybeSingle();
+
+      if (
+        existingReference.error
+      ) {
+        return res.status(500).json({
+          error:
+            "Reference verification failed",
+        });
+      }
+
+      if (
+        existingReference.data
+      ) {
+        return res.status(400).json({
+          error:
+            "Reference already used",
+        });
+      }
+
+      const existingDownload =
+        await supabase
+          .from(
+            "beat_downloads"
+          )
+          .select("id")
+          .eq(
+            "user_id",
+            order.buyer_id
+          )
+          .eq(
+            "beat_id",
+            beat.id
+          )
+          .eq(
+            "package_type",
+            order.package_type
+          )
+          .limit(1)
+          .maybeSingle();
+
+      if (
+        existingDownload.error
+      ) {
+        return res.status(500).json({
+          error:
+            "Download verification failed",
+        });
+      }
+
+      if (
+        existingDownload.data
+      ) {
+        return res.json({
+          success: true,
+          already_completed:
+            true,
+        });
+      }
+
+      const producerAmount =
+        Number(
+          (
+            storedAmount *
+            0.75
+          ).toFixed(2)
+        );
+
+      const pasongAmount =
+        Number(
+          (
+            storedAmount *
+            0.25
+          ).toFixed(2)
+        );
+
+      const license =
+        await supabase
+          .from(
+            "beat_licenses"
+          )
+          .insert({
+            beat_id:
+              beat.id,
+            order_id:
+              order.id,
+            buyer_id:
+              order.buyer_id,
+            producer_user_id:
+              producerUserId,
+            package_type:
+              order.package_type,
+            license_text:
+              `License for ${beat.title} - ${order.package_type}`,
+          });
+
+      if (license.error) {
+        return res.status(500).json({
+          error:
+            "License creation failed",
+          details:
+            license.error
+              .message || null,
+        });
+      }
+
+      const download =
+        await supabase
+          .from(
+            "beat_downloads"
+          )
+          .insert({
+            user_id:
+              order.buyer_id,
+            beat_id:
+              beat.id,
+            order_id:
+              order.id,
+            package_type:
+              order.package_type,
+          });
+
+      if (download.error) {
+        return res.status(500).json({
+          error:
+            "Beat download creation failed",
+          details:
+            download.error
+              .message || null,
+        });
+      }
+
+      const producerRoyalty =
+        await supabase
+          .from(
+            "royalty_ledger"
+          )
+          .insert(
+            buildRoyaltyRow({
+              recipientUserId:
+                producerUserId,
+              recipientType:
+                "beat_producer",
+              beatId:
+                beat.id,
+              orderId:
+                order.id,
+              saleReference:
+                reference,
+              saleAmount:
+                storedAmount,
+              currency:
+                storedCurrency,
+              percentage: 75,
+              amount:
+                producerAmount,
+            })
+          );
+
+      if (
+        producerRoyalty.error
+      ) {
+        return res.status(500).json({
+          error:
+            "Producer royalty failed",
+          details:
+            producerRoyalty.error
+              .message || null,
+        });
+      }
+
+      const pasongRoyalty =
+        await supabase
+          .from(
+            "royalty_ledger"
+          )
+          .insert(
+            buildRoyaltyRow({
+              recipientType:
+                "pasong_beat",
+              beatId:
+                beat.id,
+              orderId:
+                order.id,
+              saleReference:
+                reference,
+              saleAmount:
+                storedAmount,
+              currency:
+                storedCurrency,
+              percentage: 25,
+              amount:
+                pasongAmount,
+            })
+          );
+
+      if (
+        pasongRoyalty.error
+      ) {
+        return res.status(500).json({
+          error:
+            "PASONG royalty failed",
+          details:
+            pasongRoyalty.error
+              .message || null,
+        });
+      }
+
+      const orderUpdateData = {
+        status: "paid",
+        transaction_id:
+          transaction,
+        external_reference:
+          reference,
+        paid_amount:
+          storedAmount,
+        paid_currency:
+          storedCurrency,
+      };
+
+      const orderUpdate =
+        await supabase
+          .from(
+            "beat_orders"
+          )
+          .update(
+            orderUpdateData
+          )
+          .eq(
+            "id",
+            order.id
+          );
+
+      if (
+        orderUpdate.error
+      ) {
+        return res.status(500).json({
+          error:
+            "Beat order completion failed",
+          details:
+            orderUpdate.error
+              .message || null,
+        });
+      }
+
+      if (
+        order.package_type ===
+        "exclusive"
+      ) {
+        const exclusiveUpdate =
+          await supabase
+            .from("beats")
+            .update({
+              status:
+                "sold_exclusive",
+              is_exclusive_sold:
+                true,
+            })
+            .eq(
+              "id",
+              beat.id
+            );
+
+        if (
+          exclusiveUpdate.error
+        ) {
+          return res.status(500).json({
+            error:
+              "Exclusive status update failed",
+            details:
+              exclusiveUpdate.error
+                .message || null,
+          });
+        }
+      }
+
+      const notification =
+        await supabase
+          .from(
+            "producer_notifications"
+          )
+          .insert({
+            producer_user_id:
+              producerUserId,
+            type:
+              "beat_sale",
+            message:
+              `Your beat ${beat.title} sold ${order.package_type} for ${storedAmount} ${storedCurrency}`,
+            beat_id:
+              beat.id,
+            order_id:
+              order.id,
+          });
+
+      res.json({
+        success: true,
+        producer_earning:
+          producerAmount,
+        pasong_earning:
+          pasongAmount,
+        notification_saved:
+          !notification.error,
+      });
+    } catch (error) {
+      res.status(500).json({
+        error:
+          "Beat payment completion failed",
+        details:
+          error &&
+          error.message
+            ? error.message
+            : null,
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/beats/orders/my",
+  async (req, res) => {
+    const user =
+      await getAuthenticatedUser(req);
+
+    if (!user) {
+      return res.status(401).json({
+        error: "Auth",
+      });
+    }
+
+    const result =
+      await supabase
+        .from("beat_orders")
+        .select(
+          "*, beats(*)"
+        )
+        .eq(
+          "buyer_id",
+          user.id
+        )
+        .order(
+          "created_at",
+          {
+            ascending: false,
+          }
+        );
+
+    if (result.error) {
+      return res.status(500).json({
+        error:
+          "Unable to load orders",
+      });
+    }
+
+    const orders =
+      (
+        result.data || []
+      ).map((order) => {
+        if (order.beats) {
+          order.beats =
+            publicBeat(
+              order.beats
+            );
+        }
+
+        return order;
+      });
+
+    res.json({
+      orders,
+    });
+  }
+);
+
+app.get(
+  "/api/beats/orders/producer",
+  async (req, res) => {
+    const user =
+      await getAuthenticatedUser(req);
+
+    if (!user) {
+      return res.status(401).json({
+        error: "Auth",
+      });
+    }
+
+    const profile =
+      await supabase
+        .from(
+          "artist_profiles"
+        )
+        .select(
+          "id,user_id"
+        )
+        .eq(
+          "user_id",
+          user.id
+        )
+        .maybeSingle();
+
+    if (
+      profile.error ||
+      !profile.data
+    ) {
+      return res.status(404).json({
+        error:
+          "Producer profile not found",
+      });
+    }
+
+    const result =
+      await supabase
+        .from(
+          "beat_orders"
+        )
+        .select(
+          "*, beats!inner(*)"
+        )
+        .eq(
+          "beats.producer_id",
+          profile.data.id
+        )
+        .order(
+          "created_at",
+          {
+            ascending: false,
+          }
+        );
+
+    if (result.error) {
+      return res.status(500).json({
+        error:
+          "Unable to load producer orders",
+      });
+    }
+
+    res.json({
+      orders:
+        result.data || [],
+    });
+  }
+);
+
+app.get(
+  "/api/beats/:id/deliver",
+  async (req, res) => {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Auth",
+        });
+      }
+
+      if (
+        !validUuid(
+          req.params.id
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid beat id",
+        });
+      }
+
+      const result =
+        await supabase
+          .from(
+            "beat_downloads"
+          )
+          .select(
+            "*, beats(*)"
+          )
+          .eq(
+            "beat_id",
+            req.params.id
+          )
+          .eq(
+            "user_id",
+            user.id
+          )
+          .order(
+            "created_at",
+            {
+              ascending: false,
+            }
+          )
+          .limit(1)
+          .maybeSingle();
+
+      let accessRecord = result.data || null;
+      if (!accessRecord) {
+        const promo = await supabase.from("pasong_promo_free_entitlements")
+          .select("id,beat_package_type").eq("buyer_user_id", user.id)
+          .eq("item_type", "beat").eq("free_item_id", req.params.id)
+          .limit(1).maybeSingle();
+        if (!promo.error && promo.data) {
+          accessRecord = { package_type: promo.data.beat_package_type, beats: null, promo_free: true };
+        }
+      }
+      if (!accessRecord) {
+        return res.status(403).json({ error: "Not purchased or included in a PASONG promotion." });
+      }
+
+      let beat = accessRecord.beats;
+      if (!beat) {
+        const beatLookup = await supabase.from("beats").select("*").eq("id", req.params.id).maybeSingle();
+        if (beatLookup.error || !beatLookup.data) return res.status(404).json({ error: "Beat not found" });
+        beat = beatLookup.data;
+      }
+
+      if (!beat) {
+        return res.status(404).json({
+          error:
+            "Beat not found",
+        });
+      }
+
+      if (accessRecord.promo_free && !["mp3", "wav", "stems"].includes(accessRecord.package_type)) {
+        return res.status(403).json({ error: "This promotional beat licence package is not supported." });
+      }
+
+      let url = null;
+
+      if (
+        accessRecord.package_type ===
+        "mp3"
+      ) {
+        url =
+          beat.audio_url ||
+          beat.preview_url;
+      }
+
+      if (
+        accessRecord.package_type ===
+        "wav"
+      ) {
+        url =
+          beat.audio_url;
+      }
+
+      if (
+        accessRecord.package_type ===
+        "stems"
+      ) {
+        url =
+          beat.audio_url;
+      }
+
+      if (
+        accessRecord.package_type ===
+        "exclusive"
+      ) {
+        url =
+          beat.audio_url;
+      }
+
+      if (!url) {
+        return res.status(404).json({
+          error:
+            "File not available",
+        });
+      }
+
+      res.json({
+        download_url:
+          url,
+        package_type:
+          accessRecord.package_type,
+        promotional: Boolean(accessRecord.promo_free),
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Beat delivery failed",
+      });
+    }
+  }
+);
+
+async function getProducerBalance(
+  userId
+) {
+  const result =
+    await supabase
+      .from(
+        "royalty_ledger"
+      )
+      .select(
+        "amount,entry_type,status"
+      )
+      .eq(
+        "recipient_user_id",
+        userId
+      )
+      .eq(
+        "recipient_type",
+        "beat_producer"
+      );
+
+  if (result.error) {
+    throw new Error(
+      "Unable to calculate balance"
+    );
+  }
+
+  let balance = 0;
+
+  (
+    result.data || []
+  ).forEach((entry) => {
+    if (
+      entry.entry_type ===
+        "credit" &&
+      entry.status ===
+        "available"
+    ) {
+      balance +=
+        Number(
+          entry.amount
+        ) || 0;
+    }
+
+    if (
+      entry.entry_type ===
+      "debit"
+    ) {
+      balance -=
+        Number(
+          entry.amount
+        ) || 0;
+    }
+  });
+
+  return Number(
+    balance.toFixed(2)
+  );
+}
+
+app.get(
+  "/api/producer/earnings",
+  async (req, res) => {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Auth",
+        });
+      }
+
+      const result =
+        await supabase
+          .from(
+            "royalty_ledger"
+          )
+          .select("*")
+          .eq(
+            "recipient_user_id",
+            user.id
+          )
+          .eq(
+            "recipient_type",
+            "beat_producer"
+          )
+          .order(
+            "created_at",
+            {
+              ascending: false,
+            }
+          );
+
+      if (result.error) {
+        return res.status(500).json({
+          error:
+            "Unable to load producer earnings",
+        });
+      }
+
+      let balance = 0;
+
+      (
+        result.data || []
+      ).forEach((entry) => {
+        if (
+          entry.entry_type ===
+            "credit" &&
+          entry.status ===
+            "available"
+        ) {
+          balance +=
+            Number(
+              entry.amount
+            ) || 0;
+        }
+
+        if (
+          entry.entry_type ===
+          "debit"
+        ) {
+          balance -=
+            Number(
+              entry.amount
+            ) || 0;
+        }
+      });
+
+      res.json({
+        available_balance:
+          Number(
+            balance.toFixed(2)
+          ),
+        entries:
+          result.data || [],
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Unable to load producer earnings",
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/producer/withdraw",
+  async (req, res) => {
+    try {
+      // 1. Verify the Supabase user from the dashboard's access token.
+      const user = await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          success: false,
+          error: "You must be logged in to request a withdrawal.",
+        });
+      }
+
+      // 2. Verify that this authenticated user actually has a producer
+      //    profile. The Producer Dashboard uses artist_profiles for the
+      //    producer account, so we verify ownership by user_id here.
+      const profileResult = await supabase
+        .from("artist_profiles")
+        .select("id,user_id")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (profileResult.error) {
+        console.error(
+          "Producer profile lookup failed:",
+          profileResult.error
+        );
+
+        return res.status(500).json({
+          success: false,
+          error: "Unable to verify your producer account.",
+        });
+      }
+
+      if (!profileResult.data || profileResult.data.user_id !== user.id) {
+        return res.status(403).json({
+          success: false,
+          error: "Producer profile not found for this account.",
+        });
+      }
+
+      const {
+        amount,
+        provider,
+        mobile_number,
+      } = req.body || {};
+
+      // 3. Validate withdrawal amount.
+      const requestedAmount = Number(
+        String(amount ?? "")
+          .replace(/,/g, "")
+          .trim()
+      );
+
+      if (!validPositiveNumber(requestedAmount)) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid withdrawal amount.",
+        });
+      }
+
+      // Producer withdrawals must be at least UGX 10,000.
+      if (requestedAmount < 10000) {
+        return res.status(400).json({
+          success: false,
+          error: "Minimum withdrawal amount is UGX 10,000.",
+        });
+      }
+
+      // Only the two mobile-money providers supported by the Producer UI.
+      const normalizedProvider = normalizeProvider(provider);
+
+      if (!["MTN", "AIRTEL"].includes(normalizedProvider)) {
+        return res.status(400).json({
+          success: false,
+          error: "Mobile Money provider must be MTN or AIRTEL.",
+        });
+      }
+
+      // 4. Validate and normalize the Uganda mobile number.
+      let mobile = String(mobile_number || "")
+        .trim()
+        .replace(/\s+/g, "");
+
+      if (!/^(?:\+256|256|0)7[0-9]{8}$/.test(mobile)) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid Uganda mobile number.",
+        });
+      }
+
+      // Store one consistent local format: 07XXXXXXXX.
+      if (mobile.startsWith("+256")) {
+        mobile = "0" + mobile.substring(4);
+      } else if (mobile.startsWith("256")) {
+        mobile = "0" + mobile.substring(3);
+      }
+
+      // 5. Calculate the producer's currently available balance.
+      //    This includes existing credits and subtracts every debit,
+      //    including pending withdrawal debits, so the same money cannot
+      //    be withdrawn twice.
+      const availableBalance = await getProducerBalance(user.id);
+
+      if (requestedAmount > availableBalance) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Insufficient producer balance. Available balance is UGX " +
+            Number(availableBalance).toLocaleString("en-UG") + ".",
+          available_balance: availableBalance,
+        });
+      }
+
+      // 6. Create the withdrawal request first as PENDING.
+      //    Payment processing can later move it to processing/paid/failed.
+      const withdrawal = await supabase
+        .from("producer_withdrawals")
+        .insert({
+          producer_user_id: user.id,
+          amount: requestedAmount,
+          currency: "UGX",
+          provider: normalizedProvider,
+          mobile_number: mobile,
+          status: "pending",
+        })
+        .select()
+        .single();
+
+      if (withdrawal.error) {
+        console.error(
+          "Producer withdrawal insert failed:",
+          withdrawal.error
+        );
+
+        return res.status(500).json({
+          success: false,
+          error: "Withdrawal request could not be created.",
+        });
+      }
+
+      // 7. Reserve the requested amount in the producer ledger.
+      //    The debit is tied to the withdrawal ID so the payout can be
+      //    traced and reconciled later.
+      const debit = await supabase
+        .from("royalty_ledger")
+        .insert({
+          recipient_user_id: user.id,
+          recipient_type: "beat_producer",
+          amount: requestedAmount,
+          percentage: 100,
+          entry_type: "debit",
+          status: "pending_withdrawal",
+          withdrawal_id: withdrawal.data.id,
+        });
+
+      if (debit.error) {
+        console.error(
+          "Producer withdrawal ledger debit failed:",
+          debit.error
+        );
+
+        // Do not leave an orphaned withdrawal request if the balance
+        // reservation could not be created.
+        await supabase
+          .from("producer_withdrawals")
+          .delete()
+          .eq("id", withdrawal.data.id);
+
+        return res.status(500).json({
+          success: false,
+          error: "Withdrawal balance reservation failed.",
+        });
+      }
+
+      const remainingBalance = Number(
+        (availableBalance - requestedAmount).toFixed(2)
+      );
+
+      return res.status(201).json({
+        success: true,
+        message: "Withdrawal request submitted successfully.",
+        withdrawal: withdrawal.data,
+        available_balance: remainingBalance,
+      });
+    } catch (error) {
+      console.error(
+        "Producer withdrawal error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error: "Withdrawal failed. Please try again.",
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/producer/services/create",
+  async (req, res) => {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Auth",
+        });
+      }
+
+      const {
+        title,
+        description,
+        price,
+        delivery_days,
+      } = req.body || {};
+
+      const cleanTitle =
+        cleanText(
+          title,
+          200
+        );
+
+      const cleanDescription =
+        cleanText(
+          description,
+          5000
+        );
+
+      const cleanPrice =
+        Number(price);
+
+      const cleanDays =
+        Number(
+          delivery_days
+        );
+
+      if (!cleanTitle) {
+        return res.status(400).json({
+          error:
+            "Title required",
+        });
+      }
+
+      if (
+        !validPositiveNumber(
+          cleanPrice
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid price",
+        });
+      }
+
+      if (
+        !Number.isInteger(
+          cleanDays
+        ) ||
+        cleanDays <= 0
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid delivery days",
+        });
+      }
+
+      const result =
+        await supabase
+          .from(
+            "producer_services"
+          )
+          .insert({
+            producer_user_id:
+              user.id,
+            title:
+              cleanTitle,
+            description:
+              cleanDescription ||
+              null,
+            price:
+              cleanPrice,
+            delivery_days:
+              cleanDays,
+            status:
+              "active",
+          })
+          .select()
+          .single();
+
+      if (result.error) {
+        return res.status(500).json({
+          error:
+            "Service creation failed",
+        });
+      }
+
+      res.json({
+        service:
+          result.data,
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Service creation failed",
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/producer/services",
+  async (req, res) => {
+    const result =
+      await supabase
+        .from(
+          "producer_services"
+        )
+        .select("*")
+        .eq(
+          "status",
+          "active"
+        );
+
+    if (result.error) {
+      return res.status(500).json({
+        error:
+          "Unable to load services",
+      });
+    }
+
+    res.json({
+      services:
+        result.data || [],
+    });
+  }
+);
+
+app.post(
+  "/api/producer/services/:id/order",
+  async (req, res) => {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Auth",
+        });
+      }
+
+      if (
+        !validUuid(
+          req.params.id
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid service id",
+        });
+      }
+
+      const service =
+        await supabase
+          .from(
+            "producer_services"
+          )
+          .select("*")
+          .eq(
+            "id",
+            req.params.id
+          )
+          .eq(
+            "status",
+            "active"
+          )
+          .maybeSingle();
+
+      if (
+        service.error ||
+        !service.data
+      ) {
+        return res.status(404).json({
+          error:
+            "Service not found",
+        });
+      }
+
+      if (
+        service.data
+          .producer_user_id ===
+        user.id
+      ) {
+        return res.status(400).json({
+          error:
+            "You cannot order your own service",
+        });
+      }
+
+      const order =
+        await supabase
+          .from(
+            "producer_service_orders"
+          )
+          .insert({
+            service_id:
+              req.params.id,
+            buyer_id:
+              user.id,
+            producer_user_id:
+              service.data
+                .producer_user_id,
+            price:
+              service.data.price,
+            status:
+              "pending_payment",
+          })
+          .select()
+          .single();
+
+      if (order.error) {
+        return res.status(500).json({
+          error:
+            "Service order failed",
+        });
+      }
+
+      res.json({
+        order:
+          order.data,
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Service order failed",
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/producer/service-orders/:id/message",
+  async (req, res) => {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Auth",
+        });
+      }
+
+      if (
+        !validUuid(
+          req.params.id
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid order id",
+        });
+      }
+
+      const message =
+        cleanText(
+          req.body.message,
+          5000
+        );
+
+      if (!message) {
+        return res.status(400).json({
+          error:
+            "Message required",
+        });
+      }
+
+      const order =
+        await supabase
+          .from(
+            "producer_service_orders"
+          )
+          .select(
+            "id,buyer_id,producer_user_id,status"
+          )
+          .eq(
+            "id",
+            req.params.id
+          )
+          .maybeSingle();
+
+      if (
+        order.error ||
+        !order.data
+      ) {
+        return res.status(404).json({
+          error:
+            "Order not found",
+        });
+      }
+
+      const isParticipant =
+        order.data
+          .buyer_id ===
+          user.id ||
+        order.data
+          .producer_user_id ===
+          user.id;
+
+      if (!isParticipant) {
+        return res.status(403).json({
+          error:
+            "Not authorized",
+        });
+      }
+
+      const result =
+        await supabase
+          .from(
+            "producer_service_messages"
+          )
+          .insert({
+            order_id:
+              req.params.id,
+            sender_user_id:
+              user.id,
+            message,
+          })
+          .select()
+          .single();
+
+      if (result.error) {
+        return res.status(500).json({
+          error:
+            "Message failed",
+        });
+      }
+
+      res.json({
+        message:
+          result.data,
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Message failed",
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/producer/service-orders/:id/complete",
+  async (req, res) => {
+    try {
+      const user =
+        await getAuthenticatedUser(req);
+
+      if (!user) {
+        return res.status(401).json({
+          error: "Auth",
+        });
+      }
+
+      if (
+        !validUuid(
+          req.params.id
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Invalid order id",
+        });
+      }
+
+      const existing =
+        await supabase
+          .from(
+            "producer_service_orders"
+          )
+          .select(
+            "id,buyer_id,producer_user_id,status"
+          )
+          .eq(
+            "id",
+            req.params.id
+          )
+          .maybeSingle();
+
+      if (
+        existing.error ||
+        !existing.data
+      ) {
+        return res.status(404).json({
+          error:
+            "Order not found",
+        });
+      }
+
+      if (
+        existing.data
+          .producer_user_id !==
+        user.id
+      ) {
+        return res.status(403).json({
+          error:
+            "Not authorized",
+        });
+      }
+
+      if (
+        existing.data.status ===
+        "completed"
+      ) {
+        return res.json({
+          success: true,
+          order:
+            existing.data,
+        });
+      }
+
+      const result =
+        await supabase
+          .from(
+            "producer_service_orders"
+          )
+          .update({
+            status:
+              "completed",
+          })
+          .eq(
+            "id",
+            req.params.id
+          )
+          .eq(
+            "producer_user_id",
+            user.id
+          )
+          .select()
+          .single();
+
+      if (result.error) {
+        return res.status(500).json({
+          error:
+            "Order completion failed",
+        });
+      }
+
+      res.json({
+        success: true,
+        order:
+          result.data,
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Order completion failed",
+      });
+    }
+  }
+);
+
+
+
+
+// ============================================================
+// PASONG UNIFIED PROMOTION CHECKOUT (SAFE GATEWAY)
+// Frontend: promotion-checkout.html
+// This endpoint validates the request and deliberately refuses
+// to create a payment until a real MTN/Airtel/PesaPal integration
+// and a durable promotion-order schema are configured. It does not
+// fall back to another provider or mark any campaign paid.
+// ============================================================
+const PASONG_UNIFIED_PROMOTION_PACKAGES = {
+  'song-starter': { type: 'song', amount: 50000, days: 7 },
+  'song-viral': { type: 'song', amount: 150000, days: 14 },
+  'song-hero': { type: 'song', amount: 300000, days: 30 },
+  'profile-starter': { type: 'profile', amount: 55000, days: 30 },
+  'profile-viral': { type: 'profile', amount: 120000, days: 30 },
+  'profile-pro': { type: 'profile', amount: 250000, days: 30 },
+  'business-starter': { type: 'business', amount: 105000, days: 7 },
+  'business-growth': { type: 'business', amount: 220000, days: 14 },
+  'business-pro': { type: 'business', amount: 450000, days: 30 },
+  'tiktok-starter': { type: 'tiktok', amount: 45000, days: 30 },
+  'tiktok-growth': { type: 'tiktok', amount: 84000, days: 30 },
+  'tiktok-pro': { type: 'tiktok', amount: 180000, days: 30 },
+  'tiktok-max': { type: 'tiktok', amount: 350000, days: 30 },
+};
+
+app.get('/api/promotions/checkout/status', (req, res) => {
+  res.json({
+    success: true,
+    checkout_ready: false,
+    providers: { mtn: false, airtel: false, pesapal: false },
+    message: 'Promotion checkout is not enabled until provider APIs and the promotion order storage are configured.',
+  });
+});
+
+app.post('/api/promotions/checkout', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const promotionType = String(body.promotion_type || '').trim().toLowerCase();
+    const packageKey = String(body.package_key || '').trim();
+    const provider = String(body.provider || '').trim().toLowerCase();
+    const target = body.target && typeof body.target === 'object' ? body.target : {};
+    const pkg = PASONG_UNIFIED_PROMOTION_PACKAGES[packageKey];
+
+    if (!pkg || pkg.type !== promotionType) {
+      return res.status(400).json({ error: 'Invalid promotion package.' });
+    }
+    if (!['mtn', 'airtel', 'card'].includes(provider)) {
+      return res.status(400).json({ error: 'Choose MTN Mobile Money, Airtel Money, or PesaPal card checkout.' });
+    }
+    if (Number(body.amount) !== pkg.amount || String(body.currency || '').toUpperCase() !== 'UGX') {
+      return res.status(400).json({ error: 'Promotion price mismatch. Refresh the page and try again.' });
+    }
+    if (promotionType === 'song' && !String(target.song_id || '').trim()) {
+      return res.status(400).json({ error: 'Song link or ID is required.' });
+    }
+    if (promotionType === 'profile' && !String(target.profile_id || '').trim()) {
+      return res.status(400).json({ error: 'Profile link or ID is required.' });
+    }
+    if (promotionType === 'business' && !String(target.business_name || '').trim()) {
+      return res.status(400).json({ error: 'Business name is required.' });
+    }
+    if (promotionType === 'tiktok') {
+      let url;
+      try { url = new URL(String(target.tiktok_url || '')); } catch (_) {
+        return res.status(400).json({ error: 'Enter a valid public TikTok link.' });
+      }
+      const host = url.hostname.toLowerCase().replace(/^www\./, '');
+      if (url.protocol !== 'https:' || !(host === 'tiktok.com' || host.endsWith('.tiktok.com'))) {
+        return res.status(400).json({ error: 'Enter a valid public HTTPS TikTok link.' });
+      }
+    }
+
+    // Intentionally fail closed until MTN/Airtel provider APIs and promotion-order
+    // storage are configured. Card promotion checkout must not bypass this route.
+    const providerName = provider === 'mtn' ? 'MTN Mobile Money' : provider === 'airtel' ? 'Airtel Money' : 'PesaPal cards';
+    return res.status(503).json({
+      error: `${providerName} promotion checkout is not configured on PASONG yet. No payment has been taken.`,
+      code: 'PROMOTION_PROVIDER_NOT_CONFIGURED',
+      provider,
+      amount: pkg.amount,
+      currency: 'UGX',
+      days: pkg.days,
+    });
+  } catch (error) {
+    console.error('Unified promotion checkout error:', error);
+    return res.status(500).json({ error: 'Could not prepare promotion checkout. No payment has been taken.' });
+  }
+});
+
+// ============================================================
+// PASONG ADVERTISING
+// Public package list + authenticated campaign checkout.
+// Prices are controlled by the backend, never by the browser.
+// ============================================================
+
+const PASONG_AD_PACKAGES = {
+  home_image: {
+    amount: Number(process.env.PASONG_AD_HOME_IMAGE_UGX || 25000),
+    days: 7,
+    name: "Homepage Image",
+  },
+  home_video: {
+    amount: Number(process.env.PASONG_AD_HOME_VIDEO_UGX || 40000),
+    days: 7,
+    name: "Homepage Video",
+  },
+  sitewide: {
+    amount: Number(process.env.PASONG_AD_SITEWIDE_UGX || 60000),
+    days: 7,
+    name: "PASONG Sitewide",
+  },
+};
+
+function cleanAdText(value, max = 5000) {
+  return String(value == null ? "" : value).trim().slice(0, max);
+}
+
+function validHttpUrl(value) {
+  if (!value) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeAdMediaType(value) {
+  return String(value || "").trim().toLowerCase() === "video"
+    ? "video"
+    : "image";
+}
+
+app.get("/api/advertising/packages", (req, res) => {
+  res.json({
+    success: true,
+    currency: "UGX",
+    packages: Object.entries(PASONG_AD_PACKAGES).map(([key, pkg]) => ({
+      key,
+      name: pkg.name,
+      amount: pkg.amount,
+      currency: "UGX",
+      days: pkg.days,
+    })),
+  });
+});
+
+app.post("/api/advertising/checkout", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) return res.status(401).json({ error: "Please sign in to advertise on PASONG." });
+    if (!PESAPAL_CONSUMER_KEY || !PESAPAL_CONSUMER_SECRET || !PESAPAL_ADVERTISING_IPN_ID) {
+      return res.status(503).json({
+        error: "Pesapal advertising checkout is not configured. Set PESAPAL_CONSUMER_KEY, PESAPAL_CONSUMER_SECRET and PESAPAL_ADVERTISING_IPN_ID in Render.",
+      });
+    }
+
+    const body = req.body || {};
+    const packageKey = cleanAdText(body.package_key, 40);
+    const pkg = PASONG_AD_PACKAGES[packageKey];
+    if (!pkg || !Number.isFinite(pkg.amount) || pkg.amount <= 0) {
+      return res.status(400).json({ error: "Invalid advertising package." });
+    }
+
+    const advertiserName = cleanAdText(body.advertiser_name, 160);
+    const advertiserEmail = cleanAdText(body.advertiser_email || user.email, 200);
+    const advertiserPhone = cleanAdText(body.advertiser_phone, 60);
+    const title = cleanAdText(body.title, 200);
+    const description = cleanAdText(body.description, 5000);
+    const targetUrl = cleanAdText(body.target_url, 1000);
+    const requestedPlacement = cleanAdText(body.placement, 60).toLowerCase();
+    const mediaUrl = cleanAdText(body.media_url, 2000);
+    const mediaType = normalizeAdMediaType(body.media_type);
+
+    if (!advertiserName || !advertiserEmail || !title || !description || !mediaUrl) {
+      return res.status(400).json({ error: "Advertiser name, email, title, description and advert media are required." });
+    }
+    if (!validHttpUrl(mediaUrl) || !validHttpUrl(targetUrl)) {
+      return res.status(400).json({ error: "Invalid media or destination URL." });
+    }
+    if (packageKey === "home_image" && mediaType !== "image") {
+      return res.status(400).json({ error: "Homepage Image requires an image advert." });
+    }
+    if (packageKey === "home_video" && mediaType !== "video") {
+      return res.status(400).json({ error: "Homepage Video requires a video advert." });
+    }
+
+    const placement = packageKey === "home_image" || packageKey === "home_video"
+      ? "home"
+      : packageKey === "sitewide" ? "all" : requestedPlacement || "home";
+    const txRef = `PASONG-AD-${Date.now()}-${crypto.randomBytes(8).toString("hex")}`;
+
+    const campaignResult = await supabase.from("advertising_campaigns").insert({
+      user_id: user.id,
+      package_key: packageKey,
+      amount: pkg.amount,
+      currency: "UGX",
+      days: pkg.days,
+      advertiser_name: advertiserName,
+      advertiser_email: advertiserEmail,
+      advertiser_phone: advertiserPhone || null,
+      title,
+      description,
+      target_url: targetUrl || null,
+      placement,
+      media_url: mediaUrl,
+      media_type: mediaType,
+      tx_ref: txRef,
+      payment_status: "pending",
+      status: "pending",
+    }).select().single();
+
+    if (campaignResult.error || !campaignResult.data) {
+      console.error("Advertising campaign insert failed:", campaignResult.error);
+      return res.status(500).json({
+        error: "Unable to create advertising campaign.",
+        details: campaignResult.error?.message || null,
+      });
+    }
+
+    const nameParts = String(advertiserName || user.email?.split("@")[0] || "PASONG Advertiser").trim().split(/\s+/);
+    const token = await pesapalRequestToken();
+    const payload = {
+      id: txRef,
+      currency: "UGX",
+      amount: pkg.amount,
+      description: `${pkg.name} - ${pkg.days} days`.slice(0, 100),
+      callback_url: `${PASONG_API_PUBLIC_URL}/api/advertising/pesapal/callback`,
+      cancellation_url: `${PASONG_FRONTEND_URL}/advertise.html?payment=cancelled`,
+      notification_id: PESAPAL_ADVERTISING_IPN_ID,
+      redirect_mode: "TOP_WINDOW",
+      billing_address: {
+        email_address: advertiserEmail || undefined,
+        phone_number: advertiserPhone || undefined,
+        country_code: "UG",
+        first_name: nameParts[0] || "PASONG",
+        last_name: nameParts.slice(1).join(" ") || "Advertiser",
+      },
+    };
+
+    const submitResponse = await fetch(`${PESAPAL_BASE_URL}/api/Transactions/SubmitOrderRequest`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+    });
+    const submitData = await submitResponse.json().catch(() => ({}));
+    const checkoutUrl = String(submitData?.redirect_url || "").trim();
+    if (!submitResponse.ok || !checkoutUrl || !submitData?.order_tracking_id) {
+      console.error("Pesapal advertising checkout failed:", submitData);
+      await supabase.from("advertising_campaigns").update({ status: "payment_failed" }).eq("id", campaignResult.data.id);
+      return res.status(502).json({
+        error: "Pesapal could not create the advertising checkout.",
+        details: submitData?.error?.message || submitData?.message || null,
+      });
+    }
+
+    return res.json({
+      success: true,
+      provider: "PESAPAL",
+      campaign_id: campaignResult.data.id,
+      external_reference: txRef,
+      order_tracking_id: submitData.order_tracking_id,
+      checkout_url: checkoutUrl,
+      amount: pkg.amount,
+      currency: "UGX",
+      days: pkg.days,
+    });
+  } catch (error) {
+    console.error("Pesapal advertising checkout error:", error);
+    return res.status(500).json({ error: "Pesapal advertising checkout setup failed.", details: error?.message || null });
+  }
+});
+
+async function completeVerifiedPesapalAdvertisingPayment(trackingId, txRef) {
+  const campaignResult = await supabase.from("advertising_campaigns")
+    .select("*").eq("tx_ref", txRef).maybeSingle();
+  if (campaignResult.error || !campaignResult.data) throw new Error("Advertising campaign was not found.");
+  const campaign = campaignResult.data;
+  if (campaign.payment_status === "paid" && campaign.advertisement_id) {
+    return { paid: true, campaign };
+  }
+
+  const payment = await pesapalGetTransactionStatus(trackingId);
+  if (!pesapalPaymentIsCompleted(payment)) return { paid: false, campaign };
+  const verifiedReference = String(payment?.merchant_reference || payment?.OrderMerchantReference || "").trim();
+  const verifiedAmount = Number(payment?.amount);
+  const verifiedCurrency = String(payment?.currency || "").trim().toUpperCase();
+  if (
+    (verifiedReference && verifiedReference !== txRef) ||
+    !Number.isFinite(verifiedAmount) ||
+    verifiedAmount !== Number(campaign.amount) ||
+    verifiedCurrency !== String(campaign.currency || "UGX").toUpperCase()
+  ) {
+    throw new Error("Pesapal payment amount, currency or reference did not match the campaign.");
+  }
+
+  const startAt = new Date();
+  const endAt = new Date(startAt.getTime() + Number(campaign.days || 7) * 86400000);
+  const adResult = await supabase.from("advertisements").insert({
+    title: campaign.title,
+    description: campaign.description,
+    image_url: campaign.media_url,
+    target_url: campaign.target_url,
+    placement: campaign.placement,
+    start_at: startAt.toISOString(),
+    end_at: endAt.toISOString(),
+    status: "pending",
+    clicks: 0,
+    impressions: 0,
+    created_by: campaign.user_id,
+    media_type: campaign.media_type,
+  }).select().single();
+
+  if (adResult.error || !adResult.data) {
+    console.error("Advertising ad creation failed:", adResult.error);
+    throw new Error("Payment was verified but PASONG could not create the campaign.");
+  }
+
+  const update = await supabase.from("advertising_campaigns").update({
+    payment_status: "paid",
+    status: "pending",
+    transaction_id: trackingId,
+    advertisement_id: adResult.data.id,
+    start_at: startAt.toISOString(),
+    end_at: endAt.toISOString(),
+  }).eq("id", campaign.id);
+  if (update.error) throw new Error("Payment was verified but PASONG could not update the campaign.");
+  return { paid: true, campaign };
+}
+
+app.get("/api/advertising/pesapal/callback", async (req, res) => {
+  const frontendUrl = PASONG_FRONTEND_URL.replace(/\/$/, "");
+  const trackingId = String(req.query.OrderTrackingId || "").trim();
+  const txRef = String(req.query.OrderMerchantReference || "").trim();
+  if (!trackingId || !txRef) {
+    return res.redirect(`${frontendUrl}/advertise.html?payment=failed`);
+  }
+  try {
+    const result = await completeVerifiedPesapalAdvertisingPayment(trackingId, txRef);
+    if (!result.paid) {
+      return res.redirect(`${frontendUrl}/advertise.html?payment=pending&tx_ref=${encodeURIComponent(txRef)}`);
+    }
+    return res.redirect(`${frontendUrl}/advertise.html?payment=success&campaign_id=${encodeURIComponent(result.campaign.id)}`);
+  } catch (error) {
+    console.error("Pesapal advertising callback error:", error);
+    return res.redirect(`${frontendUrl}/advertise.html?payment=error&message=${encodeURIComponent("Unable to verify the Pesapal payment.")}`);
+  }
+});
+
+app.get("/api/advertising/pesapal/ipn", async (req, res) => {
+  const trackingId = String(req.query.OrderTrackingId || "").trim();
+  const txRef = String(req.query.OrderMerchantReference || "").trim();
+  const notificationType = String(req.query.OrderNotificationType || "IPNCHANGE").trim();
+  if (!trackingId || !txRef) return res.status(400).json({ error: "Missing Pesapal IPN parameters." });
+  try {
+    const result = await completeVerifiedPesapalAdvertisingPayment(trackingId, txRef);
+    return res.json({
+      orderNotificationType: notificationType,
+      orderTrackingId: trackingId,
+      orderMerchantReference: txRef,
+      status: result.paid ? "completed" : "pending",
+    });
+  } catch (error) {
+    console.error("Pesapal advertising IPN error:", error);
+    return res.status(500).json({ error: "Pesapal IPN processing failed." });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PASONG DJ BOOKINGS — fixed UGX 5,000 request fee.
+// Checkout remains deliberately disabled until the approved PesaPay merchant
+// and server-to-server transaction verification API are configured.
+// NEVER set payment_status='paid' from a browser callback or request body.
+// ---------------------------------------------------------------------------
+app.post("/api/dj-bookings", async (req, res) => {
+  let bookingStep = "validate request";
+  try {
+    const body = req.body || {};
+    const djId = String(body.dj_id || "").trim();
+    const customerName = String(body.customer_name || "").trim();
+    const customerPhone = String(body.customer_phone || "").trim();
+    const eventType = String(body.event_type || "").trim();
+    const eventDate = String(body.event_date || "").trim();
+    const eventLocation = String(body.event_location || "").trim();
+    const eventHours = String(body.event_hours || "Not sure").trim();
+    const budget = String(body.budget || "Not specified").trim();
+    const musicStyle = body.music_style == null ? null : String(body.music_style).trim().slice(0, 180);
+    const message = body.message == null ? null : String(body.message).trim().slice(0, 1500);
+
+    if (!djId || !customerName || !customerPhone || !eventType || !eventDate || !eventLocation) {
+      return res.status(400).json({ error: "Please complete all required booking fields." });
+    }
+    if (customerName.length > 100 || customerPhone.length > 30 || eventType.length > 80 || eventLocation.length > 180) {
+      return res.status(400).json({ error: "One or more booking fields are too long." });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate) || Number.isNaN(Date.parse(eventDate)) || eventDate < new Date().toISOString().slice(0, 10)) {
+      return res.status(400).json({ error: "Choose a valid event date that is today or later." });
+    }
+
+    bookingStep = "look up DJ profile";
+    const { data: dj, error: djError } = await supabase
+      .from("djs")
+      .select("id,user_id,display_name,account_status")
+      .eq("id", djId)
+      .maybeSingle();
+    if (djError) throw djError;
+    if (!dj || String(dj.account_status || "").toLowerCase() !== "active") {
+      return res.status(404).json({ error: "This DJ profile is unavailable for bookings." });
+    }
+
+    bookingStep = "insert booking row";
+    const paymentReference = `DJBOOK-${crypto.randomUUID()}`;
+    const { data: booking, error: insertError } = await supabase
+      .from("dj_bookings")
+      .insert({
+        dj_id: dj.id,
+        dj_user_id: dj.user_id,
+        customer_name: customerName,
+        customer_phone: customerPhone,
+        event_type: eventType,
+        event_date: eventDate,
+        event_location: eventLocation,
+        event_hours: eventHours.slice(0, 40),
+        budget: budget.slice(0, 80),
+        music_style: musicStyle || null,
+        message: message || null,
+        booking_fee_amount: 5000,
+        booking_fee_currency: "UGX",
+        payment_provider: "pesapay",
+        payment_status: "pending",
+        payment_reference,
+        status: "pending",
+      })
+      .select("id,payment_reference,booking_fee_amount,booking_fee_currency,payment_status")
+      .single();
+    if (insertError) throw insertError;
+
+    return res.status(201).json({
+      booking_id: booking.id,
+      payment_reference: booking.payment_reference,
+      amount: booking.booking_fee_amount,
+      currency: booking.booking_fee_currency,
+      payment_status: booking.payment_status,
+      next_step: "checkout",
+    });
+  } catch (error) {
+    // Temporary diagnostic response: exposes the database error, never secrets.
+    console.error("Create DJ booking failed:", {
+      step: bookingStep,
+      message: error?.message,
+      code: error?.code,
+      details: error?.details,
+      hint: error?.hint,
+    });
+    return res.status(500).json({
+      error: "Could not save the DJ booking request.",
+      diagnostic: {
+        step: bookingStep,
+        message: String(error?.message || "Unknown database error").slice(0, 500),
+        code: error?.code || null,
+        details: error?.details || null,
+        hint: error?.hint || null,
+      },
+    });
+  }
+});
+
+app.post("/api/dj-bookings/:bookingId/checkout", async (req, res) => {
+  // Fail closed until the PesaPay domain, merchant and verification API are ready.
+  // No checkout URL is fabricated, and the booking remains unpaid/invisible to DJs.
+  return res.status(503).json({
+    error: "PASONG DJ booking payments are not enabled yet. No payment was taken.",
+    payment_status: "pending",
+    amount: 5000,
+    currency: "UGX",
+  });
+});
+
+app.get("/api/dj-bookings/:bookingId/payment-status", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("dj_bookings")
+      .select("id,payment_status,booking_fee_amount,booking_fee_currency,payment_verified_at")
+      .eq("id", String(req.params.bookingId || ""))
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: "Booking not found." });
+    return res.json({
+      booking_id: data.id,
+      payment_status: data.payment_status,
+      amount: data.booking_fee_amount,
+      currency: data.booking_fee_currency,
+      verified_at: data.payment_verified_at,
+    });
+  } catch (error) {
+    console.error("Read DJ booking payment status failed:", error);
+    return res.status(500).json({ error: "Could not check booking payment status." });
+  }
+});
+
+app.use(
+  (error, req, res, next) => {
+    if (
+      error instanceof
+      multer.MulterError
+    ) {
+      return res.status(400).json({
+        error:
+          "File upload error",
+      });
+    }
+
+    if (error) {
+      if (
+        error.message ===
+        "CORS not allowed"
+      ) {
+        return res.status(403).json({
+          error:
+            "Request origin not allowed",
+        });
+      }
+
+      return res.status(400).json({
+        error:
+          error.message ||
+          "Request error",
+      });
+    }
+
+    next();
+  }
+);
+
+app.use(
+  (req, res) => {
+    res.status(404).json({
+      error:
+        "Endpoint not found",
+    });
+  }
+);
+
+app.listen(
+  PORT,
+  () => {
+    console.log(
+      "PASONG SAFE + PRODUCER READY " +
+        PORT
+    );
+  }
+);
