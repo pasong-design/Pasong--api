@@ -22,6 +22,10 @@ const CLOUDINARY_API_SECRET =
   process.env.CLOUDINARY_API_SECRET;
 const PASONG_PAYMENT_SECRET =
   process.env.PASONG_PAYMENT_SECRET;
+// Dedicated signing key is preferred. The existing server-only payment secret
+// is a backward-compatible fallback so older Render deployments still start.
+const AUDIO_STREAM_SIGNING_SECRET =
+  process.env.AUDIO_STREAM_SIGNING_SECRET || PASONG_PAYMENT_SECRET;
 
 // Pesapal API 3.0 credentials. Keep secrets in Render environment variables.
 const PESAPAL_CONSUMER_KEY = process.env.PESAPAL_CONSUMER_KEY || "";
@@ -120,6 +124,30 @@ const supabase = createClient(
   SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY
 );
+
+// General user notifications are created only by trusted server-side events.
+// A notification failure must never reverse a verified payment or royalty entry.
+async function createPasongNotification(userId, type, title, message, link = null, metadata = {}) {
+  if (!validUuid(userId)) return { ok: false, skipped: true };
+  try {
+    const result = await supabase.rpc("create_notification", {
+      p_user_id: userId,
+      p_type: type || "system",
+      p_title: title,
+      p_message: message,
+      p_link: link,
+      p_metadata: metadata || {},
+    });
+    if (result.error) {
+      console.error("PASONG notification creation failed:", result.error.message || result.error);
+      return { ok: false, error: result.error.message || "Notification insert failed" };
+    }
+    return { ok: true, id: result.data || null };
+  } catch (error) {
+    console.error("PASONG notification exception:", error);
+    return { ok: false, error: error.message || "Notification insert failed" };
+  }
+}
 
 cloudinary.config({
   cloud_name: CLOUDINARY_CLOUD_NAME,
@@ -562,6 +590,15 @@ app.post("/api/premium/complete", async (req, res) => {
         error: "Premium payment status update failed.",
       });
     }
+
+    await createPasongNotification(
+      payment.user_id,
+      "premium",
+      "PASONG Premium activated",
+      `Your ${payment.plan === "premium_yearly" ? "yearly" : "monthly"} Premium subscription is now active.`,
+      "/my-premium.html",
+      { payment_reference: payment.payment_reference, subscription_id: subscriptionData?.id || null }
+    );
 
     res.json({
       success: true,
@@ -3986,6 +4023,30 @@ app.post(
         });
       }
 
+      await createPasongNotification(
+        buyer_id,
+        "purchase",
+        "Song purchase successful",
+        `Your purchase of ${song.title || "this song"} is complete.`,
+        "/library.html",
+        { order_id: order.data.id, song_id, amount: paidTotal, currency: storedCurrency }
+      );
+      const songCreatorIds = [...new Set([
+        ...(Array.isArray(artistIds) ? artistIds : []),
+        song.producer_user_id,
+        song.writer_user_id,
+      ].filter((id) => validUuid(id) && id !== buyer_id))];
+      await Promise.all(songCreatorIds.map((creatorId) =>
+        createPasongNotification(
+          creatorId,
+          "sale",
+          "Your song was purchased",
+          `${song.title || "Your song"} was purchased on PASONG.`,
+          "/artist-dashboard.html",
+          { order_id: order.data.id, song_id, amount: storedAmount, currency: storedCurrency }
+        )
+      ));
+
       res.json({
         success: true,
         order_id:
@@ -5840,6 +5901,23 @@ app.post(
           });
         }
       }
+
+      await createPasongNotification(
+        order.buyer_id,
+        "purchase",
+        "Beat purchase successful",
+        `Your ${order.package_type} license for ${beat.title || "this beat"} is ready.`,
+        "/producer-beats.html",
+        { order_id: order.id, beat_id: beat.id, package_type: order.package_type, amount: storedAmount, currency: storedCurrency }
+      );
+      await createPasongNotification(
+        producerUserId,
+        "sale",
+        "Your beat was purchased",
+        `${beat.title || "Your beat"} was purchased (${order.package_type}).`,
+        "/producer.html",
+        { order_id: order.id, beat_id: beat.id, package_type: order.package_type, amount: storedAmount, currency: storedCurrency }
+      );
 
       const notification =
         await supabase
