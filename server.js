@@ -22,8 +22,9 @@ const CLOUDINARY_API_SECRET =
   process.env.CLOUDINARY_API_SECRET;
 const PASONG_PAYMENT_SECRET =
   process.env.PASONG_PAYMENT_SECRET;
-// Dedicated signing key is preferred. The existing server-only payment secret
-// is a backward-compatible fallback so older Render deployments still start.
+
+// Used only to sign short-lived protected-audio playback links. Keep this on Render.
+// Falls back to the existing server-only payment secret for backward compatibility.
 const AUDIO_STREAM_SIGNING_SECRET =
   process.env.AUDIO_STREAM_SIGNING_SECRET || PASONG_PAYMENT_SECRET;
 
@@ -125,28 +126,22 @@ const supabase = createClient(
   SUPABASE_SERVICE_ROLE_KEY
 );
 
-// General user notifications are created only by trusted server-side events.
-// A notification failure must never reverse a verified payment or royalty entry.
+// Notifications are created only by trusted backend event handlers after success.
 async function createPasongNotification(userId, type, title, message, link = null, metadata = {}) {
-  if (!validUuid(userId)) return { ok: false, skipped: true };
-  try {
-    const result = await supabase.rpc("create_notification", {
-      p_user_id: userId,
-      p_type: type || "system",
-      p_title: title,
-      p_message: message,
-      p_link: link,
-      p_metadata: metadata || {},
-    });
-    if (result.error) {
-      console.error("PASONG notification creation failed:", result.error.message || result.error);
-      return { ok: false, error: result.error.message || "Notification insert failed" };
-    }
-    return { ok: true, id: result.data || null };
-  } catch (error) {
-    console.error("PASONG notification exception:", error);
-    return { ok: false, error: error.message || "Notification insert failed" };
+  if (!userId) return { success: false, skipped: true };
+  const { data, error } = await supabase.rpc("create_notification", {
+    p_user_id: userId,
+    p_type: type || "system",
+    p_title: title,
+    p_message: message,
+    p_link: link,
+    p_metadata: metadata || {},
+  });
+  if (error) {
+    console.error("PASONG notification creation failed:", error);
+    return { success: false, error };
   }
+  return { success: true, id: data };
 }
 
 cloudinary.config({
@@ -591,13 +586,13 @@ app.post("/api/premium/complete", async (req, res) => {
       });
     }
 
-    await createPasongNotification(
+    const premiumNotification = await createPasongNotification(
       payment.user_id,
-      "premium",
+      "premium_activated",
       "PASONG Premium activated",
-      `Your ${payment.plan === "premium_yearly" ? "yearly" : "monthly"} Premium subscription is now active.`,
+      `Your ${payment.plan === "premium_yearly" ? "yearly" : "monthly"} PASONG Premium subscription is active.`,
       "/my-premium.html",
-      { payment_reference: payment.payment_reference, subscription_id: subscriptionData?.id || null }
+      { subscription_id: subscriptionData.id, payment_reference: payment.payment_reference }
     );
 
     res.json({
@@ -605,6 +600,7 @@ app.post("/api/premium/complete", async (req, res) => {
       premium: true,
       subscription: subscriptionData,
       payment: updatedPayment.data || payment,
+      notification_saved: premiumNotification.success,
     });
   } catch (error) {
     console.error("Premium completion error:", error);
@@ -691,6 +687,23 @@ function parsePasongCloudinaryAudioUrl(rawUrl) {
   } catch {
     return null;
   }
+}
+
+function createPasongPreviewUrl(audioUrl) {
+  const parsed = parsePasongCloudinaryAudioUrl(audioUrl);
+  if (!parsed) return null;
+
+  // A signed 30-second Cloudinary transformation is safe to expose publicly;
+  // the original authenticated asset remains available only through PASONG's
+  // short-lived, range-capable playback proxy.
+  return cloudinary.url(parsed.publicId, {
+    resource_type: "video",
+    type: parsed.deliveryType,
+    format: parsed.format,
+    secure: true,
+    sign_url: parsed.deliveryType === "authenticated",
+    transformation: [{ start_offset: "0", duration: "30" }],
+  });
 }
 
 function signPasongAudioToken(songId, expires) {
@@ -2137,7 +2150,7 @@ app.post(
         2000
       );
 
-      const previewUrl = cleanText(
+      let previewUrl = cleanText(
         body.preview_url,
         2000
       );
@@ -2146,6 +2159,10 @@ app.post(
         body.cover_url,
         2000
       );
+
+      if (!previewUrl && audioUrl) {
+        previewUrl = createPasongPreviewUrl(audioUrl);
+      }
 
       if (
         !title ||
@@ -4023,34 +4040,20 @@ app.post(
         });
       }
 
-      await createPasongNotification(
+      const buyerNotification = await createPasongNotification(
         buyer_id,
-        "purchase",
+        "song_purchase",
         "Song purchase successful",
-        `Your purchase of ${song.title || "this song"} is complete.`,
-        "/library.html",
-        { order_id: order.data.id, song_id, amount: paidTotal, currency: storedCurrency }
+        "Your song purchase is complete. You can find the song in your purchases.",
+        "/my-purchases.html",
+        { order_id: order.data.id, song_id, transaction_id: transaction }
       );
-      const songCreatorIds = [...new Set([
-        ...(Array.isArray(artistIds) ? artistIds : []),
-        song.producer_user_id,
-        song.writer_user_id,
-      ].filter((id) => validUuid(id) && id !== buyer_id))];
-      await Promise.all(songCreatorIds.map((creatorId) =>
-        createPasongNotification(
-          creatorId,
-          "sale",
-          "Your song was purchased",
-          `${song.title || "Your song"} was purchased on PASONG.`,
-          "/artist-dashboard.html",
-          { order_id: order.data.id, song_id, amount: storedAmount, currency: storedCurrency }
-        )
-      ));
 
       res.json({
         success: true,
         order_id:
           order.data.id,
+        notification_saved: buyerNotification.success,
         song_amount:
           storedAmount,
         tip_amount:
@@ -5901,23 +5904,6 @@ app.post(
           });
         }
       }
-
-      await createPasongNotification(
-        order.buyer_id,
-        "purchase",
-        "Beat purchase successful",
-        `Your ${order.package_type} license for ${beat.title || "this beat"} is ready.`,
-        "/producer-beats.html",
-        { order_id: order.id, beat_id: beat.id, package_type: order.package_type, amount: storedAmount, currency: storedCurrency }
-      );
-      await createPasongNotification(
-        producerUserId,
-        "sale",
-        "Your beat was purchased",
-        `${beat.title || "Your beat"} was purchased (${order.package_type}).`,
-        "/producer.html",
-        { order_id: order.id, beat_id: beat.id, package_type: order.package_type, amount: storedAmount, currency: storedCurrency }
-      );
 
       const notification =
         await supabase
