@@ -689,23 +689,6 @@ function parsePasongCloudinaryAudioUrl(rawUrl) {
   }
 }
 
-function createPasongPreviewUrl(audioUrl) {
-  const parsed = parsePasongCloudinaryAudioUrl(audioUrl);
-  if (!parsed) return null;
-
-  // A signed 30-second Cloudinary transformation is safe to expose publicly;
-  // the original authenticated asset remains available only through PASONG's
-  // short-lived, range-capable playback proxy.
-  return cloudinary.url(parsed.publicId, {
-    resource_type: "video",
-    type: parsed.deliveryType,
-    format: parsed.format,
-    secure: true,
-    sign_url: parsed.deliveryType === "authenticated",
-    transformation: [{ start_offset: "0", duration: "30" }],
-  });
-}
-
 function signPasongAudioToken(songId, expires) {
   return crypto.createHmac("sha256", AUDIO_STREAM_SIGNING_SECRET)
     .update(`${songId}.${expires}`)
@@ -743,7 +726,7 @@ app.get("/api/songs/:id/playback-url", async (req, res) => {
 
     const expires = Math.floor(Date.now() / 1000) + 15 * 60;
     const signature = signPasongAudioToken(songId, expires);
-    const base = `https://${req.get("host")}`;
+    const base = String(process.env.PASONG_API_BASE_URL || "https://pasong-api.onrender.com").replace(/\/+$/, "");
     return res.json({
       success: true,
       url: `${base}/api/songs/${songId}/audio?expires=${expires}&signature=${signature}`,
@@ -2150,52 +2133,22 @@ app.post(
         2000
       );
 
-      let previewUrl = cleanText(
-        body.preview_url,
-        2000
-      );
+      // Full-song streaming is free; a separate 30-second preview is not used.
 
       const coverUrl = cleanText(
         body.cover_url,
         2000
       );
 
-      if (!previewUrl && audioUrl) {
-        previewUrl = createPasongPreviewUrl(audioUrl);
-      }
-
-      if (
-        !title ||
-        !audioUrl ||
-        !previewUrl ||
-        !coverUrl
-      ) {
+      if (!title || !audioUrl || !coverUrl) {
         return res.status(400).json({
-          error:
-            "Title + audio + cover + preview required",
+          error: "Title + full audio + cover required",
         });
       }
 
-      if (
-        !validUrl(audioUrl) ||
-        !validUrl(previewUrl) ||
-        !validUrl(coverUrl)
-      ) {
+      if (!validUrl(audioUrl) || !validUrl(coverUrl)) {
         return res.status(400).json({
-          error:
-            "Invalid audio, preview or cover URL",
-        });
-      }
-
-      if (
-        isSameUrl(
-          audioUrl,
-          previewUrl
-        )
-      ) {
-        return res.status(400).json({
-          error:
-            "Preview must be different from full audio",
+          error: "Invalid full audio or cover URL",
         });
       }
 
@@ -2324,8 +2277,6 @@ app.post(
             status: "approved",
             cover_url: coverUrl,
             audio_url: audioUrl,
-            preview_url:
-              previewUrl,
             artist_count:
               artistIds.length,
           })
@@ -2405,32 +2356,12 @@ app.post(
 );
 
 function publicSong(song) {
-  if (!song) {
-    return null;
-  }
-
-  const safeSong = {
-    ...song,
-  };
-
-  // PASONG supports free public streaming. Some older songs were
-  // uploaded before preview_url was stored. In that case, use the
-  // existing audio_url as the public streaming source.
-  const publicStreamUrl =
-    song.preview_url ||
-    song.audio_url ||
-    null;
-
-  // Never expose the original field separately.
+  if (!song) return null;
+  const safeSong = { ...song };
+  // Public metadata must never reveal the original downloadable audio URL.
+  // Full-length streaming is issued only through the signed playback endpoint.
   delete safeSong.audio_url;
-
-  // Keep both fields for compatibility with existing PASONG pages.
-  safeSong.preview_url =
-    publicStreamUrl;
-
-  safeSong.audio_url =
-    publicStreamUrl;
-
+  delete safeSong.preview_url;
   return safeSong;
 }
 
@@ -4468,8 +4399,6 @@ app.post(
               cleanTitle,
             audio_url:
               audioUrl,
-            preview_url:
-              previewUrl,
             cover_url:
               coverUrl || null,
             genre:
