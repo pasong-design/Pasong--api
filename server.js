@@ -43,9 +43,16 @@ const PASONG_FRONTEND_URL =
   process.env.PASONG_FRONTEND_URL ||
   "https://pasong-frontend.vercel.app";
 
+// Canonical Render API origin for playback and payment callbacks.
+// Override only through Render environment variables; never hardcode the old Vercel API.
+const PASONG_API_BASE_URL = String(
+  process.env.PASONG_API_BASE_URL ||
+  "https://pasong-api.onrender.com"
+).replace(/\/+$/, "");
+
 const PASONG_API_PUBLIC_URL =
   process.env.PASONG_API_PUBLIC_URL ||
-  "https://pasong-api.vercel.app";
+  PASONG_API_BASE_URL;
 
 const CORS_ORIGIN =
   process.env.CORS_ORIGIN || "";
@@ -726,7 +733,7 @@ app.get("/api/songs/:id/playback-url", async (req, res) => {
 
     const expires = Math.floor(Date.now() / 1000) + 15 * 60;
     const signature = signPasongAudioToken(songId, expires);
-    const base = String(process.env.PASONG_API_BASE_URL || "https://pasong-api.onrender.com").replace(/\/+$/, "");
+    const base = PASONG_API_BASE_URL;
     return res.json({
       success: true,
       url: `${base}/api/songs/${songId}/audio?expires=${expires}&signature=${signature}`,
@@ -2500,11 +2507,6 @@ app.get(
             "status",
             "approved"
           )
-          .not(
-            "cover_url",
-            "is",
-            null
-          )
           .order("created_at", {
             ascending: false,
           });
@@ -2561,17 +2563,11 @@ app.get(
               profileIds
             );
 
-        if (
-          profileResult.error
-        ) {
-          return res.status(500).json({
-            error:
-              "Unable to load artist profiles",
-          });
+        if (profileResult.error) {
+          console.warn("Public artist profile lookup failed; returning songs without profile enrichment:", profileResult.error);
+        } else {
+          profiles = profileResult.data || [];
         }
-
-        profiles =
-          profileResult.data || [];
       }
 
       const foundProfileUserIds =
@@ -2608,20 +2604,14 @@ app.get(
               missingUserIds
             );
 
-        if (
-          fallbackResult.error
-        ) {
-          return res.status(500).json({
-            error:
-              "Unable to load artist profiles",
-          });
+        if (fallbackResult.error) {
+          console.warn("Fallback artist profile lookup failed; keeping catalogue available:", fallbackResult.error);
+        } else {
+          profiles = [
+            ...profiles,
+            ...(fallbackResult.data || []),
+          ];
         }
-
-        profiles = [
-          ...profiles,
-          ...(fallbackResult.data ||
-            []),
-        ];
       }
 
       const profileById =
@@ -2693,6 +2683,13 @@ app.get(
 
             const safeSong =
               publicSong(song);
+
+            // Preserve legacy artwork fields so older approved uploads remain visible.
+            safeSong.cover_url =
+              song.cover_url ||
+              song.cover_image_url ||
+              song.cover ||
+              null;
 
             safeSong.artist =
               publicArtist;
