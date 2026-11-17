@@ -54,48 +54,38 @@ const PASONG_API_PUBLIC_URL =
   process.env.PASONG_API_PUBLIC_URL ||
   PASONG_API_BASE_URL;
 
+// CORS defaults to the official PASONG frontend so an omitted optional
+// CORS_ORIGIN setting cannot terminate the entire API process. Add any other
+// deployed frontend origins through the comma-separated Render setting.
 const CORS_ORIGIN =
-  process.env.CORS_ORIGIN || "";
+  process.env.CORS_ORIGIN || PASONG_FRONTEND_URL;
 
-if (
-  !SUPABASE_URL ||
-  !SUPABASE_SERVICE_ROLE_KEY
-) {
-  console.error(
-    "Missing Supabase environment variables"
-  );
+// Supabase is required for the catalogue, accounts and database-backed APIs.
+// Optional integrations must not take down public browsing when a payment or
+// media setting is temporarily absent.
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  console.error("FATAL: Missing Supabase environment variables (SUPABASE_URL and service-role key are required).");
   process.exit(1);
 }
 
-if (
-  !CLOUDINARY_CLOUD_NAME ||
-  !CLOUDINARY_API_KEY ||
-  !CLOUDINARY_API_SECRET
-) {
-  console.error(
-    "Missing Cloudinary environment variables"
-  );
-  process.exit(1);
+const isCloudinaryConfigured = Boolean(
+  CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET
+);
+if (!isCloudinaryConfigured) {
+  console.warn("Cloudinary is not fully configured. Upload and protected-audio delivery endpoints will return 503; the PASONG API and catalogue will remain online.");
 }
 
 if (!PASONG_PAYMENT_SECRET) {
-  console.error(
-    "Missing PASONG_PAYMENT_SECRET"
-  );
-  process.exit(1);
+  console.warn("PASONG_PAYMENT_SECRET is not configured. Payment-completion endpoints will reject requests until it is added in Render.");
+}
+if (!AUDIO_STREAM_SIGNING_SECRET) {
+  console.warn("AUDIO_STREAM_SIGNING_SECRET is not configured. Protected song playback links will return 503 until a signing secret is added in Render.");
 }
 
-if (!CORS_ORIGIN.trim()) {
-  console.error(
-    "Missing CORS_ORIGIN"
-  );
-  process.exit(1);
-}
-
-const allowedOrigins = CORS_ORIGIN
-  .split(",")
-  .map((v) => v.trim())
-  .filter(Boolean);
+const allowedOrigins = Array.from(new Set([
+  ...CORS_ORIGIN.split(",").map((v) => v.trim()).filter(Boolean),
+  PASONG_FRONTEND_URL,
+].filter(Boolean)));
 
 app.use(
   cors({
@@ -151,11 +141,13 @@ async function createPasongNotification(userId, type, title, message, link = nul
   return { success: true, id: data };
 }
 
-cloudinary.config({
-  cloud_name: CLOUDINARY_CLOUD_NAME,
-  api_key: CLOUDINARY_API_KEY,
-  api_secret: CLOUDINARY_API_SECRET,
-});
+if (isCloudinaryConfigured) {
+  cloudinary.config({
+    cloud_name: CLOUDINARY_CLOUD_NAME,
+    api_key: CLOUDINARY_API_KEY,
+    api_secret: CLOUDINARY_API_SECRET,
+  });
+}
 
 const coverUpload = multer({
   storage: multer.memoryStorage(),
@@ -710,6 +702,12 @@ function safeAudioSignatureEqual(a, b) {
 
 app.get("/api/songs/:id/playback-url", async (req, res) => {
   try {
+    if (!AUDIO_STREAM_SIGNING_SECRET) {
+      return res.status(503).json({ success: false, error: "Protected playback is temporarily unavailable. Audio signing is not configured on the server." });
+    }
+    if (!isCloudinaryConfigured) {
+      return res.status(503).json({ success: false, error: "Protected playback is temporarily unavailable. Media storage is not configured on the server." });
+    }
     const songId = String(req.params.id || "").trim();
     if (!validUuid(songId)) return res.status(400).json({ success: false, error: "Invalid song ID." });
 
@@ -747,6 +745,9 @@ app.get("/api/songs/:id/playback-url", async (req, res) => {
 
 app.get("/api/songs/:id/audio", async (req, res) => {
   try {
+    if (!AUDIO_STREAM_SIGNING_SECRET || !isCloudinaryConfigured) {
+      return res.status(503).json({ success: false, error: "Protected audio delivery is not configured on the server." });
+    }
     const songId = String(req.params.id || "").trim();
     const expires = Number(req.query.expires);
     const signature = String(req.query.signature || "");
@@ -811,6 +812,9 @@ app.get("/api/songs/:id/audio", async (req, res) => {
 // PASONG pages that play full audio have been switched to the protected API.
 app.post("/api/admin/cloudinary/secure-song-audio", async (req, res) => {
   try {
+    if (!isCloudinaryConfigured) {
+      return res.status(503).json({ success: false, error: "Cloudinary is not fully configured on the server." });
+    }
     const adminUser = await requirePasongAdmin(req, res);
     if (!adminUser) return;
     if (String(req.body?.confirm || "") !== "SECURE_ALL_SONG_AUDIO") {
@@ -1008,8 +1012,15 @@ app.get("/api/events", async (req, res) => {
 });
 
 app.get("/health", (req, res) => {
-  res.json({
+  res.status(200).json({
     status: "ok",
+    service: "PASONG API",
+    dependencies: {
+      supabase: true,
+      cloudinary: isCloudinaryConfigured,
+      payment_secret: Boolean(PASONG_PAYMENT_SECRET),
+      audio_signing: Boolean(AUDIO_STREAM_SIGNING_SECRET),
+    },
   });
 });
 
@@ -1723,6 +1734,9 @@ app.post(
   coverUpload.single("file"),
   async (req, res) => {
     try {
+      if (!isCloudinaryConfigured) {
+        return res.status(503).json({ success: false, error: "Cover uploads are temporarily unavailable because media storage is not configured." });
+      }
       const user =
         await getAuthenticatedUser(req);
 
@@ -2365,10 +2379,16 @@ app.post(
 function publicSong(song) {
   if (!song) return null;
   const safeSong = { ...song };
-  // Public metadata must never reveal the original downloadable audio URL.
-  // Full-length streaming is issued only through the signed playback endpoint.
-  delete safeSong.audio_url;
-  delete safeSong.preview_url;
+  // Public metadata must never reveal an original or alternate audio URL.
+  // Full-length streaming is issued only through the signed playback endpoint;
+  // paid downloads continue through the authenticated delivery route.
+  for (const field of [
+    "audio_url", "preview_url", "file_url", "stream_url",
+    "download_url", "original_audio_url", "mix_audio_url",
+    "audioUrl", "downloadUrl",
+  ]) {
+    delete safeSong[field];
+  }
   return safeSong;
 }
 
@@ -2684,6 +2704,14 @@ app.get(
             const safeSong =
               publicSong(song);
 
+            // Keep artist display text available without exposing audio URLs.
+            safeSong.artist_name =
+              publicArtist?.artist_name ||
+              publicArtist?.stage_name ||
+              publicArtist?.performing_name ||
+              song.artist_name ||
+              null;
+
             // Preserve legacy artwork fields so older approved uploads remain visible.
             safeSong.cover_url =
               song.cover_url ||
@@ -2776,6 +2804,13 @@ app.get(
 
       const safeSong =
         publicSong(song);
+
+      safeSong.artist_name =
+        publicArtist?.artist_name ||
+        publicArtist?.stage_name ||
+        publicArtist?.performing_name ||
+        song.artist_name ||
+        null;
 
       safeSong.artist =
         publicArtist;
