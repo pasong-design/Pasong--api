@@ -2532,9 +2532,17 @@ app.get(
           });
 
       if (result.error) {
+        // Keep the public response generic, but record the useful Supabase
+        // diagnostics in Render logs so database failures can be identified.
+        console.error("Supabase /api/songs query failed:", {
+          code: result.error.code || null,
+          message: result.error.message || "Unknown Supabase error",
+          details: result.error.details || null,
+          hint: result.error.hint || null,
+        });
         return res.status(500).json({
-          error:
-            "Unable to load songs",
+          error: "Unable to load songs",
+          code: result.error.code || "SONGS_QUERY_FAILED",
         });
       }
 
@@ -2744,14 +2752,15 @@ app.get(
           getPricing(req),
       });
     } catch (error) {
-      console.error(
-        "Songs loading error:",
-        error
-      );
+      console.error("Songs loading error:", {
+        name: error?.name || "Error",
+        message: error?.message || String(error),
+        code: error?.code || null,
+      });
 
       res.status(500).json({
-        error:
-          "Unable to load songs",
+        error: "Unable to load songs",
+        code: error?.code || "SONGS_LOADING_FAILED",
       });
     }
   }
